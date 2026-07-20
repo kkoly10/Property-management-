@@ -118,6 +118,7 @@ export async function getPropertyWorkspace(propertyId: string): Promise<{
   mode: "setup" | "ready" | "error";
   property: PortfolioProperty | null;
   units: Array<{ id: string; unitCode: string; unitType: string | null; bedrooms: number | null; bathrooms: number | null; squareFeet: number | null; status: string }>;
+  occupancies: Array<{ tenancyId: string; unitId: string; unitCode: string; householdName: string; tenancyStatus: string; leaseStart: string; leaseEnd: string | null; rentAmountMinor: number; currencyCode: string }>;
   requestId?: string;
 }> {
   if (!getPublicSupabaseConfig()) {
@@ -144,6 +145,7 @@ export async function getPropertyWorkspace(propertyId: string): Promise<{
         { id: "preview-101", unitCode: "101", unitType: "Apartment", bedrooms: 2, bathrooms: 1, squareFeet: 850, status: "active" },
         { id: "preview-102", unitCode: "102", unitType: "Apartment", bedrooms: 1, bathrooms: 1, squareFeet: 650, status: "active" },
       ],
+      occupancies: [{ tenancyId: "preview-tenancy", unitId: "preview-101", unitCode: "101", householdName: "Rivera household", tenancyStatus: "active", leaseStart: "2026-01-01", leaseEnd: "2026-12-31", rentAmountMinor: 185000, currencyCode: "USD" }],
     };
   }
 
@@ -155,14 +157,20 @@ export async function getPropertyWorkspace(propertyId: string): Promise<{
       .eq("id", propertyId)
       .maybeSingle();
     if (error) throw error;
-    if (!property) return { mode: "ready", property: null, units: [] };
+    if (!property) return { mode: "ready", property: null, units: [], occupancies: [] };
 
-    const [{ data: book }, { data: units, error: unitError }] = await Promise.all([
+    const [{ data: book }, { data: units, error: unitError }, { data: tenancies }, { data: households }, { data: leases }] = await Promise.all([
       supabase.from("accounting_books").select("name,functional_currency_code").eq("id", property.accounting_book_id).maybeSingle(),
       supabase.from("units").select("id,unit_code,unit_type,bedrooms,bathrooms,square_feet,operational_status").eq("property_id", propertyId).order("unit_code"),
+      supabase.from("tenancies").select("id,unit_id,household_id,lease_id,status").eq("property_id", propertyId).in("status", ["scheduled", "active", "notice_given", "move_out_in_progress"]),
+      supabase.from("households").select("id,display_name"),
+      supabase.from("leases").select("id,start_date,end_date,rent_amount_minor,currency_code").eq("property_id", propertyId),
     ]);
     if (unitError) throw unitError;
 
+    const householdById = new Map((households ?? []).map((household) => [household.id, household.display_name]));
+    const leaseById = new Map((leases ?? []).map((lease) => [lease.id, lease]));
+    const unitCodeById = new Map((units ?? []).map((unit) => [unit.id, unit.unit_code]));
     return {
       mode: "ready",
       property: {
@@ -191,8 +199,13 @@ export async function getPropertyWorkspace(propertyId: string): Promise<{
         squareFeet: unit.square_feet,
         status: unit.operational_status,
       })),
+      occupancies: (tenancies ?? []).flatMap((tenancy) => {
+        const lease = leaseById.get(tenancy.lease_id);
+        if (!lease) return [];
+        return [{ tenancyId: tenancy.id, unitId: tenancy.unit_id, unitCode: unitCodeById.get(tenancy.unit_id) ?? "—", householdName: householdById.get(tenancy.household_id) ?? "Household", tenancyStatus: tenancy.status, leaseStart: lease.start_date, leaseEnd: lease.end_date, rentAmountMinor: Number(lease.rent_amount_minor), currencyCode: lease.currency_code }];
+      }),
     };
   } catch {
-    return { mode: "error", property: null, units: [], requestId: crypto.randomUUID() };
+    return { mode: "error", property: null, units: [], occupancies: [], requestId: crypto.randomUUID() };
   }
 }
