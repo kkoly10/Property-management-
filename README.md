@@ -1,6 +1,6 @@
 # Crecy Property Management Platform
 
-Crecy is a global rental operating system for property operators, residents, owners, and invited vendors. The executable MVP now includes the secure platform foundation, portfolio/import workflows, document ingestion, existing-lease activation, recurring rent generation, balanced and immutable journal posting, an operator receivables workspace, and a resident balance/next-due home.
+Crecy is a global rental operating system for property operators, residents, owners, and invited vendors. The executable MVP now includes the secure platform foundation, portfolio/import workflows, document ingestion, existing-lease activation, recurring rent generation, balanced and immutable journal posting, controlled manual-payment allocation, system receipts, an operator payments workspace, and resident balances and payment history.
 
 ## Run locally
 
@@ -27,7 +27,7 @@ npm run typecheck
 npm run build
 ```
 
-`test:db` runs the authoritative schema and all application migrations in embedded Postgres. It exercises tenant and property-scope isolation, expired memberships, idempotent commands, country/book consistency, plan limits, document/import controls, lease activation, balanced recurring-charge journals, append-only financial history, resident finance projection, and audit/outbox traces.
+`test:db` runs the authoritative schema and all application migrations in embedded Postgres. It exercises tenant and property-scope isolation, expired memberships, idempotent commands, country/book consistency, plan limits, document/import controls, lease activation, balanced recurring-charge and payment journals, allocation limits, evidence and receipt controls, resident finance projection, and audit/outbox traces.
 
 ## Authoritative specification
 

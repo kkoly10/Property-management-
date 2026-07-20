@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Building2, CalendarDays, CircleAlert, FileText, MessageSquareText, Wrench } from "lucide-react";
+import { ArrowRight, Building2, CalendarDays, CircleAlert, FileText, MessageSquareText, ReceiptText, Wrench } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,29 +8,21 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { getResidentBalance } from "@/lib/data/finance";
 
 export const dynamic = "force-dynamic";
-
-function money(amountMinor: number, currencyCode: string) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: currencyCode }).format(amountMinor / 100);
-}
+const money = (amount: number, currency: string) => new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount / 100);
 
 export default async function ResidentHomePage() {
   const summary = await getResidentBalance();
   const home = summary.items[0];
-  return (
-    <div className="min-h-screen bg-[#f6f8fb] pb-24">
-      <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark /><Badge variant="info">Crecy Living</Badge></div></header>
-      <main className="mx-auto max-w-5xl space-y-5 p-5 sm:py-8">
-        <div><p className="text-sm text-muted-foreground">Resident home</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Welcome home</h1>{home ? <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground"><Building2 className="h-4 w-4" />{home.propertyName} · Unit {home.unitCode}</p> : null}</div>
-        {summary.mode === "setup" ? <Alert variant="info"><CircleAlert className="h-5 w-5" /><AlertTitle>Resident preview</AlertTitle><AlertDescription>This sample shows the resident experience until Supabase is connected.</AlertDescription></Alert> : null}
-        {summary.mode === "error" ? <Alert variant="destructive"><CircleAlert className="h-5 w-5" /><AlertTitle>Home unavailable</AlertTitle><AlertDescription>Refresh and try again. Request {summary.requestId}.</AlertDescription></Alert> : null}
-        {home ? <Card className="overflow-hidden border-0 bg-[#312e81] text-white shadow-lg"><CardHeader><CardDescription className="text-indigo-200">Current balance</CardDescription><CardTitle className="font-mono text-4xl tracking-[-0.04em]">{money(home.balanceMinor, home.currencyCode)}</CardTitle></CardHeader><CardContent><div className="flex flex-col gap-4 rounded-xl bg-white/10 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="flex items-center gap-2 text-sm text-indigo-100"><CalendarDays className="h-4 w-4" />Next due {home.nextDueDate ?? "not scheduled"}</p>{home.nextDueAmountMinor !== null ? <p className="mt-1 font-mono text-lg font-semibold">{money(home.nextDueAmountMinor, home.currencyCode)}</p> : null}</div><Button disabled className="bg-white text-[#312e81] hover:bg-white">Pay now · coming next</Button></div></CardContent></Card> : <Alert variant="warning"><CircleAlert className="h-5 w-5" /><AlertTitle>No active home found</AlertTitle><AlertDescription>Your property manager can confirm your invitation and tenancy status.</AlertDescription></Alert>}
-        <section aria-label="Resident shortcuts" className="grid gap-4 sm:grid-cols-3">{[
-          { label: "Documents", detail: "Lease and notices", icon: FileText },
-          { label: "Maintenance", detail: "Request and status", icon: Wrench },
-          { label: "Messages", detail: "Contact management", icon: MessageSquareText },
-        ].map(({ label, detail, icon: Icon }) => <Card key={label}><CardContent className="p-5"><Icon className="h-5 w-5 text-primary" /><p className="mt-4 font-semibold">{label}</p><p className="mt-1 text-sm text-muted-foreground">{detail}</p></CardContent></Card>)}</section>
-      </main>
-      <nav aria-label="Resident" className="fixed inset-x-0 bottom-0 border-t bg-white/95 px-4 py-3 backdrop-blur sm:hidden"><div className="mx-auto flex max-w-md items-center justify-around text-xs font-medium"><Link className="text-primary" href="/home">Home</Link><span className="text-muted-foreground">Payments</span><span className="text-muted-foreground">Maintenance</span><span className="text-muted-foreground">More</span></div></nav>
-    </div>
-  );
+  return <div className="min-h-screen bg-[#f6f8fb] pb-24">
+    <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark /><Badge variant="info">Crecy Living</Badge></div></header>
+    <main className="mx-auto max-w-5xl space-y-5 p-5 sm:py-8">
+      <div><p className="text-sm text-muted-foreground">Resident home</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Welcome home</h1>{home ? <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground"><Building2 className="h-4 w-4" />{home.propertyName} · Unit {home.unitCode}</p> : null}</div>
+      {summary.mode === "setup" ? <Alert variant="info"><CircleAlert className="h-5 w-5" /><AlertTitle>Resident preview</AlertTitle><AlertDescription>This sample shows the resident experience until Supabase is connected.</AlertDescription></Alert> : null}
+      {summary.mode === "error" ? <Alert variant="destructive"><CircleAlert className="h-5 w-5" /><AlertTitle>Home unavailable</AlertTitle><AlertDescription>Refresh and try again. Request {summary.requestId}.</AlertDescription></Alert> : null}
+      {home ? <Card className="overflow-hidden border-0 bg-[#312e81] text-white shadow-lg"><CardHeader><CardDescription className="text-indigo-200">Current balance</CardDescription><CardTitle className="font-mono text-4xl tracking-[-0.04em]">{money(home.balanceMinor, home.currencyCode)}</CardTitle></CardHeader><CardContent><div className="flex flex-col gap-4 rounded-xl bg-white/10 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="flex items-center gap-2 text-sm text-indigo-100"><CalendarDays className="h-4 w-4" />Next due {home.nextDueDate ?? "not scheduled"}</p>{home.nextDueAmountMinor !== null ? <p className="mt-1 font-mono text-lg font-semibold">{money(home.nextDueAmountMinor, home.currencyCode)}</p> : null}</div><Button disabled className="bg-white text-[#312e81] hover:bg-white">Pay online · coming next</Button></div></CardContent></Card> : <Alert variant="warning"><CircleAlert className="h-5 w-5" /><AlertTitle>No active home found</AlertTitle><AlertDescription>Your property manager can confirm your invitation and tenancy status.</AlertDescription></Alert>}
+      <Card><CardHeader><CardTitle>Payment history</CardTitle><CardDescription>Receipts for payments posted to your tenancy.</CardDescription></CardHeader><CardContent className="p-0">{summary.payments.length ? <div className="divide-y">{summary.payments.map((payment) => <div key={payment.paymentId} className="flex items-center justify-between gap-4 px-5 py-4"><div className="flex items-center gap-3"><ReceiptText className="h-5 w-5 text-primary" /><div><p className="font-mono font-semibold">{money(payment.amountMinor, payment.currencyCode)}</p><p className="mt-1 text-xs text-muted-foreground">{new Date(payment.receivedAt).toLocaleDateString()} · {payment.publicReference}</p></div></div><Button asChild size="sm" variant="ghost"><Link href={`/receipts/${payment.receiptDocumentId}`}>Receipt <ArrowRight className="h-4 w-4" /></Link></Button></div>)}</div> : <p className="px-5 py-8 text-center text-sm text-muted-foreground">No posted payments yet.</p>}</CardContent></Card>
+      <section aria-label="Resident shortcuts" className="grid gap-4 sm:grid-cols-3">{[{ label: "Documents", detail: "Lease and notices", icon: FileText }, { label: "Maintenance", detail: "Request and status", icon: Wrench }, { label: "Messages", detail: "Contact management", icon: MessageSquareText }].map(({ label, detail, icon: Icon }) => <Card key={label}><CardContent className="p-5"><Icon className="h-5 w-5 text-primary" /><p className="mt-4 font-semibold">{label}</p><p className="mt-1 text-sm text-muted-foreground">{detail}</p></CardContent></Card>)}</section>
+    </main>
+    <nav aria-label="Resident" className="fixed inset-x-0 bottom-0 border-t bg-white/95 px-4 py-3 backdrop-blur sm:hidden"><div className="mx-auto flex max-w-md items-center justify-around text-xs font-medium"><Link className="text-primary" href="/home">Home</Link><span className="text-muted-foreground">Payments</span><span className="text-muted-foreground">Maintenance</span><span className="text-muted-foreground">More</span></div></nav>
+  </div>;
 }

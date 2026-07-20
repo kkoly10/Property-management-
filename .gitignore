@@ -37,6 +37,7 @@ yarn-error.log*
 # local review and generator scratch data
 /tmp/
 /.playwright-cli/
+/output/
 
 # vercel
 .vercel
