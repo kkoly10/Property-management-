@@ -10,7 +10,7 @@ const navigation = [
   { label: "Residents", href: "/app", icon: Users },
   { label: "Money", href: "/app", icon: CreditCard },
   { label: "Maintenance", href: "/app", icon: Wrench },
-  { label: "Documents", href: "/app", icon: FileText },
+  { label: "Documents", href: "/app/documents", icon: FileText },
 ] as const;
 
 export function PrimaryNavigation() {

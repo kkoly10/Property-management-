@@ -7,6 +7,7 @@ import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
 const root = resolve(import.meta.dirname, "..");
 const foundationSql = await readFile(resolve(root, "supabase/migrations/20260720095008_phase_1_foundation.sql"), "utf8");
 const portfolioSql = await readFile(resolve(root, "supabase/migrations/20260720104921_phase_2_portfolio_foundation.sql"), "utf8");
+const documentsSql = await readFile(resolve(root, "supabase/migrations/20260720113426_phase_2_document_ingestion.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -31,6 +32,25 @@ async function prepareSupabasePrelude(db) {
     returns uuid
     language sql stable
     as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+    create schema storage;
+    create table storage.buckets (
+      id text primary key,
+      name text not null,
+      public boolean not null default false,
+      file_size_limit bigint,
+      allowed_mime_types text[]
+    );
+    create table storage.objects (
+      id uuid primary key default gen_random_uuid(),
+      bucket_id text not null references storage.buckets(id),
+      name text not null,
+      owner_id text,
+      created_at timestamptz not null default now(),
+      unique(bucket_id,name)
+    );
+    alter table storage.objects enable row level security;
+    grant usage on schema storage to authenticated;
+    grant select,insert,update,delete on storage.objects to authenticated;
   `);
 }
 
@@ -241,11 +261,104 @@ async function validatePortfolio() {
   return { properties: 3, units: 3, scopedManagerVisibleProperties: 1, enforcedFreeUnitLimit: 1 };
 }
 
+async function validateDocuments() {
+  const db = createDatabase();
+  await prepareSupabasePrelude(db);
+  await db.exec(foundationSql);
+  await db.exec(portfolioSql);
+  await db.exec(documentsSql);
+
+  const adminA = "00000000-0000-4000-8000-000000000021";
+  const adminB = "00000000-0000-4000-8000-000000000022";
+  const manager = "00000000-0000-4000-8000-000000000023";
+  await db.exec(`insert into auth.users(id) values ('${adminA}'),('${adminB}'),('${manager}')`);
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${adminA}'`);
+  const orgAResult = await db.query(`select public.create_organization('Document A','document-a','property_manager','US','en-US','America/New_York','2026-07-20','81000000-0000-4000-8000-000000000001') as result`);
+  const orgA = orgAResult.rows[0].result.organizationId;
+  const entityAResult = await db.query(`select public.create_operating_entity_and_book('${orgA}','Document A LLC','Document A','US','company','USD','Operating book','82000000-0000-4000-8000-000000000002') as result`);
+  const propertyAResult = await db.query(`select public.create_property('${orgA}','${entityAResult.rows[0].result.operatingEntityId}','${entityAResult.rows[0].result.accountingBookId}','US_NATIONAL','Secure House','single_family','1 Private Way',null,'Richmond','VA','23220','US','America/New_York','83000000-0000-4000-8000-000000000003') as result`);
+  const propertyA = propertyAResult.rows[0].result.propertyId;
+
+  const grantResult = await db.query(`select public.create_document_upload_grant(
+    '${orgA}','property','${propertyA}','signed_lease','Secure House lease','lease.pdf','application/pdf',1024,
+    '84000000-0000-4000-8000-000000000004'
+  ) as result`);
+  const grant = grantResult.rows[0].result;
+  assert(grant.storagePath.startsWith(`organizations/${orgA}/property/${propertyA}/`), "Upload path did not use the scoped private layout.");
+  const grantReplay = await db.query(`select public.create_document_upload_grant(
+    '${orgA}','property','${propertyA}','signed_lease','Secure House lease','lease.pdf','application/pdf',1024,
+    '84000000-0000-4000-8000-000000000004'
+  ) as result`);
+  assert(grantReplay.rows[0].result.grantId === grant.grantId, "Upload-grant idempotency replay returned another grant.");
+  await expectDatabaseError(
+    () => db.query(`select public.create_document_upload_grant('${orgA}','property','${propertyA}','bad','Bad','bad.html','text/html',100,'85000000-0000-4000-8000-000000000005')`),
+    "MIME_TYPE_NOT_ALLOWED",
+  );
+
+  await db.exec(`insert into storage.objects(bucket_id,name,owner_id) values ('private-documents','${grant.storagePath}','${adminA}')`);
+  const checksum = "a".repeat(64);
+  await expectDatabaseError(
+    () => db.query(`select public.finalize_document('${adminA}','${grant.grantId}','${checksum}','86000000-0000-4000-8000-000000000006')`),
+    "permission denied for function finalize_document",
+  );
+  await db.exec("reset role; set role service_role");
+  const finalized = await db.query(`select public.finalize_document('${adminA}','${grant.grantId}','${checksum}','86000000-0000-4000-8000-000000000006') as result`);
+  assert(finalized.rows[0].result.scanStatus === "pending", "Finalized upload did not remain in scan quarantine.");
+  const finalizedReplay = await db.query(`select public.finalize_document('${adminA}','${grant.grantId}','${checksum}','86000000-0000-4000-8000-000000000006') as result`);
+  assert(finalizedReplay.rows[0].result.documentId === finalized.rows[0].result.documentId, "Finalize idempotency replay returned another document.");
+
+  await db.exec(`
+    reset role;
+    insert into public.organization_memberships(organization_id,user_id,role_code,status,starts_at)
+    values ('${orgA}','${manager}','property_manager','active',now()-interval '1 day');
+    insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    select '${orgA}',id,'${propertyA}' from public.organization_memberships where organization_id='${orgA}' and user_id='${manager}';
+    set role authenticated; set request.jwt.claim.sub='${manager}';
+  `);
+  const scopedGrant = await db.query(`select public.create_document_upload_grant(
+    '${orgA}','property','${propertyA}','property_record','Inspection','inspection.jpg','image/jpeg',2048,
+    '87000000-0000-4000-8000-000000000007'
+  ) as result`);
+  assert(Boolean(scopedGrant.rows[0].result.grantId), "Property-scoped manager could not create a property upload grant.");
+  await expectDatabaseError(
+    () => db.query(`select public.create_document_upload_grant('${orgA}','organization','${orgA}','portfolio_import','Source','source.csv','text/csv',50,'88000000-0000-4000-8000-000000000008')`),
+    "PARENT_SCOPE_DENIED",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${adminB}'`);
+  const orgBResult = await db.query(`select public.create_organization('Document B','document-b','self_managing','CA','en-CA','America/Toronto','2026-07-20','89000000-0000-4000-8000-000000000009') as result`);
+  const orgB = orgBResult.rows[0].result.organizationId;
+  const invisibleDocuments = await db.query(`select count(*)::integer as count from public.documents where organization_id='${orgA}'`);
+  assert(invisibleDocuments.rows[0].count === 0, "Document RLS exposed another organization's register.");
+  await expectDatabaseError(
+    () => db.exec(`insert into storage.objects(bucket_id,name,owner_id) values ('private-documents','${scopedGrant.rows[0].result.storagePath}','${adminB}')`),
+    "violates row-level security policy",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.create_document_upload_grant('${orgA}','property','${propertyA}','other','Intrusion','x.pdf','application/pdf',10,'90000000-0000-4000-8000-000000000010')`),
+    "PARENT_SCOPE_DENIED",
+  );
+
+  await db.exec("reset role");
+  const traces = await db.query(`select
+    (select count(*)::integer from audit.audit_events where action_code='document.uploaded') as audits,
+    (select count(*)::integer from private.outbox_events where event_type='document.uploaded') as events,
+    (select count(*)::integer from public.document_versions where upload_status='quarantined') as quarantined
+  `);
+  assert(traces.rows[0].audits === 1 && traces.rows[0].events === 1, "Document finalization did not write audit and outbox traces.");
+  assert(traces.rows[0].quarantined === 1, "Finalized document skipped quarantine.");
+
+  await db.close();
+  return { organizations: 2, verifiedUploads: 1, propertyScopedGrant: 1, quarantined: traces.rows[0].quarantined, isolatedOrganization: orgB };
+}
+
 try {
   const result = {
     authority: await validateAuthority(),
     foundation: await validateFoundation(),
     portfolio: await validatePortfolio(),
+    documents: await validateDocuments(),
   };
   console.log(JSON.stringify(result));
 } catch (error) {
