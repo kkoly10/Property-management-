@@ -8,6 +8,7 @@ const root = resolve(import.meta.dirname, "..");
 const foundationSql = await readFile(resolve(root, "supabase/migrations/20260720095008_phase_1_foundation.sql"), "utf8");
 const portfolioSql = await readFile(resolve(root, "supabase/migrations/20260720104921_phase_2_portfolio_foundation.sql"), "utf8");
 const documentsSql = await readFile(resolve(root, "supabase/migrations/20260720113426_phase_2_document_ingestion.sql"), "utf8");
+const importsSql = await readFile(resolve(root, "supabase/migrations/20260720121643_phase_2_portfolio_imports.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -353,12 +354,115 @@ async function validateDocuments() {
   return { organizations: 2, verifiedUploads: 1, propertyScopedGrant: 1, quarantined: traces.rows[0].quarantined, isolatedOrganization: orgB };
 }
 
+async function validateImports() {
+  const db = createDatabase();
+  await prepareSupabasePrelude(db);
+  await db.exec(foundationSql);
+  await db.exec(portfolioSql);
+  await db.exec(documentsSql);
+  await db.exec(importsSql);
+
+  const adminA = "00000000-0000-4000-8000-000000000031";
+  const adminB = "00000000-0000-4000-8000-000000000032";
+  const manager = "00000000-0000-4000-8000-000000000033";
+  const sourceDocument = "91000000-0000-4000-8000-000000000001";
+  const sourceVersion = "92000000-0000-4000-8000-000000000002";
+  await db.exec(`insert into auth.users(id) values ('${adminA}'),('${adminB}'),('${manager}')`);
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${adminA}'`);
+  const orgResult = await db.query(`select public.create_organization('Import Atlas','import-atlas','property_manager','US','en-US','America/New_York','2026-07-20','93000000-0000-4000-8000-000000000003') as result`);
+  const orgA = orgResult.rows[0].result.organizationId;
+  await db.query(`select public.create_operating_entity_and_book('${orgA}','Import Atlas LLC','Import Atlas','US','company','USD','Operating book','94000000-0000-4000-8000-000000000004') as result`);
+
+  await db.exec(`
+    reset role;
+    insert into public.documents(id,organization_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${sourceDocument}','${orgA}','portfolio_import','Portfolio source','operator_supplied','active',true,'${adminA}');
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${sourceVersion}','${orgA}','${sourceDocument}',1,'private-documents','organizations/${orgA}/organization/${orgA}/${sourceVersion}/portfolio.csv','text/csv',512,'${"b".repeat(64)}','portfolio.csv','${adminA}','clean');
+    set role authenticated; set request.jwt.claim.sub='${adminA}';
+  `);
+
+  const headers = ["Property Name","Property Type","Address","City","State","Postal","Country","Time Zone","Unit","Unit Type","Beds","Baths","Sq Ft"];
+  const rows = [
+    { "Property Name":"Maple Court","Property Type":"multifamily","Address":"100 Maple Street","City":"Richmond","State":"VA","Postal":"23220","Country":"US","Time Zone":"America/New_York","Unit":"101","Unit Type":"Apartment","Beds":"2","Baths":"1","Sq Ft":"850" },
+    { "Property Name":"Maple Court","Property Type":"multifamily","Address":"100 Maple Street","City":"Richmond","State":"VA","Postal":"23220","Country":"US","Time Zone":"America/New_York","Unit":"102","Unit Type":"Apartment","Beds":"1","Baths":"1","Sq Ft":"650" },
+    { "Property Name":"Oak House","Property Type":"single_family","Address":"42 Oak Avenue","City":"Richmond","State":"VA","Postal":"23221","Country":"US","Time Zone":"America/New_York","Unit":"","Unit Type":"","Beds":"","Baths":"","Sq Ft":"" },
+  ];
+  const mapping = {
+    propertyName:"Property Name",propertyType:"Property Type",addressLine1:"Address",locality:"City",
+    subdivisionCode:"State",postalCode:"Postal",countryCode:"Country",timeZone:"Time Zone",
+    unitCode:"Unit",unitType:"Unit Type",bedrooms:"Beds",bathrooms:"Baths",squareFeet:"Sq Ft",
+  };
+  const options = { dedupeMode:"strict",dateLocale:"en-US" };
+  const createResult = await db.query(`select public.create_import_job('${orgA}','portfolio','${sourceDocument}','${sourceVersion}','${JSON.stringify(headers)}'::jsonb,'${JSON.stringify(rows)}'::jsonb,'95000000-0000-4000-8000-000000000005') as result`);
+  const importJob = createResult.rows[0].result.importJobId;
+  const createReplay = await db.query(`select public.create_import_job('${orgA}','portfolio','${sourceDocument}','${sourceVersion}','${JSON.stringify(headers)}'::jsonb,'${JSON.stringify(rows)}'::jsonb,'95000000-0000-4000-8000-000000000005') as result`);
+  assert(createReplay.rows[0].result.importJobId === importJob, "Import creation replay returned another job.");
+
+  const validation = await db.query(`select public.validate_portfolio_import('${importJob}','${JSON.stringify(mapping)}'::jsonb,'${JSON.stringify(options)}'::jsonb) as result`);
+  assert(validation.rows[0].result.status === "ready", "Valid portfolio rows did not reach ready status.");
+  assert(validation.rows[0].result.totals.creates === 4, "Validation did not deduplicate the repeated property resource.");
+  const validationHash = validation.rows[0].result.validationHash;
+  const committed = await db.query(`select public.commit_portfolio_import('${importJob}','${validationHash}') as result`);
+  assert(committed.rows[0].result.committed.properties === 2 && committed.rows[0].result.committed.units === 2, "Atomic import committed the wrong resource counts.");
+  const commitReplay = await db.query(`select public.commit_portfolio_import('${importJob}','${validationHash}') as result`);
+  assert(commitReplay.rows[0].result.reportDocumentId === committed.rows[0].result.reportDocumentId, "Commit replay returned another report document.");
+  await expectDatabaseError(() => db.query(`select public.commit_portfolio_import('${importJob}','${"c".repeat(64)}')`), "VALIDATION_HASH_CONFLICT");
+
+  await db.exec(`
+    reset role;
+    insert into public.organization_memberships(organization_id,user_id,role_code,status,starts_at)
+    values ('${orgA}','${manager}','property_manager','active',now()-interval '1 day');
+    insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    select '${orgA}',m.id,p.id from public.organization_memberships m cross join lateral (select id from public.properties where organization_id='${orgA}' order by created_at limit 1) p
+    where m.organization_id='${orgA}' and m.user_id='${manager}';
+    set role authenticated; set request.jwt.claim.sub='${manager}';
+  `);
+  await expectDatabaseError(
+    () => db.query(`select public.create_import_job('${orgA}','portfolio','${sourceDocument}','${sourceVersion}','${JSON.stringify(headers)}'::jsonb,'${JSON.stringify(rows)}'::jsonb,'96000000-0000-4000-8000-000000000006')`),
+    "PROPERTY_SCOPE_DENIED",
+  );
+
+  await db.exec(`reset role; update public.organization_subscriptions set plan_code='starter' where organization_id='${orgA}'; set role authenticated; set request.jwt.claim.sub='${adminA}'`);
+  const tooManyRows = Array.from({ length: 9 }, (_, index) => ({ ...rows[0], Unit: String(201 + index) }));
+  const limitedCreate = await db.query(`select public.create_import_job('${orgA}','portfolio','${sourceDocument}','${sourceVersion}','${JSON.stringify(headers)}'::jsonb,'${JSON.stringify(tooManyRows)}'::jsonb,'97000000-0000-4000-8000-000000000007') as result`);
+  const limitedJob = limitedCreate.rows[0].result.importJobId;
+  const limitedValidation = await db.query(`select public.validate_portfolio_import('${limitedJob}','${JSON.stringify(mapping)}'::jsonb,'${JSON.stringify(options)}'::jsonb) as result`);
+  assert(limitedValidation.rows[0].result.status === "ready", "Limit test import did not validate.");
+  const unitsBeforeFailure = await db.query(`select count(*)::integer as count from public.units where organization_id='${orgA}'`);
+  const limitedCommit = await db.query(`select public.commit_portfolio_import('${limitedJob}','${limitedValidation.rows[0].result.validationHash}') as result`);
+  const unitsAfterFailure = await db.query(`select count(*)::integer as count from public.units where organization_id='${orgA}'`);
+  assert(limitedCommit.rows[0].result.status === "failed", "Plan-limit commit did not fail safely.");
+  assert(unitsBeforeFailure.rows[0].count === unitsAfterFailure.rows[0].count, "Failed import left partially committed units.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${adminB}'`);
+  const orgBResult = await db.query(`select public.create_organization('Import Beacon','import-beacon','self_managing','CA','en-CA','America/Toronto','2026-07-20','98000000-0000-4000-8000-000000000008') as result`);
+  const orgB = orgBResult.rows[0].result.organizationId;
+  const invisibleJobs = await db.query(`select count(*)::integer as count from public.import_jobs where organization_id='${orgA}'`);
+  assert(invisibleJobs.rows[0].count === 0, "Import-job RLS exposed another organization's jobs.");
+  await expectDatabaseError(() => db.query(`select public.get_import_job_detail('${importJob}')`), "IMPORT_NOT_FOUND");
+
+  await db.exec("reset role");
+  const traces = await db.query(`select
+    (select count(*)::integer from audit.audit_events where action_code='import.created') as created_audits,
+    (select count(*)::integer from private.outbox_events where event_type='import.validated') as validated_events,
+    (select count(*)::integer from private.outbox_events where event_type='import.committed') as committed_events,
+    (select count(*)::integer from private.outbox_events where event_type='import.failed') as failed_events
+  `);
+  assert(traces.rows[0].created_audits === 2 && traces.rows[0].validated_events === 2, "Import creation or validation traces are incomplete.");
+  assert(traces.rows[0].committed_events === 1 && traces.rows[0].failed_events === 1, "Import completion/failure events are incomplete.");
+  await db.close();
+  return { organizations: 2, importedProperties: 2, importedUnits: 2, atomicLimitFailure: true, isolatedOrganization: orgB };
+}
+
 try {
   const result = {
     authority: await validateAuthority(),
     foundation: await validateFoundation(),
     portfolio: await validatePortfolio(),
     documents: await validateDocuments(),
+    imports: await validateImports(),
   };
   console.log(JSON.stringify(result));
 } catch (error) {
@@ -368,6 +472,9 @@ try {
       code: error?.code,
       detail: error?.detail,
       where: error?.where,
+      position: error?.position,
+      internalQuery: error?.internalQuery,
+      routine: error?.routine,
     }),
   );
   process.exitCode = 1;
