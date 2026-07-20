@@ -9,7 +9,7 @@ import { getDashboardState } from "@/lib/data/dashboard";
 export const dynamic = "force-dynamic";
 
 const attentionItems = [
-  { title: "Add your first property", description: "Create the property and units that belong to this accounting book.", href: "/onboarding/entity", icon: Building2 },
+  { title: "Add your first property", description: "Create the property and units that belong to this accounting book.", href: "/onboarding/property", icon: Building2 },
   { title: "Connect payment processing", description: "Complete Stripe-hosted verification before enabling resident checkout.", href: "/settings/payments", icon: Landmark },
 ];
 
@@ -28,8 +28,8 @@ export default async function DashboardPage() {
       </div>
       {dashboard.mode === "setup" ? <Alert variant="warning"><Settings2 aria-hidden="true" className="h-5 w-5" /><AlertTitle>Connect Supabase to activate this workspace</AlertTitle><AlertDescription>Copy <code className="font-mono text-xs">.env.example</code> to <code className="font-mono text-xs">.env.local</code>, add the project URL and publishable key, then apply the foundation migration.</AlertDescription></Alert> : null}
       <section aria-label="Foundation summary" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Operating entities" value={dashboard.entityCount === null ? "—" : String(dashboard.entityCount)} detail="Legal operating structure" />
-        <MetricCard label="Accounting books" value={dashboard.bookCount === null ? "—" : String(dashboard.bookCount)} detail="One functional currency each" />
+        <MetricCard label="Properties" value={dashboard.propertyCount === null ? "—" : String(dashboard.propertyCount)} detail="Tenant-scoped portfolio" />
+        <MetricCard label="Active units" value={dashboard.activeUnitCount === null ? "—" : String(dashboard.activeUnitCount)} detail="Counted toward plan usage" />
         <MetricCard label="Book currencies" value={dashboard.bookCurrencies.length ? dashboard.bookCurrencies.join(" · ") : "—"} detail="No cross-currency journals" mono />
         <MetricCard label="Open exceptions" value="—" detail="Available after portfolio setup" />
       </section>
