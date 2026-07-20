@@ -10,7 +10,7 @@ const navigation = [
   { label: "Imports", href: "/app/imports", icon: Upload },
   { label: "Residents", href: "/app/residents", icon: Users },
   { label: "Leases", href: "/app/leases", icon: FileSignature },
-  { label: "Money", href: "/app", icon: CreditCard },
+  { label: "Money", href: "/app/money", icon: CreditCard },
   { label: "Maintenance", href: "/app", icon: Wrench },
   { label: "Documents", href: "/app/documents", icon: FileText },
 ] as const;
