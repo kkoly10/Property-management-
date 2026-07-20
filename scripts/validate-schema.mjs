@@ -11,6 +11,7 @@ const documentsSql = await readFile(resolve(root, "supabase/migrations/202607201
 const importsSql = await readFile(resolve(root, "supabase/migrations/20260720121643_phase_2_portfolio_imports.sql"), "utf8");
 const leasingSql = await readFile(resolve(root, "supabase/migrations/20260720130951_phase_3_existing_lease.sql"), "utf8");
 const financeSql = await readFile(resolve(root, "supabase/migrations/20260720144109_phase_4_recurring_charges.sql"), "utf8");
+const manualPaymentsSql = await readFile(resolve(root, "supabase/migrations/20260720150956_phase_4_manual_payments.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -605,6 +606,7 @@ async function validateRecurringCharges() {
   await db.exec(documentsSql);
   await db.exec(leasingSql);
   await db.exec(financeSql);
+  await db.exec(manualPaymentsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -654,21 +656,59 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query(`update public.journal_transactions set metadata='{}'::jsonb where id='${posting.journal_transaction_id}'`), "APPEND_ONLY_RECORD");
   await expectDatabaseError(() => db.query(`delete from public.journal_entries where journal_transaction_id='${posting.journal_transaction_id}'`), "APPEND_ONLY_RECORD");
 
+  const evidenceDocumentId = "c6000000-0000-4000-8000-000000000006";
+  await db.exec(`
+    insert into public.documents(id,organization_id,property_id,unit_id,tenancy_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${evidenceDocumentId}','${organization.organizationId}','${property.propertyId}','${unit.unitId}','${activation.tenancyId}','payment_evidence','Check 1042 scan','operator_supplied','active',true,'${admin}');
+    insert into public.document_versions(organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${organization.organizationId}','${evidenceDocumentId}',1,'private-documents','payment-evidence.pdf','application/pdf',100,'${"b".repeat(64)}','check-1042.pdf','${admin}','clean');
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+  const receivedAt = (await db.query("select now()::text as received_at")).rows[0].received_at;
+  const allocations = JSON.stringify([{ chargeId: generated.chargeIds[0], amountMinor: 85000 }]);
+  const payment = (await db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','check',85000,'USD','${receivedAt}','Check received at the office','${evidenceDocumentId}','${allocations}'::jsonb,'CHECK-1042','manual-payment-0001') as result`)).rows[0].result;
+  assert(payment.paymentId && payment.receiptDocumentId && payment.reconciliationStatus === "unreconciled", "Manual payment did not return its canonical receipt and reconciliation state.");
+  const paymentReplay = (await db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','check',85000,'USD','${receivedAt}','Check received at the office','${evidenceDocumentId}','${allocations}'::jsonb,'CHECK-1042','manual-payment-0001') as result`)).rows[0].result;
+  assert(paymentReplay.paymentId === payment.paymentId, "Manual payment replay did not return the canonical payment.");
+  await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','check',85000,'USD','${receivedAt}','Changed reason','${evidenceDocumentId}','${allocations}'::jsonb,'CHECK-1042','manual-payment-0001')`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',1000,'USD','${receivedAt}','Cash received',null,'[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,null,'manual-payment-no-evidence')`), "PAYMENT_EVIDENCE_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','check',100001,'USD','${receivedAt}','Over allocation check','${evidenceDocumentId}','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":100001}]'::jsonb,'CHECK-1043','manual-payment-overalloc')`), "CHARGE_OVERALLOCATED");
+  await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','check',1000,'USD','${receivedAt}','Duplicate reference','${evidenceDocumentId}','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,'CHECK-1042','manual-payment-duplicate')`), "DUPLICATE_EXTERNAL_REFERENCE");
+  await expectDatabaseError(() => db.query(`insert into public.payments(organization_id,operating_entity_id,accounting_book_id,receivable_account_id,tenancy_id,public_reference,payment_source,amount_minor,currency_code) values ('${organization.organizationId}','${entity.operatingEntityId}','${entity.accountingBookId}','${activation.receivableAccountId}','${activation.tenancyId}','FORGED','cash',1,'USD')`), "permission denied");
+  await db.exec("reset role");
+  const paymentPosting = (await db.query(`select p.status,p.reconciliation_status,c.status as charge_status,d.source,d.operator_supplied_unverified,
+    sum(e.debit_minor)::integer as debits,sum(e.credit_minor)::integer as credits,
+    (select count(*)::integer from public.payment_allocations pa where pa.payment_id=p.id) as allocations,
+    (select count(*)::integer from private.outbox_events oe where oe.aggregate_id=p.id and oe.event_type in ('manual_payment.recorded','payment.allocated','reconciliation_exception.created')) as payment_events,
+    (select count(*)::integer from private.outbox_events oe where oe.aggregate_id=p.receipt_document_id and oe.event_type='receipt.generated') as receipt_events
+    from public.payments p join public.documents d on d.id=p.receipt_document_id join public.charges c on c.id='${generated.chargeIds[0]}'
+    join public.journal_entries e on e.journal_transaction_id=p.journal_transaction_id where p.id='${payment.paymentId}' group by p.id,c.status,d.source,d.operator_supplied_unverified`)).rows[0];
+  assert(paymentPosting.debits === 85000 && paymentPosting.credits === 85000 && paymentPosting.allocations === 1, "Manual payment journal or allocation is incomplete.");
+  assert(paymentPosting.status === "succeeded" && paymentPosting.charge_status === "partially_paid" && paymentPosting.payment_events === 3 && paymentPosting.receipt_events === 1, "Manual payment state or event trace is incomplete.");
+  assert(paymentPosting.source === "system_generated" && !paymentPosting.operator_supplied_unverified, "Receipt document provenance is incorrect.");
+  await expectDatabaseError(() => db.query(`update public.documents set title='Changed' where id='${payment.receiptDocumentId}'`), "APPEND_ONLY_RECORD");
+
   const person = (await db.query(`select hm.person_id from public.household_members hm where hm.household_id='${activation.householdId}' and hm.is_primary_contact`)).rows[0].person_id;
   await db.exec(`insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values ('${resident}','${organization.organizationId}','resident_person','${person}','active')`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
-  assert(residentSummary.items.length === 1 && residentSummary.items[0].balanceMinor === 227500, "Resident balance projection did not derive the posted opening and rent balance.");
+  assert(residentSummary.items.length === 1 && residentSummary.items[0].balanceMinor === 142500 && residentSummary.items[0].nextDueAmountMinor === 100000, "Resident balance projection did not derive payment-adjusted balances.");
   const residentCharges = (await db.query("select count(*)::integer as count from public.charges")).rows[0].count;
   assert(residentCharges === 1, "Resident could not read their own canonical charge.");
+  const residentPayments = (await db.query("select public.get_resident_payment_history() as result")).rows[0].result;
+  const residentReceipt = (await db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}') as result`)).rows[0].result;
+  assert(residentPayments.items.length === 1 && residentReceipt.paymentId === payment.paymentId, "Resident payment history or receipt is unavailable.");
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
   const outsiderCharges = (await db.query("select count(*)::integer as count from public.charges")).rows[0].count;
-  assert(outsiderSummary.items.length === 0 && outsiderCharges === 0, "Resident finance data leaked to an unrelated user.");
+  const outsiderPayments = (await db.query("select count(*)::integer as count from public.payments")).rows[0].count;
+  await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',1000,'USD','${receivedAt}','Unauthorized cash','${evidenceDocumentId}','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,null,'outsider-manual-payment')`), "PROPERTY_SCOPE_DENIED");
+  await expectDatabaseError(() => db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}')`), "RECEIPT_NOT_FOUND");
+  assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0, "Resident finance data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

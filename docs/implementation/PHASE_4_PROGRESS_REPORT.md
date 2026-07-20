@@ -1,82 +1,53 @@
-# Phase 4 Progress Report — Recurring Charges and Resident Balance
+# Phase 4 Progress Report — Charges, Manual Payments, and Receipts
 
-**Status:** recurring-charge vertical slice implemented; Phase 4 remains in progress
+**Status:** recurring charges and controlled manual payments implemented; Phase 4 remains in progress
 **Date:** 2026-07-20
 
-## Intended and actual scope
+## Implemented scope
 
-This slice implements the first Phase 4 journey from the active tenancy created in Phase 3 through a posted recurring rent charge and a resident-visible balance. It does not claim completion of the full payments phase.
+- Idempotent recurring-rent generation with balanced accounts-receivable journals.
+- Property-scoped `finance.manage` manual-payment command for cash, checks, external bank transfers, and other externally received funds.
+- Exact multi-charge allocation, stable charge locking, and payment/charge over-allocation constraints.
+- Configurable evidence threshold with same-scope, scanned-clean document validation.
+- Duplicate external-reference detection and request replay protection.
+- Balanced payment journals, immutable financial history, append-only system receipts, audit records, and outbox events.
+- Operator `/app/payments` workspace, payment-entry review flow, and receipt views.
+- Resident ledger balance, remaining next-due amount, payment history, and scoped receipt access.
 
-Implemented:
+## Deferred scope
 
-- worker-authenticated `GenerateRecurringCharges` route and database command;
-- due-schedule locking, worker-run replay protection, and canonical charge idempotency;
-- accounts-receivable and rental-income journal posting;
-- book-currency enforcement and first-posting currency lock;
-- append-only journal transactions and entries;
-- `charge.posted` audit and outbox records;
-- operator Money workspace with property-scoped receivable summaries;
-- sanitized resident balance/next-due projection and `/home` experience.
+- Payment reversals, refunds, write-offs, accounting-period controls, and reconciliation resolution.
+- Online provider payment attempts and settlement reconciliation, which remain Phase 5 work.
+- Production scheduling/queue infrastructure, monitoring, pagination, and localization hardening.
 
-Deferred to later Phase 4 slices:
+## Architecture and controls
 
-- manual payments, allocations, receipts, reversals, write-offs, and accounting-period controls;
-- online provider payment attempts and reconciliation, which remain Phase 5 work;
-- production scheduling/queue infrastructure and operational alerting.
+- All monetary values use integer minor units and the accounting book currency.
+- `record_manual_payment` performs authorization, evidence checks, charge locks, journal posting, allocations, receipt creation, audit, and outbox writes in one transaction.
+- Manual payments must be fully allocated; unapplied money is intentionally excluded from this pilot slice.
+- Successful receipts are `system_generated` and cannot be updated or deleted. Corrections must use the future reversal workflow.
+- Browser roles can read only authorized payment rows; all writes go through the security-definer command with explicit execute grants.
+- Balances are derived from posted account-receivable journal entries, never edited directly.
 
-## Architecture decisions
-
-- Monetary values remain integer minor units and use the accounting book's immutable currency.
-- The worker calls a single transactional database function through a server-only service client. Browser roles have no execute permission.
-- A worker run ID identifies the full request and returns the original charge IDs on replay. Per-charge journal idempotency remains `charge:{scheduleId}:{dueDate}:{chargeType}`.
-- Resident balances are derived from posted accounts-receivable journal entries. Residents receive a sanitized DTO rather than raw journal rows.
-- Monthly and longer cadences preserve the configured due day and clamp it to the target month's final day.
-
-## Files and migration
+## Files
 
 - `supabase/migrations/20260720144109_phase_4_recurring_charges.sql`
-- `src/app/api/internal/charge-schedules/generate/route.ts`
-- `src/lib/validation/finance.ts`
-- `src/lib/data/finance.ts`
-- `src/app/app/money/page.tsx`
+- `supabase/migrations/20260720150956_phase_4_manual_payments.sql`
+- `src/app/api/v1/manual-payments/route.ts`
+- `src/app/app/payments/page.tsx`
+- `src/app/app/payments/record/`
+- `src/app/receipts/[documentId]/page.tsx`
 - `src/app/home/page.tsx`
+- `src/lib/data/finance.ts`
+- `src/lib/validation/finance.ts`
 - `scripts/validate-schema.mjs`
-
-## Security and financial review
-
-- `charges` has RLS and read-only Data API grants for authorized operators or the related resident.
-- The internal generation function is executable only by `service_role`; the HTTP route additionally requires a timing-safe bearer-secret comparison.
-- Operator summaries honor effective property-scoped `finance.read`/`finance.manage` access.
-- Resident summaries explicitly test the caller's active household relationship.
-- Journal balance is checked by a deferred constraint trigger, and posted journal rows reject updates/deletes.
-- Cross-book and cross-currency schedule inconsistencies fail the whole transaction.
 
 ## Verification evidence
 
-`npm run check` passed:
+The embedded Postgres harness covers canonical replay, mismatched replay rejection, evidence enforcement, duplicate external references, over-allocation rejection, balanced payment journals, partial charge status, immutable receipts, event traces, resident access, and outsider isolation. The verified example reduces the resident balance to `142500` minor units and the remaining due amount to `100000` after an `85000` payment.
 
-- ESLint: pass;
-- TypeScript: pass;
-- Vitest: 8 files, 25 tests passed;
-- embedded Postgres harness: pass, including one canonical recurring charge, replay, balanced journal, month-end cadence, immutable book currency/journals, resident balance `227500`, and outsider charge count `0`;
-- Next.js production build: pass.
+Run `npm run check` for ESLint, TypeScript, Vitest, embedded Postgres, and the production build. Browser verification covers desktop payments and manual entry plus mobile resident history and authenticated receipts.
 
-Browser verification passed for desktop `/app/money` and mobile `/home`: meaningful content rendered, expected controls were present, no console errors or warnings were reported, and no framework error overlay was present.
+## Forward-fix policy and known risks
 
-## Performance and cost observations
-
-- Due schedules use indexed status/book paths and are locked in stable ID order.
-- The command caps explicit schedule batches at 500. Large production runs should be partitioned by the future scheduler.
-- Summary projections are bounded to authorized active/scheduled tenancies; pagination should be added before the largest-organization workload test.
-- No new external provider or per-transaction infrastructure cost is introduced in this slice.
-
-## Migration and forward-fix plan
-
-The migration is forward-only. It backfills `accounting_books.first_posted_at` from existing journal transactions before enabling the currency immutability trigger. If a defect is found, ship a corrective migration and reconciliation query; do not delete or rewrite posted journal history.
-
-## Known risks
-
-- Production worker scheduling, retries, and monitoring are not yet wired.
-- A due schedule attached to a non-active tenancy fails the transaction by design; tenancy status automation is still needed.
-- Operator and resident summaries need pagination/localization hardening for later release gates.
-- Payments and allocations are absent, so balances currently reflect opening positions plus posted charges only.
+Migrations are forward-only. Correct defects with a new migration and reconciliation query; do not rewrite posted financial history. The main remaining risks are reversal/reconciliation workflows, production job operations, and large-organization query pagination.
