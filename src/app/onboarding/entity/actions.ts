@@ -37,5 +37,5 @@ export async function createEntityBookAction(_previousState: ActionState, formDa
     return { status: "error", message: error instanceof Error ? error.message : "Unable to create the entity and book.", requestId: crypto.randomUUID() };
   }
 
-  redirect("/app");
+  redirect("/onboarding/property");
 }

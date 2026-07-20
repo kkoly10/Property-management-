@@ -1,17 +1,9 @@
 import Link from "next/link";
-import { Building2, ChevronDown, CircleGauge, CreditCard, FileText, LayoutGrid, Settings, ShieldCheck, Users, Wrench } from "lucide-react";
+import { ChevronDown, LayoutGrid, Settings, ShieldCheck } from "lucide-react";
+import { PrimaryNavigation } from "@/components/app/primary-navigation";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-
-const navigation = [
-  { label: "Overview", href: "/app", icon: CircleGauge, active: true },
-  { label: "Portfolio", href: "/onboarding/entity", icon: Building2 },
-  { label: "Residents", href: "/app", icon: Users },
-  { label: "Money", href: "/app", icon: CreditCard },
-  { label: "Maintenance", href: "/app", icon: Wrench },
-  { label: "Documents", href: "/app", icon: FileText },
-];
 
 export function AppShell({ organizationName, children }: { organizationName: string; children: React.ReactNode }) {
   return (
@@ -25,13 +17,7 @@ export function AppShell({ organizationName, children }: { organizationName: str
             <ChevronDown className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
-        <nav aria-label="Primary" className="flex-1 space-y-1 px-3">
-          {navigation.map(({ label, href, icon: Icon, active }) => (
-            <Link key={label} href={href} aria-current={active ? "page" : undefined} className={`flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${active ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
-              <Icon aria-hidden="true" className="h-4 w-4" />{label}
-            </Link>
-          ))}
-        </nav>
+        <PrimaryNavigation />
         <div className="border-t p-3">
           <Link href="/settings/payments" className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"><Settings className="h-4 w-4" />Settings</Link>
           <div className="mt-2 flex items-center gap-3 rounded-md px-3 py-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ecfdf3] text-success"><ShieldCheck className="h-4 w-4" /></span><span><span className="block text-sm font-medium">Secure session</span><span className="block text-xs text-muted-foreground">RLS enforced</span></span></div>
