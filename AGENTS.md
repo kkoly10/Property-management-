@@ -1,16 +1,6 @@
 # Crecy Agent Rules
 
-Read `docs/crecy-v4/00_READ_ME_FIRST.md` first. This v4 package supersedes all previous specifications.
-
-## Materialization check
-
-The GitHub connector stores the complete authoritative text package in `.crecy-bootstrap/parts/` because it cannot upload local directories or execute repository code. Before reconnaissance, verify that `docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql` exists. If it does not, run:
-
-```bash
-bash scripts/materialize-crecy-v4.sh
-```
-
-Then commit the materialized files on the current branch. Do not implement from compressed part files directly.
+Read `docs/crecy-v4/00_READ_ME_FIRST.md` first. This v4.1.1 package supersedes all previous specifications.
 
 ## Sources of truth
 
@@ -34,3 +24,11 @@ Then commit the materialized files on the current branch. Do not implement from 
 - Rent uses connected-operator direct charges; Crecy does not custody rent.
 - Excluded P0 features stay excluded.
 - Unchecked professional launch evidence is never represented as approved.
+
+
+## v4.1 mandatory checks
+
+- Files `docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql` through `docs/crecy-v4/17_P0_DATA_CONTRACT_TRACEABILITY_MATRIX.md` must be present as ordinary files. Do not depend on `.crecy-bootstrap` or a materialization workflow.
+- Implement only commands that have matching persistence and traceability entries.
+- Owners and vendors must use sanitized projections/server DTOs, never full lease, payment, maintenance, or work-order table rows.
+- Property-scoped memberships must honor `starts_at`, `ends_at`, and explicit scopes on every data path.
