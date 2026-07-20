@@ -9,6 +9,7 @@ const foundationSql = await readFile(resolve(root, "supabase/migrations/20260720
 const portfolioSql = await readFile(resolve(root, "supabase/migrations/20260720104921_phase_2_portfolio_foundation.sql"), "utf8");
 const documentsSql = await readFile(resolve(root, "supabase/migrations/20260720113426_phase_2_document_ingestion.sql"), "utf8");
 const importsSql = await readFile(resolve(root, "supabase/migrations/20260720121643_phase_2_portfolio_imports.sql"), "utf8");
+const leasingSql = await readFile(resolve(root, "supabase/migrations/20260720130951_phase_3_existing_lease.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -456,6 +457,145 @@ async function validateImports() {
   return { organizations: 2, importedProperties: 2, importedUnits: 2, atomicLimitFailure: true, isolatedOrganization: orgB };
 }
 
+async function validateLeasing() {
+  const db = createDatabase();
+  await prepareSupabasePrelude(db);
+  await db.exec(foundationSql);
+  await db.exec(portfolioSql);
+  await db.exec(documentsSql);
+  await db.exec(leasingSql);
+
+  const admin = "00000000-0000-4000-8000-000000000041";
+  const scopedLeasingAgent = "00000000-0000-4000-8000-000000000042";
+  const residentA = "00000000-0000-4000-8000-000000000043";
+  const residentB = "00000000-0000-4000-8000-000000000044";
+  const outsider = "00000000-0000-4000-8000-000000000045";
+  await db.exec(`insert into auth.users(id) values ('${admin}'),('${scopedLeasingAgent}'),('${residentA}'),('${residentB}'),('${outsider}')`);
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const organizationResult = await db.query(`select public.create_organization('Lease Atlas','lease-atlas','property_manager','US','en-US','America/New_York','2026-07-20','a1000000-0000-4000-8000-000000000001') as result`);
+  const organizationId = organizationResult.rows[0].result.organizationId;
+  const entityResult = await db.query(`select public.create_operating_entity_and_book('${organizationId}','Lease Atlas LLC','Lease Atlas','US','company','USD','Virginia book','a2000000-0000-4000-8000-000000000002') as result`);
+  const operatingEntityId = entityResult.rows[0].result.operatingEntityId;
+  const accountingBookId = entityResult.rows[0].result.accountingBookId;
+  const propertyResult = await db.query(`select public.create_property('${organizationId}','${operatingEntityId}','${accountingBookId}','US_NATIONAL','River House','multifamily','10 River Road',null,'Richmond','VA','23220','US','America/New_York','a3000000-0000-4000-8000-000000000003') as result`);
+  const propertyId = propertyResult.rows[0].result.propertyId;
+  const unitAResult = await db.query(`select public.create_unit('${organizationId}','${propertyId}',null,'101','Apartment',2,1,850,'a4000000-0000-4000-8000-000000000004') as result`);
+  const unitA = unitAResult.rows[0].result.unitId;
+  const unitBResult = await db.query(`select public.create_unit('${organizationId}','${propertyId}',null,'102','Apartment',1,1,650,'a5000000-0000-4000-8000-000000000005') as result`);
+  const unitB = unitBResult.rows[0].result.unitId;
+
+  const signedDocumentA = "a6000000-0000-4000-8000-000000000006";
+  const signedVersionA = "a7000000-0000-4000-8000-000000000007";
+  const signedDocumentB = "a8000000-0000-4000-8000-000000000008";
+  const signedVersionB = "a9000000-0000-4000-8000-000000000009";
+  const pendingDocument = "aa000000-0000-4000-8000-000000000010";
+  const pendingVersion = "ab000000-0000-4000-8000-000000000011";
+  const overlapDocument = "ac100000-0000-4000-8000-000000000011";
+  const overlapVersion = "ac200000-0000-4000-8000-000000000011";
+  await db.exec(`
+    reset role;
+    insert into public.documents(id,organization_id,property_id,unit_id,document_type,title,source,status,operator_supplied_unverified,created_by) values
+      ('${signedDocumentA}','${organizationId}','${propertyId}','${unitA}','signed_lease','Unit 101 signed lease','operator_supplied','active',true,'${admin}'),
+      ('${signedDocumentB}','${organizationId}','${propertyId}','${unitB}','signed_lease','Unit 102 signed lease','operator_supplied','active',true,'${admin}'),
+      ('${pendingDocument}','${organizationId}','${propertyId}','${unitB}','signed_lease','Pending lease','operator_supplied','active',true,'${admin}'),
+      ('${overlapDocument}','${organizationId}','${propertyId}','${unitA}','signed_lease','Overlapping lease','operator_supplied','active',true,'${admin}');
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status) values
+      ('${signedVersionA}','${organizationId}','${signedDocumentA}',1,'private-documents','lease-a.pdf','application/pdf',100,'${"d".repeat(64)}','lease-a.pdf','${admin}','clean'),
+      ('${signedVersionB}','${organizationId}','${signedDocumentB}',1,'private-documents','lease-b.pdf','application/pdf',100,'${"e".repeat(64)}','lease-b.pdf','${admin}','clean'),
+      ('${pendingVersion}','${organizationId}','${pendingDocument}',1,'private-documents','pending.pdf','application/pdf',100,'${"f".repeat(64)}','pending.pdf','${admin}','quarantined'),
+      ('${overlapVersion}','${organizationId}','${overlapDocument}',1,'private-documents','overlap.pdf','application/pdf',100,'${"1".repeat(64)}','overlap.pdf','${admin}','clean');
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+
+  const householdA = { displayName: "Jordan Rivera household", members: [{ firstName: "Jordan", lastName: "Rivera", email: "jordan@example.com", phoneE164: "+12025550110", primaryContact: true, financiallyResponsible: true }] };
+  const leaseA = { source: "operator_supplied", externalReference: "LEGACY-101", startDate: "2026-01-01", endDate: "2026-12-31", rentAmountMinor: 185000, currencyCode: "USD", rentFrequency: "monthly", signedDocumentId: signedDocumentA };
+  const readyDocuments = await db.query(`select d.id from public.documents d where d.id='${signedDocumentA}' and d.organization_id='${organizationId}' and d.property_id='${propertyId}' and d.unit_id='${unitA}' and d.status='active' and d.tenancy_id is null and d.document_type in ('signed_lease','lease') and exists(select 1 from public.document_versions dv where dv.document_id=d.id and dv.organization_id=d.organization_id and dv.upload_status='clean')`);
+  assert(readyDocuments.rows.length === 1, "The clean signed lease fixture is not visible to the activating operator.");
+  const activation = await db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitA}','${JSON.stringify(householdA)}'::jsonb,'${JSON.stringify(leaseA)}'::jsonb,42500,'2026-08-01','ac000000-0000-4000-8000-000000000012') as result`);
+  const tenancyA = activation.rows[0].result.tenancyId;
+  const replay = await db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitA}','${JSON.stringify(householdA)}'::jsonb,'${JSON.stringify(leaseA)}'::jsonb,42500,'2026-08-01','ac000000-0000-4000-8000-000000000012') as result`);
+  assert(replay.rows[0].result.tenancyId === tenancyA, "Lease activation replay returned another tenancy.");
+  await expectDatabaseError(
+    () => db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitA}','${JSON.stringify({ ...householdA, displayName: "Changed" })}'::jsonb,'${JSON.stringify(leaseA)}'::jsonb,42500,'2026-08-01','ac000000-0000-4000-8000-000000000012')`),
+    "IDEMPOTENCY_CONFLICT",
+  );
+  const balance = await db.query(`select sum(debit_minor)::integer as debits,sum(credit_minor)::integer as credits from public.journal_entries where tenancy_id='${tenancyA}'`);
+  assert(balance.rows[0].debits === 42500 && balance.rows[0].credits === 42500, "Opening balance journal was not balanced.");
+  const attached = await db.query(`select tenancy_id,operator_supplied_unverified from public.documents where id='${signedDocumentA}'`);
+  assert(attached.rows[0].tenancy_id === tenancyA && attached.rows[0].operator_supplied_unverified, "Signed lease disclaimer or tenancy link was not retained.");
+
+  const rowsBeforeOverlap = await db.query(`select count(*)::integer as people from public.people`);
+  await expectDatabaseError(
+    () => db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitA}','${JSON.stringify({ displayName: "Overlap", members: [{ firstName: "Casey", lastName: "Lee", primaryContact: true, financiallyResponsible: true }] })}'::jsonb,'${JSON.stringify({ ...leaseA, signedDocumentId: overlapDocument })}'::jsonb,0,null,'ad000000-0000-4000-8000-000000000013')`),
+    "TENANCY_OVERLAP",
+  );
+  const rowsAfterOverlap = await db.query(`select count(*)::integer as people from public.people`);
+  assert(rowsAfterOverlap.rows[0].people === rowsBeforeOverlap.rows[0].people, "Rejected overlap left partial household rows.");
+  await expectDatabaseError(
+    () => db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitB}','${JSON.stringify({ displayName: "No primary", members: [{ firstName: "A", lastName: "B", primaryContact: false, financiallyResponsible: true }] })}'::jsonb,'${JSON.stringify({ ...leaseA, signedDocumentId: signedDocumentB })}'::jsonb,0,null,'ae000000-0000-4000-8000-000000000014')`),
+    "PRIMARY_CONTACT_REQUIRED",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitB}','${JSON.stringify(householdA)}'::jsonb,'${JSON.stringify({ ...leaseA, currencyCode: "CAD", signedDocumentId: signedDocumentB })}'::jsonb,0,null,'af000000-0000-4000-8000-000000000015')`),
+    "CURRENCY_MISMATCH",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitB}','${JSON.stringify(householdA)}'::jsonb,'${JSON.stringify({ ...leaseA, signedDocumentId: pendingDocument })}'::jsonb,0,null,'b0000000-0000-4000-8000-000000000016')`),
+    "SIGNED_DOCUMENT_NOT_READY",
+  );
+
+  await db.exec(`
+    reset role;
+    insert into public.organization_memberships(organization_id,user_id,role_code,status,starts_at)
+    values ('${organizationId}','${scopedLeasingAgent}','leasing_agent','active',now()-interval '1 day');
+    insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    select '${organizationId}',id,'${propertyId}' from public.organization_memberships where organization_id='${organizationId}' and user_id='${scopedLeasingAgent}';
+    set role authenticated; set request.jwt.claim.sub='${scopedLeasingAgent}';
+  `);
+  const householdB = { displayName: "Morgan Chen household", members: [{ firstName: "Morgan", lastName: "Chen", email: "morgan@example.com", primaryContact: true, financiallyResponsible: true }] };
+  const leaseB = { ...leaseA, externalReference: "LEGACY-102", signedDocumentId: signedDocumentB };
+  await expectDatabaseError(
+    () => db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitB}','${JSON.stringify(householdB)}'::jsonb,'${JSON.stringify(leaseB)}'::jsonb,1000,'2026-08-01','b1000000-0000-4000-8000-000000000017')`),
+    "FINANCE_PERMISSION_REQUIRED",
+  );
+  const scopedActivation = await db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitB}','${JSON.stringify(householdB)}'::jsonb,'${JSON.stringify(leaseB)}'::jsonb,0,'2026-08-01','b2000000-0000-4000-8000-000000000018') as result`);
+  const tenancyB = scopedActivation.rows[0].result.tenancyId;
+
+  await db.exec("reset role");
+  const personAResult = await db.query(`select hm.person_id from public.household_members hm where hm.household_id='${activation.rows[0].result.householdId}' and hm.is_primary_contact`);
+  const personBResult = await db.query(`select hm.person_id from public.household_members hm where hm.household_id='${scopedActivation.rows[0].result.householdId}' and hm.is_primary_contact`);
+  await db.exec(`insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values
+    ('${residentA}','${organizationId}','resident_person','${personAResult.rows[0].person_id}','active'),
+    ('${residentB}','${organizationId}','resident_person','${personBResult.rows[0].person_id}','active')`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${residentA}'`);
+  const residentVisibility = await db.query(`select
+    (select count(*)::integer from public.tenancies) as tenancies,
+    (select count(*)::integer from public.people) as people,
+    (select count(*)::integer from public.leases) as leases,
+    (select count(*)::integer from public.documents where document_type='signed_lease') as documents`);
+  assert(residentVisibility.rows[0].tenancies === 1 && residentVisibility.rows[0].people === 1 && residentVisibility.rows[0].leases === 1 && residentVisibility.rows[0].documents === 1, `Resident RLS exposed another household or hid the resident's lease: ${JSON.stringify(residentVisibility.rows[0])}`);
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const outsiderVisibility = await db.query(`select count(*)::integer as count from public.tenancies`);
+  assert(outsiderVisibility.rows[0].count === 0, "Unrelated user could read a tenancy.");
+  await expectDatabaseError(
+    () => db.query(`select public.activate_existing_lease('${organizationId}','${propertyId}','${unitB}','${JSON.stringify(householdB)}'::jsonb,'${JSON.stringify(leaseB)}'::jsonb,0,null,'b3000000-0000-4000-8000-000000000019')`),
+    "PROPERTY_SCOPE_DENIED",
+  );
+
+  await db.exec("reset role");
+  const traces = await db.query(`select
+    (select count(*)::integer from private.outbox_events where event_type='lease.recorded') as leases,
+    (select count(*)::integer from private.outbox_events where event_type='tenancy.activated') as tenancies,
+    (select count(*)::integer from private.outbox_events where event_type='charge_schedule.created') as schedules,
+    (select count(*)::integer from private.outbox_events where event_type='opening_balance.posted') as opening_balances
+  `);
+  assert(traces.rows[0].leases === 2 && traces.rows[0].tenancies === 2 && traces.rows[0].schedules === 2 && traces.rows[0].opening_balances === 1, "Lease activation audit/outbox traces are incomplete.");
+  await db.close();
+  return { activatedTenancies: 2, balancedOpeningBalance: true, residentVisibleTenancies: residentVisibility.rows[0].tenancies, isolatedTenancy: tenancyB };
+}
+
 try {
   const result = {
     authority: await validateAuthority(),
@@ -463,6 +603,7 @@ try {
     portfolio: await validatePortfolio(),
     documents: await validateDocuments(),
     imports: await validateImports(),
+    leasing: await validateLeasing(),
   };
   console.log(JSON.stringify(result));
 } catch (error) {
