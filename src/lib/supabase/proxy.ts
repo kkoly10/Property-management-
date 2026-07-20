@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 
-const protectedPrefixes = ["/app", "/onboarding", "/settings"];
+const protectedPrefixes = ["/app", "/home", "/onboarding", "/settings"];
 
 export async function updateSession(request: NextRequest) {
   const config = getPublicSupabaseConfig();

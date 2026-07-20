@@ -1,13 +1,13 @@
 # Crecy Property Management Platform
 
-Crecy is a global rental operating system for property operators, residents, owners, and invited vendors. The executable foundation now includes authentication, organization onboarding, operating entities and books, property and unit onboarding, the portfolio workspace, active-unit entitlement enforcement, and the database security boundary behind them.
+Crecy is a global rental operating system for property operators, residents, owners, and invited vendors. The executable MVP now includes the secure platform foundation, portfolio/import workflows, document ingestion, existing-lease activation, recurring rent generation, balanced and immutable journal posting, an operator receivables workspace, and a resident balance/next-due home.
 
 ## Run locally
 
 Prerequisites: Node.js 22 or newer and a Supabase project.
 
 1. Copy `.env.example` to `.env.local` and add the project URL and publishable key.
-2. Apply the SQL files in `supabase/migrations` in timestamp order.
+2. Apply the SQL files in `supabase/migrations` in timestamp order. Configure `CRECY_INTERNAL_WORKER_SECRET` before invoking internal scheduled-worker routes.
 3. Install and start the app:
 
 ```bash
@@ -27,7 +27,7 @@ npm run typecheck
 npm run build
 ```
 
-`test:db` runs the authoritative schema and both application migrations in embedded Postgres, then exercises tenant and property-scope isolation, expired memberships, command idempotency, country/book consistency, active-unit plan limits, usage metering, and audit/outbox trace creation.
+`test:db` runs the authoritative schema and all application migrations in embedded Postgres. It exercises tenant and property-scope isolation, expired memberships, idempotent commands, country/book consistency, plan limits, document/import controls, lease activation, balanced recurring-charge journals, append-only financial history, resident finance projection, and audit/outbox traces.
 
 ## Authoritative specification
 

@@ -10,6 +10,7 @@ const portfolioSql = await readFile(resolve(root, "supabase/migrations/202607201
 const documentsSql = await readFile(resolve(root, "supabase/migrations/20260720113426_phase_2_document_ingestion.sql"), "utf8");
 const importsSql = await readFile(resolve(root, "supabase/migrations/20260720121643_phase_2_portfolio_imports.sql"), "utf8");
 const leasingSql = await readFile(resolve(root, "supabase/migrations/20260720130951_phase_3_existing_lease.sql"), "utf8");
+const financeSql = await readFile(resolve(root, "supabase/migrations/20260720144109_phase_4_recurring_charges.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -596,6 +597,80 @@ async function validateLeasing() {
   return { activatedTenancies: 2, balancedOpeningBalance: true, residentVisibleTenancies: residentVisibility.rows[0].tenancies, isolatedTenancy: tenancyB };
 }
 
+async function validateRecurringCharges() {
+  const db = createDatabase();
+  await prepareSupabasePrelude(db);
+  await db.exec(foundationSql);
+  await db.exec(portfolioSql);
+  await db.exec(documentsSql);
+  await db.exec(leasingSql);
+  await db.exec(financeSql);
+
+  const admin = "c1000000-0000-4000-8000-000000000001";
+  const resident = "c2000000-0000-4000-8000-000000000002";
+  const outsider = "c3000000-0000-4000-8000-000000000003";
+  await db.exec(`insert into auth.users(id) values ('${admin}'),('${resident}'),('${outsider}')`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const organization = (await db.query(`select public.create_organization('Finance Atlas','finance-atlas','property_manager','US','en-US','America/New_York','2026-07-20','finance-org-0001') as result`)).rows[0].result;
+  const entity = (await db.query(`select public.create_operating_entity_and_book('${organization.organizationId}','Finance Atlas LLC','Finance Atlas','US','company','USD','Operating book','finance-book-0001') as result`)).rows[0].result;
+  const property = (await db.query(`select public.create_property('${organization.organizationId}','${entity.operatingEntityId}','${entity.accountingBookId}','US_NATIONAL','Maple Court','multifamily','100 Main Street',null,'Richmond','VA','23220','US','America/New_York','finance-property-0001') as result`)).rows[0].result;
+  const unit = (await db.query(`select public.create_unit('${organization.organizationId}','${property.propertyId}',null,'101','Apartment',2,1,850,'finance-unit-0001') as result`)).rows[0].result;
+  const documentId = "c4000000-0000-4000-8000-000000000004";
+  const versionId = "c5000000-0000-4000-8000-000000000005";
+  await db.exec(`
+    reset role;
+    insert into public.documents(id,organization_id,property_id,unit_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${documentId}','${organization.organizationId}','${property.propertyId}','${unit.unitId}','signed_lease','Unit 101 lease','operator_supplied','active',true,'${admin}');
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${versionId}','${organization.organizationId}','${documentId}',1,'private-documents','finance-lease.pdf','application/pdf',100,'${"a".repeat(64)}','finance-lease.pdf','${admin}','clean');
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+  const household = { displayName: "Avery Morgan household", members: [{ firstName: "Avery", lastName: "Morgan", email: "avery@example.com", primaryContact: true, financiallyResponsible: true }] };
+  const lease = { source: "operator_supplied", externalReference: "FIN-101", startDate: "2026-01-01", endDate: "2027-12-31", rentAmountMinor: 185000, currencyCode: "USD", rentFrequency: "monthly", signedDocumentId: documentId };
+  const activation = (await db.query(`select public.activate_existing_lease('${organization.organizationId}','${property.propertyId}','${unit.unitId}','${JSON.stringify(household)}'::jsonb,'${JSON.stringify(lease)}'::jsonb,42500,'2026-08-31','finance-lease-0001') as result`)).rows[0].result;
+  await db.exec("reset role; set role service_role");
+  const generated = (await db.query(`select public.generate_recurring_charges('2026-08-31',array['${activation.chargeScheduleId}'::uuid],'finance-worker-2026-08-31') as result`)).rows[0].result;
+  assert(generated.generatedCount === 1 && generated.chargeIds.length === 1 && !generated.replayed, "Due rent charge was not generated exactly once.");
+  const replay = (await db.query(`select public.generate_recurring_charges('2026-08-31',array['${activation.chargeScheduleId}'::uuid],'finance-worker-2026-08-31') as result`)).rows[0].result;
+  assert(replay.replayed && replay.chargeIds[0] === generated.chargeIds[0], "Worker replay did not return the canonical charge.");
+  const duplicateDateRun = (await db.query(`select public.generate_recurring_charges('2026-08-31',array['${activation.chargeScheduleId}'::uuid],'finance-worker-2026-08-31-retry') as result`)).rows[0].result;
+  assert(duplicateDateRun.generatedCount === 0, "A second worker run duplicated the scheduled charge.");
+
+  await db.exec("reset role");
+  const posting = (await db.query(`select
+    c.amount_minor,c.due_date,c.currency_code,c.journal_transaction_id,
+    sum(e.debit_minor)::integer as debits,sum(e.credit_minor)::integer as credits,
+    s.next_run_on,
+    (select count(*)::integer from private.outbox_events where event_type='charge.posted' and aggregate_id=c.id) as events
+    from public.charges c
+    join public.journal_entries e on e.journal_transaction_id=c.journal_transaction_id
+    join public.charge_schedules s on s.id=c.charge_schedule_id
+    where c.id='${generated.chargeIds[0]}'
+    group by c.id,s.next_run_on`)).rows[0];
+  assert(posting.amount_minor === 185000 && posting.debits === 185000 && posting.credits === 185000, "Rent posting did not create a balanced journal.");
+  assert(new Date(posting.next_run_on).toISOString().slice(0,10)==="2026-09-30", "Month-end schedule advancement did not clamp the due day correctly.");
+  assert(posting.events === 1, "Charge posting emitted the wrong number of outbox events.");
+  await expectDatabaseError(() => db.query(`update public.accounting_books set functional_currency_code='CAD' where id='${entity.accountingBookId}'`), "ACCOUNTING_BOOK_CURRENCY_IMMUTABLE");
+  await expectDatabaseError(() => db.query(`update public.journal_transactions set metadata='{}'::jsonb where id='${posting.journal_transaction_id}'`), "APPEND_ONLY_RECORD");
+  await expectDatabaseError(() => db.query(`delete from public.journal_entries where journal_transaction_id='${posting.journal_transaction_id}'`), "APPEND_ONLY_RECORD");
+
+  const person = (await db.query(`select hm.person_id from public.household_members hm where hm.household_id='${activation.householdId}' and hm.is_primary_contact`)).rows[0].person_id;
+  await db.exec(`insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values ('${resident}','${organization.organizationId}','resident_person','${person}','active')`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const residentSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
+  assert(residentSummary.items.length === 1 && residentSummary.items[0].balanceMinor === 227500, "Resident balance projection did not derive the posted opening and rent balance.");
+  const residentCharges = (await db.query("select count(*)::integer as count from public.charges")).rows[0].count;
+  assert(residentCharges === 1, "Resident could not read their own canonical charge.");
+  await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
+  const outsiderCharges = (await db.query("select count(*)::integer as count from public.charges")).rows[0].count;
+  assert(outsiderSummary.items.length === 0 && outsiderCharges === 0, "Resident finance data leaked to an unrelated user.");
+
+  await db.close();
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+}
+
 try {
   const result = {
     authority: await validateAuthority(),
@@ -604,6 +679,7 @@ try {
     documents: await validateDocuments(),
     imports: await validateImports(),
     leasing: await validateLeasing(),
+    finance: await validateRecurringCharges(),
   };
   console.log(JSON.stringify(result));
 } catch (error) {
