@@ -5,13 +5,16 @@ export type StripeWebhookEventData = {
   organizationId?: string;
   paymentId?: string;
   paymentAttemptId?: string;
+  refundId?: string;
   paymentIntentId?: string;
   checkoutSessionId?: string;
   chargeId?: string;
+  providerRefundId?: string;
   amountMinor?: number;
   currencyCode?: string;
   providerStatus?: string;
   failureCode?: string;
+  failureDetail?: string;
 };
 
 const webhookVerifier = new Stripe("sk_test_crecy_webhook_verifier", {
@@ -59,6 +62,24 @@ export function sanitizeStripeWebhookEvent(event: Stripe.Event): StripeWebhookEv
       amountMinor: session.amount_total ?? undefined,
       currencyCode: session.currency?.toUpperCase(),
       providerStatus: session.status ?? undefined,
+    };
+  }
+
+  if (event.type.startsWith("refund.")) {
+    const refund = event.data.object as Stripe.Refund;
+    return {
+      objectId: refund.id,
+      organizationId: refund.metadata?.crecy_organization_id,
+      paymentId: refund.metadata?.crecy_payment_id,
+      refundId: refund.metadata?.crecy_refund_id,
+      providerRefundId: refund.id,
+      paymentIntentId: referencedId(refund.payment_intent),
+      chargeId: referencedId(refund.charge),
+      amountMinor: refund.amount,
+      currencyCode: refund.currency?.toUpperCase(),
+      providerStatus: refund.status ?? undefined,
+      failureCode: refund.failure_reason ?? undefined,
+      failureDetail: refund.failure_reason ? `Stripe refund failed: ${refund.failure_reason}` : undefined,
     };
   }
 

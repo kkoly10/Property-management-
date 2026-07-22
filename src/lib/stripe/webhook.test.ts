@@ -63,4 +63,34 @@ describe("Stripe Connect webhook verification", () => {
     const { payload, signature } = signedEvent();
     expect(() => verifyStripeWebhook(payload.replace("50000", "50001"), signature, endpointSecret)).toThrow();
   });
+
+  it("sanitizes refund events to provider state and Crecy metadata", () => {
+    const event = {
+      type: "refund.updated",
+      data: { object: {
+        id: "re_crecy_refund_001",
+        object: "refund",
+        amount: 20_000,
+        currency: "usd",
+        status: "pending",
+        charge: "ch_crecy_charge_001",
+        payment_intent: "pi_crecy_payment_001",
+        failure_reason: null,
+        metadata: {
+          crecy_organization_id: "10000000-0000-4000-8000-000000000001",
+          crecy_payment_id: "20000000-0000-4000-8000-000000000002",
+          crecy_refund_id: "30000000-0000-4000-8000-000000000003",
+        },
+      } },
+    } as unknown as Stripe.Event;
+
+    expect(sanitizeStripeWebhookEvent(event)).toMatchObject({
+      providerRefundId: "re_crecy_refund_001",
+      refundId: "30000000-0000-4000-8000-000000000003",
+      paymentId: "20000000-0000-4000-8000-000000000002",
+      amountMinor: 20_000,
+      currencyCode: "USD",
+      providerStatus: "pending",
+    });
+  });
 });

@@ -29,7 +29,8 @@ export async function POST(request: Request) {
     return errorResponse("CONNECTED_ACCOUNT_REQUIRED", "A connected Stripe account is required.", 400);
   }
 
-  const result = await createAdminClient().rpc("process_stripe_webhook", {
+  const refundEvent = event.type === "refund.created" || event.type === "refund.updated" || event.type === "refund.failed";
+  const result = await createAdminClient().rpc(refundEvent ? "process_stripe_refund_webhook" : "process_stripe_webhook", {
     p_provider_event_id: event.id,
     p_provider_account_id: event.account,
     p_payload_sha256: createHash("sha256").update(rawBody).digest("hex"),
@@ -53,6 +54,8 @@ export async function POST(request: Request) {
       "PAYMENT_VALUE_MISMATCH",
       "PAYMENT_TERMINAL_STATE",
       "ALLOCATION_TOTAL_MISMATCH",
+      "INVALID_PROVIDER_REFUND_OBJECT",
+      "PROVIDER_REFUND_METADATA_MISMATCH",
     ].includes(response.errorCode ?? "");
     return errorResponse(
       response.errorCode ?? "WEBHOOK_PROCESSING_FAILED",

@@ -2,11 +2,15 @@ import "server-only";
 
 import Stripe from "stripe";
 import { buildDirectChargeCheckoutRequest, type DirectChargeCheckoutInput } from "@/lib/stripe/checkout";
+import { buildDirectChargeRefundRequest, normalizeStripeRefundStatus, type DirectChargeRefundInput } from "@/lib/stripe/refund";
 import { snapshotStripeAccount } from "@/lib/stripe/snapshot";
 
 let client: Stripe | null = null;
 
 export class StripeConnectConfigurationError extends Error {}
+export class StripeRefundDefinitiveError extends Error {
+  constructor(public readonly code: string, message: string) { super(message); }
+}
 
 function getStripeClient() {
   const secretKey = process.env.STRIPE_SECRET_KEY;
@@ -72,4 +76,24 @@ export async function createDirectChargeCheckoutSession(input: DirectChargeCheck
     checkoutUrl: session.url,
     expiresAt: new Date(session.expires_at * 1000).toISOString(),
   };
+}
+
+export async function createDirectChargeRefund(input: DirectChargeRefundInput) {
+  const { params, options } = buildDirectChargeRefundRequest(input);
+  try {
+    const refund = await getStripeClient().refunds.create(params, options);
+    return {
+      providerRefundId: refund.id,
+      providerStatus: normalizeStripeRefundStatus(refund.status),
+      failureCode: refund.failure_reason ?? null,
+      failureDetail: refund.failure_reason ? `Stripe refund failed: ${refund.failure_reason}` : null,
+      providerCreatedAt: new Date(refund.created * 1000).toISOString(),
+    };
+  } catch (error) {
+    const stripeError = error as Stripe.errors.StripeError;
+    if (stripeError?.type === "StripeCardError" || stripeError?.type === "StripeInvalidRequestError") {
+      throw new StripeRefundDefinitiveError(stripeError.code ?? stripeError.type, stripeError.message);
+    }
+    throw error;
+  }
 }
