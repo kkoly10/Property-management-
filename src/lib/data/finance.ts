@@ -35,6 +35,9 @@ export type PaymentDetail = PaymentSummaryItem & {
   eligibleCharges: { chargeId: string; description: string; dueDate: string; amountMinor: number; availableMinor: number }[];
   refunds: { refundId: string; amountMinor: number; status: string; reason: string; requestedAt: string; completedAt: string | null;
     correctiveJournalTransactionId: string | null; failureCode: string | null }[];
+  disputes: { disputeId: string; kind: string; amountMinor: number; currencyCode: CurrencyCode; reasonCode: string; status: string;
+    evidenceDueAt: string | null; openedAt: string; closedAt: string | null; reversalJournalTransactionId: string | null;
+    recoveryJournalTransactionId: string | null }[];
   corrections: { correctionId: string; correctionType: string; reason: string; paymentStatus: string; version: number; correctiveJournalTransactionId: string | null; correctedAt: string }[];
 };
 type DataMode = "setup" | "ready" | "error";
@@ -119,6 +122,7 @@ function normalizePaymentDetail(data: unknown): PaymentDetail | null {
       correctiveJournalTransactionId: value.correctiveJournalTransactionId ? String(value.correctiveJournalTransactionId) : null,
       failureCode: value.failureCode ? String(value.failureCode) : null,
     }; }),
+    disputes: [],
     corrections: objects(item, "corrections").map((raw) => { const value = raw as Record<string, unknown>; return {
       correctionId: String(value.correctionId), correctionType: String(value.correctionType), reason: String(value.reason), paymentStatus: String(value.paymentStatus),
       version: Number(value.version), correctiveJournalTransactionId: value.correctiveJournalTransactionId ? String(value.correctiveJournalTransactionId) : null,
@@ -133,7 +137,7 @@ const previewOption: ManualPaymentOption = { organizationId: "10000000-0000-4000
 const previewResidentPaymentOption: ResidentPaymentSessionOption = { organizationId: previewOption.organizationId, tenancyId: previewOption.tenancyId, organizationName: "Crecy Demo", propertyName: previewOption.propertyName, unitCode: previewOption.unitCode, currencyCode: previewOption.currencyCode, connectionStatus: "enabled", availableMethods: ["card", "bank"], charges: previewOption.charges.map((charge) => ({ chargeId: charge.chargeId, description: charge.description, dueDate: charge.dueDate, amountMinor: charge.amountMinor, remainingMinor: charge.remainingMinor })) };
 const previewPaymentDetail: PaymentDetail = { ...previewPayment, organizationId: previewOption.organizationId, version: 1, reason: "Check received at the office", journalTransactionId: "70000000-0000-4000-8000-000000000007", canCorrect: true, canRefund: false, refundableMinor: 0,
   allocations: [{ allocationId: "80000000-0000-4000-8000-000000000008", chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 85000, allocatedAt: previewPayment.receivedAt!, reversedAt: null, reversalReason: null }],
-  eligibleCharges: [{ chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 185000, availableMinor: 185000 }], refunds: [], corrections: [] };
+  eligibleCharges: [{ chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 185000, availableMinor: 185000 }], refunds: [], disputes: [], corrections: [] };
 
 export async function getOperatorPaymentWorkspace(): Promise<{ mode: DataMode; items: ReceivableSummaryItem[]; payments: PaymentSummaryItem[]; options: ManualPaymentOption[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewReceivable], payments: [previewPayment], options: [previewOption] };
@@ -189,11 +193,12 @@ export async function getPaymentDetail(paymentId: string): Promise<{ mode: DataM
   if (!getPublicSupabaseConfig()) return paymentId === previewPayment.paymentId ? { mode: "setup", payment: previewPaymentDetail } : { mode: "not_found" };
   try {
     const supabase = await createClient();
-    const [detail, eligibility] = await Promise.all([
+    const [detail, eligibility, disputeHistory] = await Promise.all([
       supabase.rpc("get_payment_detail", { p_payment_id: paymentId }),
       supabase.rpc("get_payment_refund_eligibility", { p_payment_id: paymentId }),
+      supabase.rpc("get_payment_dispute_history", { p_payment_id: paymentId }),
     ]);
-    if (detail.error || !detail.data || eligibility.error || !eligibility.data) return { mode: "not_found" };
+    if (detail.error || !detail.data || eligibility.error || !eligibility.data || disputeHistory.error || !disputeHistory.data) return { mode: "not_found" };
     const payment = normalizePaymentDetail(detail.data);
     if (payment) {
       const refund = eligibility.data as Record<string, unknown>;
@@ -205,6 +210,17 @@ export async function getPaymentDetail(paymentId: string): Promise<{ mode: DataM
         correctiveJournalTransactionId: value.correctiveJournalTransactionId ? String(value.correctiveJournalTransactionId) : null,
         failureCode: value.failureCode ? String(value.failureCode) : null,
       }; });
+      payment.disputes = objects(disputeHistory.data, "disputes").flatMap((raw) => {
+        const value = raw as Record<string, unknown>;
+        if (!isCurrency(value.currencyCode)) return [];
+        return [{
+          disputeId: String(value.disputeId), kind: String(value.kind), amountMinor: Number(value.amountMinor), currencyCode: value.currencyCode,
+          reasonCode: String(value.reasonCode), status: String(value.status), evidenceDueAt: value.evidenceDueAt ? String(value.evidenceDueAt) : null,
+          openedAt: String(value.openedAt), closedAt: value.closedAt ? String(value.closedAt) : null,
+          reversalJournalTransactionId: value.reversalJournalTransactionId ? String(value.reversalJournalTransactionId) : null,
+          recoveryJournalTransactionId: value.recoveryJournalTransactionId ? String(value.recoveryJournalTransactionId) : null,
+        }];
+      });
     }
     return payment ? { mode: "ready", payment } : { mode: "not_found" };
   } catch { return { mode: "error", requestId: crypto.randomUUID() }; }

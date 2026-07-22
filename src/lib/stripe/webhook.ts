@@ -10,9 +10,12 @@ export type StripeWebhookEventData = {
   checkoutSessionId?: string;
   chargeId?: string;
   providerRefundId?: string;
+  providerDisputeId?: string;
   amountMinor?: number;
   currencyCode?: string;
   providerStatus?: string;
+  reasonCode?: string;
+  evidenceDueAt?: string;
   failureCode?: string;
   failureDetail?: string;
 };
@@ -80,6 +83,23 @@ export function sanitizeStripeWebhookEvent(event: Stripe.Event): StripeWebhookEv
       providerStatus: refund.status ?? undefined,
       failureCode: refund.failure_reason ?? undefined,
       failureDetail: refund.failure_reason ? `Stripe refund failed: ${refund.failure_reason}` : undefined,
+    };
+  }
+
+  if (event.type.startsWith("charge.dispute.")) {
+    const dispute = event.data.object as Stripe.Dispute;
+    return {
+      objectId: dispute.id,
+      providerDisputeId: dispute.id,
+      paymentIntentId: referencedId(dispute.payment_intent),
+      chargeId: referencedId(dispute.charge),
+      amountMinor: dispute.amount,
+      currencyCode: dispute.currency?.toUpperCase(),
+      providerStatus: dispute.status,
+      reasonCode: dispute.reason,
+      evidenceDueAt: dispute.evidence_details?.due_by
+        ? new Date(dispute.evidence_details.due_by * 1000).toISOString()
+        : undefined,
     };
   }
 

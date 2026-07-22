@@ -18,6 +18,7 @@ const stripeOnboardingSql = await readFile(resolve(root, "supabase/migrations/20
 const residentPaymentSessionSql = await readFile(resolve(root, "supabase/migrations/20260722135623_phase_5_resident_payment_session.sql"), "utf8");
 const stripeWebhookSql = await readFile(resolve(root, "supabase/migrations/20260722150749_phase_5_stripe_webhook.sql"), "utf8");
 const providerRefundsSql = await readFile(resolve(root, "supabase/migrations/20260722154358_phase_5_provider_refunds.sql"), "utf8");
+const paymentDisputesSql = await readFile(resolve(root, "supabase/migrations/20260722161627_phase_5_payment_disputes.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -732,6 +733,7 @@ async function validateRecurringCharges() {
   await db.exec(residentPaymentSessionSql);
   await db.exec(stripeWebhookSql);
   await db.exec(providerRefundsSql);
+  await db.exec(paymentDisputesSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1153,6 +1155,12 @@ async function validateRecurringCharges() {
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const pendingEligibility = (await db.query(`select public.get_payment_refund_eligibility('${paymentSession.paymentId}') as result`)).rows[0].result;
   assert(pendingEligibility.refundableMinor === 30000, "A pending refund did not reserve its amount against concurrent refunds.");
+  await db.exec("reset role; set role service_role");
+  const pendingRefundDispute = (await db.query(`select public.process_stripe_dispute_webhook(
+    'evt_PendingRefundDispute001','acct_testFinance','${"6".repeat(64)}','charge.dispute.created','${refundProviderCreatedAt}',false,
+    '${JSON.stringify({ providerDisputeId: "du_PendingRefund001", paymentIntentId: "pi_resident0001", chargeId: "ch_resident0001", amountMinor: 10000, currencyCode: "USD", providerStatus: "needs_response", reasonCode: "fraudulent" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(pendingRefundDispute.errorCode === "PAYMENT_REFUND_PENDING", "A dispute raced a non-definitive provider refund instead of remaining retryable.");
 
   const refundWebhookData = JSON.stringify({
     organizationId: organization.organizationId,
@@ -1234,12 +1242,180 @@ async function validateRecurringCharges() {
   assert(finalRefundPosting.succeeded_refunds === 2 && finalRefundPosting.failed_refunds === 1 && finalRefundPosting.debits === 30000 && finalRefundPosting.credits === 30000, "Full refund history or corrective journal is incomplete.");
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const disputedAllocations = JSON.stringify([{ chargeId: generated.chargeIds[0], amountMinor: 50000 }]);
+  const disputedPreparation = (await db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',50000,'USD','${disputedAllocations}'::jsonb,'card','${paymentReturnUrl}','resident-dispute-session-0001'
+  ) as result`)).rows[0].result;
+  await db.exec("reset role; set role service_role");
+  await db.query(`select public.complete_resident_payment_session(
+    '${resident}','${organization.organizationId}','${disputedPreparation.paymentId}','${disputedPreparation.paymentAttemptId}',
+    '${activation.tenancyId}',50000,'USD','${disputedAllocations}'::jsonb,'card','${paymentReturnUrl}',
+    '${providerConnection.providerConnectionId}','acct_testFinance','cs_test_dispute0001','pi_dispute0001','open',
+    'https://checkout.stripe.com/c/pay/cs_test_dispute0001',now()+interval '30 minutes','resident-dispute-session-0001'
+  )`);
+  const disputedPaymentCreatedAt = (await db.query("select now()::text as created_at")).rows[0].created_at;
+  const disputedPaymentData = JSON.stringify({
+    organizationId: organization.organizationId,
+    paymentId: disputedPreparation.paymentId,
+    paymentAttemptId: disputedPreparation.paymentAttemptId,
+    paymentIntentId: "pi_dispute0001",
+    chargeId: "ch_dispute0001",
+    amountMinor: 50000,
+    currencyCode: "USD",
+    providerStatus: "succeeded",
+  });
+  const disputedPaymentSuccess = (await db.query(`select public.process_stripe_webhook(
+    'evt_DisputePaymentSuccess001','acct_testFinance','${"c".repeat(64)}','payment_intent.succeeded','${disputedPaymentCreatedAt}',false,
+    '${disputedPaymentData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(disputedPaymentSuccess.paymentStatus === "succeeded", "The dispute fixture payment was not authoritatively confirmed.");
+
+  const disputeOpenedAt = (await db.query("select now()::text as created_at")).rows[0].created_at;
+  const disputeCreatedData = JSON.stringify({
+    providerDisputeId: "du_CardDispute001",
+    paymentIntentId: "pi_dispute0001",
+    chargeId: "ch_dispute0001",
+    amountMinor: 20000,
+    currencyCode: "USD",
+    providerStatus: "needs_response",
+    reasonCode: "fraudulent",
+    evidenceDueAt: "2026-08-15T00:00:00.000Z",
+  });
+  const disputeCreated = (await db.query(`select public.process_stripe_dispute_webhook(
+    'evt_DisputeCreated001','acct_testFinance','${"d".repeat(64)}','charge.dispute.created','${disputeOpenedAt}',false,
+    '${disputeCreatedData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(disputeCreated.outcome === "processed" && disputeCreated.disputeKind === "dispute" && disputeCreated.paymentStatus === "disputed" && disputeCreated.reversalJournalTransactionId, "A card dispute did not reopen the receivable exactly once.");
+  const disputeReplay = (await db.query(`select public.process_stripe_dispute_webhook(
+    'evt_DisputeCreated001','acct_testFinance','${"d".repeat(64)}','charge.dispute.created','${disputeOpenedAt}',false,
+    '${disputeCreatedData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(disputeReplay.outcome === "duplicate", "A replayed card dispute was not deduplicated.");
+  const staleDisputeAt = (await db.query(`select ('${disputeOpenedAt}'::timestamptz-interval '1 second')::text as created_at`)).rows[0].created_at;
+  const staleDispute = (await db.query(`select public.process_stripe_dispute_webhook(
+    'evt_DisputeStale001','acct_testFinance','${"e".repeat(64)}','charge.dispute.updated','${staleDisputeAt}',false,
+    '${JSON.stringify({ ...JSON.parse(disputeCreatedData), providerStatus: "under_review" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(staleDispute.outcome === "ignored" && staleDispute.disputeStatus === "needs_response", "An out-of-order dispute update regressed canonical state.");
+  const disputeReviewAt = (await db.query(`select ('${disputeOpenedAt}'::timestamptz+interval '1 second')::text as created_at`)).rows[0].created_at;
+  const disputeReview = (await db.query(`select public.process_stripe_dispute_webhook(
+    'evt_DisputeReview001','acct_testFinance','${"f".repeat(64)}','charge.dispute.updated','${disputeReviewAt}',false,
+    '${JSON.stringify({ ...JSON.parse(disputeCreatedData), providerStatus: "under_review" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(disputeReview.outcome === "processed" && disputeReview.paymentStatus === "disputed" && disputeReview.reversalJournalTransactionId === disputeCreated.reversalJournalTransactionId, "A dispute status update duplicated financial reversal.");
+  const disputeWonAt = (await db.query(`select ('${disputeOpenedAt}'::timestamptz+interval '2 seconds')::text as created_at`)).rows[0].created_at;
+  const disputeWon = (await db.query(`select public.process_stripe_dispute_webhook(
+    'evt_DisputeWon001','acct_testFinance','${"0".repeat(64)}','charge.dispute.closed','${disputeWonAt}',false,
+    '${JSON.stringify({ ...JSON.parse(disputeCreatedData), providerStatus: "won" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(disputeWon.outcome === "processed" && disputeWon.paymentStatus === "succeeded" && disputeWon.recoveryJournalTransactionId, "A won dispute did not restore the payment and receivable allocation.");
+
+  await db.exec("reset role");
+  const wonDisputePosting = (await db.query(`select p.status,c.status as charge_status,
+    (select coalesce(sum(pa.amount_minor),0)::integer from public.payment_allocations pa where pa.payment_id=p.id and pa.reversed_at is null) as active_allocations,
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${disputeCreated.reversalJournalTransactionId}') as reversal_debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${disputeCreated.reversalJournalTransactionId}') as reversal_credits,
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${disputeWon.recoveryJournalTransactionId}') as recovery_debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${disputeWon.recoveryJournalTransactionId}') as recovery_credits,
+    (select sum(da.restored_amount_minor)::integer from public.payment_dispute_allocations da where da.payment_dispute_id='${disputeCreated.disputeId}') as restored_allocations
+    from public.payments p join public.charges c on c.id='${generated.chargeIds[0]}' where p.id='${disputedPreparation.paymentId}'`)).rows[0];
+  assert(wonDisputePosting.status === "succeeded" && wonDisputePosting.charge_status === "partially_paid" && wonDisputePosting.active_allocations === 50000 && wonDisputePosting.restored_allocations === 20000, "A dispute win did not restore the exact allocation slice.");
+  assert(wonDisputePosting.reversal_debits === 20000 && wonDisputePosting.reversal_credits === 20000 && wonDisputePosting.recovery_debits === 20000 && wonDisputePosting.recovery_credits === 20000, "Dispute reversal or recovery journal is not balanced.");
+
+  await db.exec("set role service_role");
+  const secondDisputeAt = (await db.query("select now()::text as created_at")).rows[0].created_at;
+  const secondDisputeData = JSON.stringify({
+    providerDisputeId: "du_CardDispute002",
+    paymentIntentId: "pi_dispute0001",
+    chargeId: "ch_dispute0001",
+    amountMinor: 10000,
+    currencyCode: "USD",
+    providerStatus: "needs_response",
+    reasonCode: "unrecognized",
+  });
+  const secondDispute = (await db.query(`select public.process_stripe_dispute_webhook(
+    'evt_DisputeCreated002','acct_testFinance','${"1".repeat(64)}','charge.dispute.created','${secondDisputeAt}',false,
+    '${secondDisputeData}'::jsonb
+  ) as result`)).rows[0].result;
+  const secondDisputeLostAt = (await db.query(`select ('${secondDisputeAt}'::timestamptz+interval '1 second')::text as created_at`)).rows[0].created_at;
+  const secondDisputeLost = (await db.query(`select public.process_stripe_dispute_webhook(
+    'evt_DisputeLost002','acct_testFinance','${"2".repeat(64)}','charge.dispute.closed','${secondDisputeLostAt}',false,
+    '${JSON.stringify({ ...JSON.parse(secondDisputeData), providerStatus: "lost" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(secondDispute.paymentStatus === "disputed" && secondDisputeLost.paymentStatus === "reversed" && !secondDisputeLost.recoveryJournalTransactionId, "A lost card dispute did not retain its reversal as terminal history.");
+  await db.exec("reset role");
+  const lostDisputeEvents = (await db.query(`select count(*)::integer as count from private.outbox_events
+    where event_type='payment.dispute_resolved' and payload->>'disputeId'='${secondDispute.disputeId}' and payload->>'resolution'='lost'`)).rows[0].count;
+  assert(lostDisputeEvents === 1, "A lost dispute did not publish its terminal resolution.");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const returnedAllocations = JSON.stringify([{ chargeId: generated.chargeIds[0], amountMinor: 25000 }]);
+  const returnedPreparation = (await db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',25000,'USD','${returnedAllocations}'::jsonb,'bank','${paymentReturnUrl}','resident-return-session-0001'
+  ) as result`)).rows[0].result;
+  assert(returnedPreparation.providerMethodCode === "us_bank_account", "The returned-payment fixture did not use the ACH method.");
+  await db.exec("reset role; set role service_role");
+  await db.query(`select public.complete_resident_payment_session(
+    '${resident}','${organization.organizationId}','${returnedPreparation.paymentId}','${returnedPreparation.paymentAttemptId}',
+    '${activation.tenancyId}',25000,'USD','${returnedAllocations}'::jsonb,'bank','${paymentReturnUrl}',
+    '${providerConnection.providerConnectionId}','acct_testFinance','cs_test_return0001','pi_return0001','open',
+    'https://checkout.stripe.com/c/pay/cs_test_return0001',now()+interval '30 minutes','resident-return-session-0001'
+  )`);
+  const returnedPaymentCreatedAt = (await db.query("select now()::text as created_at")).rows[0].created_at;
+  const returnedPaymentData = JSON.stringify({
+    organizationId: organization.organizationId,
+    paymentId: returnedPreparation.paymentId,
+    paymentAttemptId: returnedPreparation.paymentAttemptId,
+    paymentIntentId: "pi_return0001",
+    chargeId: "ch_return0001",
+    amountMinor: 25000,
+    currencyCode: "USD",
+    providerStatus: "succeeded",
+  });
+  await db.query(`select public.process_stripe_webhook(
+    'evt_ReturnPaymentSuccess001','acct_testFinance','${"3".repeat(64)}','payment_intent.succeeded','${returnedPaymentCreatedAt}',false,
+    '${returnedPaymentData}'::jsonb
+  )`);
+  const returnEventAt = (await db.query("select now()::text as created_at")).rows[0].created_at;
+  const returnData = JSON.stringify({
+    providerDisputeId: "du_BankReturn001",
+    paymentIntentId: "pi_return0001",
+    chargeId: "ch_return0001",
+    amountMinor: 25000,
+    currencyCode: "USD",
+    providerStatus: "lost",
+    reasonCode: "insufficient_funds",
+  });
+  const returnedDebit = (await db.query(`select public.process_stripe_dispute_webhook(
+    'evt_BankReturn001','acct_testFinance','${"4".repeat(64)}','charge.dispute.closed','${returnEventAt}',false,
+    '${returnData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(returnedDebit.outcome === "processed" && returnedDebit.disputeKind === "return" && returnedDebit.paymentStatus === "returned" && returnedDebit.reversalJournalTransactionId, "A post-success ACH return was not classified and reversed as a returned payment.");
+  await db.exec("reset role");
+  const returnedDebitPosting = (await db.query(`select p.status,
+    (select coalesce(sum(pa.amount_minor),0)::integer from public.payment_allocations pa where pa.payment_id=p.id and pa.reversed_at is null) as active_allocations,
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${returnedDebit.reversalJournalTransactionId}') as debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${returnedDebit.reversalJournalTransactionId}') as credits,
+    (select count(*)::integer from private.outbox_events o where o.event_type='payment.returned' and o.payload->>'disputeId'='${returnedDebit.disputeId}') as return_events
+    from public.payments p where p.id='${returnedPreparation.paymentId}'`)).rows[0];
+  assert(returnedDebitPosting.status === "returned" && returnedDebitPosting.active_allocations === 0 && returnedDebitPosting.debits === 25000 && returnedDebitPosting.credits === 25000 && returnedDebitPosting.return_events === 1, "Returned debit accounting or outbox trace is incomplete.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const residentDisputeHistory = (await db.query(`select public.get_payment_dispute_history('${disputedPreparation.paymentId}') as result`)).rows[0].result;
+  const residentReturnHistory = (await db.query(`select public.get_payment_dispute_history('${returnedPreparation.paymentId}') as result`)).rows[0].result;
+  assert(residentDisputeHistory.disputes.length === 2 && residentReturnHistory.disputes.length === 1 && residentReturnHistory.disputes[0].kind === "return", "Sanitized resident return/dispute history is incomplete.");
+  await expectDatabaseError(() => db.query("select count(*) from public.payment_disputes"), "permission denied");
+  await expectDatabaseError(() => db.query(`select public.process_stripe_dispute_webhook(
+    'evt_UnauthorizedDispute001','acct_testFinance','${"5".repeat(64)}','charge.dispute.created','${returnEventAt}',false,'{}'::jsonb
+  )`), "permission denied");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentPayments = (await db.query("select public.get_resident_payment_history() as result")).rows[0].result;
   const residentReceipt = (await db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}') as result`)).rows[0].result;
   const residentPaymentDetail = (await db.query(`select public.get_payment_detail('${payment.paymentId}') as result`)).rows[0].result;
   const residentRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${payment.paymentId}'`)).rows[0].count;
   const residentProviderRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${paymentSession.paymentId}'`)).rows[0].count;
-  assert(residentPayments.items.length === 3 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "refunded" && residentPayments.items.find((item) => item.paymentId === failedPreparation.paymentId)?.status === "failed" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2 && residentProviderRefunds === 3, "Resident payment session, correction history, refund state, or corrected receipt is unavailable.");
+  assert(residentPayments.items.length === 5 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "refunded" && residentPayments.items.find((item) => item.paymentId === failedPreparation.paymentId)?.status === "failed" && residentPayments.items.find((item) => item.paymentId === disputedPreparation.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === returnedPreparation.paymentId)?.status === "returned" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2 && residentProviderRefunds === 3, "Resident payment session, correction history, refund, return, dispute, or corrected receipt state is unavailable.");
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
@@ -1247,6 +1423,7 @@ async function validateRecurringCharges() {
   const outsiderPayments = (await db.query("select count(*)::integer as count from public.payments")).rows[0].count;
   const outsiderAttempts = (await db.query("select count(*)::integer as count from public.payment_attempts")).rows[0].count;
   const outsiderRefunds = (await db.query("select count(*)::integer as count from public.payment_refunds")).rows[0].count;
+  await expectDatabaseError(() => db.query(`select public.get_payment_dispute_history('${disputedPreparation.paymentId}')`), "PAYMENT_NOT_FOUND");
   await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',1000,'USD','${receivedAt}','Unauthorized cash','${evidenceDocumentId}','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,null,'outsider-manual-payment')`), "PROPERTY_SCOPE_DENIED");
   await expectDatabaseError(() => db.query(`select public.reverse_or_correct_payment('${payment.paymentId}','metadata_correction','Unauthorized correction','reversed',4,null,'{"manualReason":"Forged change"}'::jsonb,'outsider-payment-correction')`), "PROPERTY_SCOPE_DENIED");
   await expectDatabaseError(() => db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}')`), "RECEIPT_NOT_FOUND");
@@ -1256,7 +1433,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0, "Resident finance data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 1, persistedRefunds: operatorRefunds, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 3, persistedRefunds: operatorRefunds, paymentDisputes: 3, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

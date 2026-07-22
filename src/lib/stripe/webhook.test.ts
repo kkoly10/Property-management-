@@ -93,4 +93,34 @@ describe("Stripe Connect webhook verification", () => {
       providerStatus: "pending",
     });
   });
+
+  it("sanitizes dispute events without exposing evidence or customer data", () => {
+    const event = {
+      type: "charge.dispute.created",
+      data: { object: {
+        id: "du_crecy_dispute_001",
+        object: "dispute",
+        amount: 20_000,
+        currency: "usd",
+        status: "needs_response",
+        reason: "fraudulent",
+        charge: "ch_crecy_charge_001",
+        payment_intent: "pi_crecy_payment_001",
+        evidence: { customer_email_address: "private@example.test" },
+        evidence_details: { due_by: 1_785_086_400 },
+      } },
+    } as unknown as Stripe.Event;
+
+    expect(sanitizeStripeWebhookEvent(event)).toEqual({
+      objectId: "du_crecy_dispute_001",
+      providerDisputeId: "du_crecy_dispute_001",
+      paymentIntentId: "pi_crecy_payment_001",
+      chargeId: "ch_crecy_charge_001",
+      amountMinor: 20_000,
+      currencyCode: "USD",
+      providerStatus: "needs_response",
+      reasonCode: "fraudulent",
+      evidenceDueAt: "2026-07-26T17:20:00.000Z",
+    });
+  });
 });
