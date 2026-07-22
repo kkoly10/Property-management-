@@ -13,6 +13,7 @@ const leasingSql = await readFile(resolve(root, "supabase/migrations/20260720130
 const financeSql = await readFile(resolve(root, "supabase/migrations/20260720144109_phase_4_recurring_charges.sql"), "utf8");
 const manualPaymentsSql = await readFile(resolve(root, "supabase/migrations/20260720150956_phase_4_manual_payments.sql"), "utf8");
 const contractCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260722095618_v4_1_1_contract_corrections.sql"), "utf8");
+const paymentCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260722125015_phase_4_payment_corrections.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -715,6 +716,7 @@ async function validateRecurringCharges() {
   await db.exec(financeSql);
   await db.exec(manualPaymentsSql);
   await db.exec(contractCorrectionsSql);
+  await db.exec(paymentCorrectionsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -796,6 +798,60 @@ async function validateRecurringCharges() {
   assert(paymentPosting.source === "system_generated" && !paymentPosting.operator_supplied_unverified, "Receipt document provenance is incorrect.");
   await expectDatabaseError(() => db.query(`update public.documents set title='Changed' where id='${payment.receiptDocumentId}'`), "APPEND_ONLY_RECORD");
 
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const metadataCorrection = (await db.query(`select public.reverse_or_correct_payment(
+    '${payment.paymentId}','metadata_correction','Correct the check reference','succeeded',1,null,
+    '{"manualReason":"Check received by the front office","externalReference":"CHECK-1042-CORRECTED"}'::jsonb,'payment-correction-meta-0001'
+  ) as result`)).rows[0].result;
+  assert(metadataCorrection.version === 2 && metadataCorrection.paymentStatus === "succeeded" && metadataCorrection.correctiveJournalTransactionId === null, "Metadata correction changed economic state or failed optimistic versioning.");
+  const metadataReplay = (await db.query(`select public.reverse_or_correct_payment(
+    '${payment.paymentId}','metadata_correction','Correct the check reference','succeeded',1,null,
+    '{"manualReason":"Check received by the front office","externalReference":"CHECK-1042-CORRECTED"}'::jsonb,'payment-correction-meta-0001'
+  ) as result`)).rows[0].result;
+  assert(metadataReplay.version === metadataCorrection.version, "Payment correction replay did not return the canonical result.");
+
+  const replacementAllocations = JSON.stringify([{ chargeId: generated.chargeIds[0], amountMinor: 85000 }]);
+  const allocationCorrection = (await db.query(`select public.reverse_or_correct_payment(
+    '${payment.paymentId}','allocation_correction','Reconfirm the intended rent allocation','succeeded',2,
+    '${replacementAllocations}'::jsonb,null,'payment-correction-allocation-0001'
+  ) as result`)).rows[0].result;
+  assert(allocationCorrection.version === 3 && allocationCorrection.correctiveJournalTransactionId, "Allocation correction did not create its corrective journal.");
+  await expectDatabaseError(() => db.query(`select public.reverse_or_correct_payment(
+    '${payment.paymentId}','allocation_correction','Stale correction attempt','succeeded',2,
+    '${replacementAllocations}'::jsonb,null,'payment-correction-stale-0001'
+  )`), "PAYMENT_VERSION_CONFLICT");
+  await expectDatabaseError(() => db.query(`update public.payment_allocations set amount_minor=1 where payment_id='${payment.paymentId}' and reversed_at is null`), "permission denied");
+
+  const reversal = (await db.query(`select public.reverse_or_correct_payment(
+    '${payment.paymentId}','reversal','Check was entered against the wrong resident','succeeded',3,null,null,
+    'payment-correction-reversal-0001'
+  ) as result`)).rows[0].result;
+  assert(reversal.version === 4 && reversal.paymentStatus === "reversed" && reversal.correctiveJournalTransactionId, "Payment reversal did not return its terminal state and corrective journal.");
+  const reversalReplay = (await db.query(`select public.reverse_or_correct_payment(
+    '${payment.paymentId}','reversal','Check was entered against the wrong resident','succeeded',3,null,null,
+    'payment-correction-reversal-0001'
+  ) as result`)).rows[0].result;
+  assert(reversalReplay.correctiveJournalTransactionId === reversal.correctiveJournalTransactionId, "Payment reversal replay created a second correction.");
+  await db.exec("reset role");
+  const correctionPosting = (await db.query(`select p.status,p.version,c.status as charge_status,p.manual_external_reference,
+    (select count(*)::integer from public.payment_allocations pa where pa.payment_id=p.id) as allocation_rows,
+    (select count(*)::integer from public.payment_allocations pa where pa.payment_id=p.id and pa.reversed_at is not null) as reversed_allocations,
+    (select count(*)::integer from public.payment_allocations pa where pa.payment_id=p.id and pa.reversed_at is null) as active_allocations,
+    (select count(*)::integer from audit.audit_events a where a.resource_id=p.id and a.action_code='payment.corrected') as correction_audits,
+    (select count(*)::integer from private.outbox_events o where o.aggregate_id=p.id and o.event_type='payment.corrected') as correction_events,
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${allocationCorrection.correctiveJournalTransactionId}') as allocation_debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${allocationCorrection.correctiveJournalTransactionId}') as allocation_credits,
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${reversal.correctiveJournalTransactionId}') as reversal_debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${reversal.correctiveJournalTransactionId}') as reversal_credits
+    from public.payments p join public.charges c on c.id='${generated.chargeIds[0]}' where p.id='${payment.paymentId}'`)).rows[0];
+  assert(correctionPosting.status === "reversed" && correctionPosting.version === 4 && correctionPosting.charge_status === "open", "Reversal did not reopen the charge or advance payment state.");
+  assert(correctionPosting.allocation_rows === 2 && correctionPosting.reversed_allocations === 2 && correctionPosting.active_allocations === 0, "Correction did not retain and reverse allocation history.");
+  assert(correctionPosting.correction_audits === 3 && correctionPosting.correction_events === 3, "Correction audit/outbox trace is incomplete.");
+  assert(correctionPosting.allocation_debits === 85000 && correctionPosting.allocation_credits === 85000 && correctionPosting.reversal_debits === 85000 && correctionPosting.reversal_credits === 85000, "Corrective journals are not balanced.");
+  assert(correctionPosting.manual_external_reference === "CHECK-1042-CORRECTED", "Audited metadata correction was not applied.");
+  await expectDatabaseError(() => db.query(`update public.payment_allocations set amount_minor=1 where payment_id='${payment.paymentId}'`), "PAYMENT_ALLOCATION_APPEND_ONLY");
+  await expectDatabaseError(() => db.query(`update public.payments set amount_minor=1 where id='${payment.paymentId}'`), "PAYMENT_FINANCIAL_FIELDS_IMMUTABLE");
+
   const actorScopes = await db.query(`select count(*)::integer as total,count(actor_scope)::integer as scoped,
     count(*) filter (where actor_scope='user:'||actor_user_id::text)::integer as user_scoped
     from private.idempotency_records where actor_user_id is not null`);
@@ -822,13 +878,14 @@ async function validateRecurringCharges() {
   await db.exec(`insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values ('${resident}','${organization.organizationId}','resident_person','${person}','active')`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
-  assert(residentSummary.items.length === 1 && residentSummary.items[0].balanceMinor === 142500 && residentSummary.items[0].nextDueAmountMinor === 100000, "Resident balance projection did not derive payment-adjusted balances.");
+  assert(residentSummary.items.length === 1 && residentSummary.items[0].balanceMinor === 227500 && residentSummary.items[0].nextDueAmountMinor === 185000, "Resident balance projection did not reflect the reopened receivable.");
   const residentCharges = (await db.query("select count(*)::integer as count from public.charges")).rows[0].count;
   assert(residentCharges === 1, "Resident could not read their own canonical charge.");
   const residentPayments = (await db.query("select public.get_resident_payment_history() as result")).rows[0].result;
   const residentReceipt = (await db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}') as result`)).rows[0].result;
+  const residentPaymentDetail = (await db.query(`select public.get_payment_detail('${payment.paymentId}') as result`)).rows[0].result;
   const residentRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${payment.paymentId}'`)).rows[0].count;
-  assert(residentPayments.items.length === 1 && residentReceipt.paymentId === payment.paymentId && residentRefunds === 2, "Resident payment history, refund state, or receipt is unavailable.");
+  assert(residentPayments.items.length === 1 && residentPayments.items[0].status === "reversed" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2, "Resident correction history, refund state, or corrected receipt is unavailable.");
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
@@ -836,11 +893,12 @@ async function validateRecurringCharges() {
   const outsiderPayments = (await db.query("select count(*)::integer as count from public.payments")).rows[0].count;
   const outsiderRefunds = (await db.query("select count(*)::integer as count from public.payment_refunds")).rows[0].count;
   await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',1000,'USD','${receivedAt}','Unauthorized cash','${evidenceDocumentId}','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,null,'outsider-manual-payment')`), "PROPERTY_SCOPE_DENIED");
+  await expectDatabaseError(() => db.query(`select public.reverse_or_correct_payment('${payment.paymentId}','metadata_correction','Unauthorized correction','reversed',4,null,'{"manualReason":"Forged change"}'::jsonb,'outsider-payment-correction')`), "PROPERTY_SCOPE_DENIED");
   await expectDatabaseError(() => db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}')`), "RECEIPT_NOT_FOUND");
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderRefunds === 0, "Resident finance data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, persistedRefunds: operatorRefunds, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, persistedRefunds: operatorRefunds, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
