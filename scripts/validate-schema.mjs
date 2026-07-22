@@ -21,6 +21,7 @@ const providerRefundsSql = await readFile(resolve(root, "supabase/migrations/202
 const paymentDisputesSql = await readFile(resolve(root, "supabase/migrations/20260722161627_phase_5_payment_disputes.sql"), "utf8");
 const settlementReconciliationSql = await readFile(resolve(root, "supabase/migrations/20260722182753_phase_5_settlement_reconciliation.sql"), "utf8");
 const paymentFailureRetrySql = await readFile(resolve(root, "supabase/migrations/20260722193025_phase_5_payment_failure_retry.sql"), "utf8");
+const maintenanceIntakeSql = await readFile(resolve(root, "supabase/migrations/20260722201220_phase_6_maintenance_intake.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -738,6 +739,7 @@ async function validateRecurringCharges() {
   await db.exec(paymentDisputesSql);
   await db.exec(settlementReconciliationSql);
   await db.exec(paymentFailureRetrySql);
+  await db.exec(maintenanceIntakeSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -943,6 +945,47 @@ async function validateRecurringCharges() {
 
   const person = (await db.query(`select hm.person_id from public.household_members hm where hm.household_id='${activation.householdId}' and hm.is_primary_contact`)).rows[0].person_id;
   await db.exec(`insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values ('${resident}','${organization.organizationId}','resident_person','${person}','active')`);
+  const maintenanceEvidenceId = "ca000000-0000-4000-8000-000000000010";
+  await db.exec(`
+    insert into public.documents(id,organization_id,property_id,unit_id,tenancy_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${maintenanceEvidenceId}','${organization.organizationId}','${property.propertyId}','${unit.unitId}','${activation.tenancyId}','maintenance_evidence','Leaking sink','operator_supplied','active',true,'${resident}');
+    insert into public.document_versions(organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${organization.organizationId}','${maintenanceEvidenceId}',1,'private-documents','maintenance/sink.jpg','image/jpeg',100,'${"e".repeat(64)}','sink.jpg','${resident}','quarantined');
+    set role authenticated; set request.jwt.claim.sub='${resident}';
+  `);
+  const residentUploadGrant = (await db.query(`select public.create_document_upload_grant(
+    '${organization.organizationId}','tenancy','${activation.tenancyId}','maintenance_evidence','Bathroom leak','leak.jpg','image/jpeg',100,'maintenance-upload-grant-0001'
+  ) as result`)).rows[0].result;
+  assert(residentUploadGrant.grantId && residentUploadGrant.storagePath.includes(`/tenancy/${activation.tenancyId}/`), "Resident maintenance evidence did not receive a tenancy-scoped upload grant.");
+  await expectDatabaseError(() => db.query(`select public.create_document_upload_grant(
+    '${organization.organizationId}','tenancy','${activation.tenancyId}','signed_lease','Forged lease','lease.pdf','application/pdf',100,'maintenance-upload-grant-forged'
+  )`), "upload_grants_tenancy_evidence_only");
+  const preferredWindow = JSON.stringify([{ start: "2026-07-24T13:00:00-04:00", end: "2026-07-24T16:00:00-04:00" }]);
+  const maintenance = (await db.query(`select public.submit_maintenance_request(
+    '${activation.tenancyId}','plumbing','Kitchen sink is leaking','Water is dripping from the pipe beneath the kitchen sink.','high',
+    'Call before entering.','${preferredWindow}'::jsonb,array['${maintenanceEvidenceId}'::uuid],'maintenance-request-0001'
+  ) as result`)).rows[0].result;
+  assert(maintenance.status === "new" && maintenance.publicReference.startsWith("MR-"), "Resident maintenance intake did not return its canonical reference.");
+  const maintenanceReplay = (await db.query(`select public.submit_maintenance_request(
+    '${activation.tenancyId}','plumbing','Kitchen sink is leaking','Water is dripping from the pipe beneath the kitchen sink.','high',
+    'Call before entering.','${preferredWindow}'::jsonb,array['${maintenanceEvidenceId}'::uuid],'maintenance-request-0001'
+  ) as result`)).rows[0].result;
+  assert(maintenanceReplay.maintenanceRequestId === maintenance.maintenanceRequestId, "Maintenance request replay did not return the canonical request.");
+  const residentMaintenance = (await db.query("select public.get_resident_maintenance_workspace() as result")).rows[0].result;
+  const residentMaintenanceRow = (await db.query(`select priority,priority_requested from public.maintenance_requests where id='${maintenance.maintenanceRequestId}'`)).rows[0];
+  assert(residentMaintenance.items.length === 1 && residentMaintenance.items[0].residentVisibleStatus === "submitted" && residentMaintenance.items[0].evidenceCount === 1, "Resident maintenance projection is incomplete.");
+  assert(residentMaintenanceRow.priority === "medium" && residentMaintenanceRow.priority_requested === "high", "Requested urgency incorrectly became official priority.");
+  await expectDatabaseError(() => db.query(`insert into public.maintenance_requests(organization_id,property_id,unit_id,tenancy_id,public_reference,category,title,description) values ('${organization.organizationId}','${property.propertyId}','${unit.unitId}','${activation.tenancyId}','FORGED','other','Forged row','This write must be denied.')`), "permission denied");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.submit_maintenance_request(
+    '${activation.tenancyId}','plumbing','Unauthorized request','This request crosses the tenancy boundary.',null,null,'[]'::jsonb,array[]::uuid[],'outsider-maintenance-0001'
+  )`), "TENANCY_SCOPE_DENIED");
+  const outsiderMaintenance = (await db.query("select public.get_resident_maintenance_workspace() as result")).rows[0].result;
+  assert(outsiderMaintenance.items.length === 0 && outsiderMaintenance.tenancies.length === 0, "Maintenance data leaked to an unrelated user.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const operatorMaintenance = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  assert(operatorMaintenance.summary.open === 1 && operatorMaintenance.summary.untriaged === 1 && operatorMaintenance.items[0].officialPriority === "medium", "Operator maintenance intake queue is incomplete.");
+  await db.exec("reset role");
   await db.exec(`update public.provider_connections set
     status='enabled',capabilities='{"card_payments":"active","us_bank_account_ach_payments":"active"}'::jsonb,
     charges_enabled=true,payouts_enabled=true where id='${providerConnection.providerConnectionId}'`);
@@ -1564,7 +1607,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

@@ -19,12 +19,17 @@ export const createUploadGrantSchema = z.object({
     z.object({ type: z.literal("organization"), id: z.uuid() }),
     z.object({ type: z.literal("property"), id: z.uuid() }),
     z.object({ type: z.literal("unit"), id: z.uuid() }),
+    z.object({ type: z.literal("tenancy"), id: z.uuid() }),
   ]),
   documentType: z.string().trim().min(1).max(80),
   title: z.string().trim().min(1).max(200),
   originalFilename: z.string().trim().min(1).max(255),
   mimeType: z.enum(documentMimeTypes),
   sizeBytes: z.number().int().positive().max(maximumDocumentSizeBytes),
+}).superRefine((value, context) => {
+  if (value.parent.type !== "tenancy") return;
+  if (value.documentType !== "maintenance_evidence") context.addIssue({ code: "custom", path: ["documentType"], message: "Tenancy uploads must be maintenance evidence." });
+  if (value.mimeType !== "image/png" && value.mimeType !== "image/jpeg") context.addIssue({ code: "custom", path: ["mimeType"], message: "Maintenance evidence must be a PNG or JPEG image." });
 });
 export const finalizeDocumentSchema = z.object({
   grantId: z.uuid(),

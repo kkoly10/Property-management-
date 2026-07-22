@@ -21,6 +21,13 @@ describe("document request validation", () => {
     expect(createUploadGrantSchema.safeParse({ ...validUpload, sizeBytes: maximumDocumentSizeBytes + 1 }).success).toBe(false);
   });
 
+  it("limits resident tenancy uploads to maintenance images", () => {
+    const tenancyUpload = { ...validUpload, parent: { type: "tenancy" as const, id: validUpload.organizationId }, documentType: "maintenance_evidence", originalFilename: "leak.jpg", mimeType: "image/jpeg" as const };
+    expect(createUploadGrantSchema.safeParse(tenancyUpload).success).toBe(true);
+    expect(createUploadGrantSchema.safeParse({ ...tenancyUpload, documentType: "signed_lease" }).success).toBe(false);
+    expect(createUploadGrantSchema.safeParse({ ...tenancyUpload, mimeType: "application/pdf" }).success).toBe(false);
+  });
+
   it("requires a canonical SHA-256 checksum", () => {
     expect(finalizeDocumentSchema.safeParse({ grantId: validUpload.organizationId, sha256Hex: "a".repeat(64) }).success).toBe(true);
     expect(finalizeDocumentSchema.safeParse({ grantId: validUpload.organizationId, sha256Hex: "not-a-checksum" }).success).toBe(false);
