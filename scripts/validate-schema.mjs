@@ -14,6 +14,7 @@ const financeSql = await readFile(resolve(root, "supabase/migrations/20260720144
 const manualPaymentsSql = await readFile(resolve(root, "supabase/migrations/20260720150956_phase_4_manual_payments.sql"), "utf8");
 const contractCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260722095618_v4_1_1_contract_corrections.sql"), "utf8");
 const paymentCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260722125015_phase_4_payment_corrections.sql"), "utf8");
+const stripeOnboardingSql = await readFile(resolve(root, "supabase/migrations/20260722133026_phase_5_stripe_onboarding.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -38,6 +39,13 @@ async function prepareSupabasePrelude(db) {
     returns uuid
     language sql stable
     as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+    create or replace function auth.jwt()
+    returns jsonb
+    language sql stable
+    as $$ select jsonb_build_object(
+      'sub',nullif(current_setting('request.jwt.claim.sub', true), ''),
+      'aal',coalesce(nullif(current_setting('request.jwt.claim.aal', true), ''),'aal1')
+    ) $$;
     create schema storage;
     create table storage.buckets (
       id text primary key,
@@ -717,6 +725,7 @@ async function validateRecurringCharges() {
   await db.exec(manualPaymentsSql);
   await db.exec(contractCorrectionsSql);
   await db.exec(paymentCorrectionsSql);
+  await db.exec(stripeOnboardingSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -725,6 +734,52 @@ async function validateRecurringCharges() {
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const organization = (await db.query(`select public.create_organization('Finance Atlas','finance-atlas','property_manager','US','en-US','America/New_York','2026-07-20','finance-org-0001') as result`)).rows[0].result;
   const entity = (await db.query(`select public.create_operating_entity_and_book('${organization.organizationId}','Finance Atlas LLC','Finance Atlas','US','company','USD','Operating book','finance-book-0001') as result`)).rows[0].result;
+  const returnUrl = "https://app.crecy.example/settings/payments?stripe=return";
+  const refreshUrl = "https://app.crecy.example/settings/payments?stripe=refresh";
+  await expectDatabaseError(() => db.query(`select public.prepare_stripe_onboarding_link(
+    '${organization.organizationId}','${entity.operatingEntityId}','${returnUrl}','${refreshUrl}','stripe-onboarding-0001'
+  )`), "MFA_REQUIRED");
+  await db.exec("set request.jwt.claim.aal='aal2'");
+  const onboardingContext = (await db.query(`select public.prepare_stripe_onboarding_link(
+    '${organization.organizationId}','${entity.operatingEntityId}','${returnUrl}','${refreshUrl}','stripe-onboarding-0001'
+  ) as result`)).rows[0].result;
+  assert(onboardingContext.countryCode === "US" && onboardingContext.providerAccountId === null, "Stripe onboarding preparation did not return the authorized entity context.");
+  await db.exec("reset role; set role service_role");
+  const stripeLinkUrl = "https://connect.stripe.com/setup/s/acct_testFinance/abc123";
+  const providerConnection = (await db.query(`select public.complete_stripe_onboarding_link(
+    '${admin}','aal2','${organization.organizationId}','${entity.operatingEntityId}','acct_testFinance',
+    '{"card_payments":"inactive","transfers":"inactive"}'::jsonb,
+    '{"currentlyDue":["business_profile.url"],"eventuallyDue":[],"pastDue":[],"pendingVerification":[],"disabledReason":null}'::jsonb,
+    false,false,'${stripeLinkUrl}',now()+interval '30 minutes','${returnUrl}','${refreshUrl}','stripe-onboarding-0001'
+  ) as result`)).rows[0].result;
+  assert(providerConnection.providerConnectionId && providerConnection.url === stripeLinkUrl, "Stripe onboarding completion did not persist the provider connection.");
+  const providerReplay = (await db.query(`select public.complete_stripe_onboarding_link(
+    '${admin}','aal2','${organization.organizationId}','${entity.operatingEntityId}','acct_testFinance',
+    '{}'::jsonb,'{"currentlyDue":[]}'::jsonb,true,true,
+    'https://connect.stripe.com/setup/s/acct_testFinance/replay',now()+interval '30 minutes',
+    '${returnUrl}','${refreshUrl}','stripe-onboarding-0001'
+  ) as result`)).rows[0].result;
+  assert(providerReplay.providerConnectionId === providerConnection.providerConnectionId && providerReplay.url === stripeLinkUrl, "Stripe onboarding replay did not return the canonical response.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  const paymentSettings = (await db.query("select public.get_payment_connection_settings() as result")).rows[0].result;
+  assert(paymentSettings.authenticatorLevel === "aal2" && paymentSettings.items.length === 1 && paymentSettings.items[0].status === "requirements_due", "Payment settings did not expose the MFA-gated provider state.");
+  await expectDatabaseError(() => db.query(`insert into public.provider_connections(
+    organization_id,operating_entity_id,provider_code,provider_account_id,account_configuration,dashboard_access,fees_payer,losses_collector,status
+  ) values ('${organization.organizationId}','${entity.operatingEntityId}','stripe','acct_forged','standard','full','connected_account','stripe','pending')`), "permission denied");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.prepare_stripe_onboarding_link(
+    '${organization.organizationId}','${entity.operatingEntityId}','${returnUrl}','${refreshUrl}','stripe-outsider-0001'
+  )`), "ORGANIZATION_SCOPE_DENIED");
+  const outsiderPaymentSettings = (await db.query("select public.get_payment_connection_settings() as result")).rows[0].result;
+  assert(outsiderPaymentSettings.items.length === 0, "Provider connection settings leaked to an unrelated user.");
+  await db.exec("reset role");
+  const providerTraces = (await db.query(`select
+    (select count(*)::integer from public.provider_connections where id='${providerConnection.providerConnectionId}') as connections,
+    (select count(*)::integer from audit.audit_events where resource_id='${providerConnection.providerConnectionId}') as audits,
+    (select count(*)::integer from private.outbox_events where aggregate_id='${providerConnection.providerConnectionId}') as events
+  `)).rows[0];
+  assert(providerTraces.connections === 1 && providerTraces.audits === 2 && providerTraces.events === 2, "Provider connection audit/outbox trace is incomplete or duplicated.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
   const property = (await db.query(`select public.create_property('${organization.organizationId}','${entity.operatingEntityId}','${entity.accountingBookId}','US_NATIONAL','Maple Court','multifamily','100 Main Street',null,'Richmond','VA','23220','US','America/New_York','finance-property-0001') as result`)).rows[0].result;
   const unit = (await db.query(`select public.create_unit('${organization.organizationId}','${property.propertyId}',null,'101','Apartment',2,1,850,'finance-unit-0001') as result`)).rows[0].result;
   const documentId = "c4000000-0000-4000-8000-000000000004";
@@ -898,7 +953,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderRefunds === 0, "Resident finance data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, persistedRefunds: operatorRefunds, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, persistedRefunds: operatorRefunds, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
