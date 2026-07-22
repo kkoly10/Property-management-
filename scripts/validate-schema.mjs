@@ -15,6 +15,7 @@ const manualPaymentsSql = await readFile(resolve(root, "supabase/migrations/2026
 const contractCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260722095618_v4_1_1_contract_corrections.sql"), "utf8");
 const paymentCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260722125015_phase_4_payment_corrections.sql"), "utf8");
 const stripeOnboardingSql = await readFile(resolve(root, "supabase/migrations/20260722133026_phase_5_stripe_onboarding.sql"), "utf8");
+const residentPaymentSessionSql = await readFile(resolve(root, "supabase/migrations/20260722135623_phase_5_resident_payment_session.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -726,6 +727,7 @@ async function validateRecurringCharges() {
   await db.exec(contractCorrectionsSql);
   await db.exec(paymentCorrectionsSql);
   await db.exec(stripeOnboardingSql);
+  await db.exec(residentPaymentSessionSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -931,29 +933,85 @@ async function validateRecurringCharges() {
 
   const person = (await db.query(`select hm.person_id from public.household_members hm where hm.household_id='${activation.householdId}' and hm.is_primary_contact`)).rows[0].person_id;
   await db.exec(`insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values ('${resident}','${organization.organizationId}','resident_person','${person}','active')`);
+  await db.exec(`update public.provider_connections set
+    status='enabled',capabilities='{"card_payments":"active","us_bank_account_ach_payments":"active"}'::jsonb,
+    charges_enabled=true,payouts_enabled=true where id='${providerConnection.providerConnectionId}'`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
   assert(residentSummary.items.length === 1 && residentSummary.items[0].balanceMinor === 227500 && residentSummary.items[0].nextDueAmountMinor === 185000, "Resident balance projection did not reflect the reopened receivable.");
   const residentCharges = (await db.query("select count(*)::integer as count from public.charges")).rows[0].count;
   assert(residentCharges === 1, "Resident could not read their own canonical charge.");
+  const paymentOptions = (await db.query("select public.get_resident_payment_session_options() as result")).rows[0].result;
+  assert(paymentOptions.tenancies.length === 1 && paymentOptions.tenancies[0].availableMethods.includes("card") && paymentOptions.tenancies[0].charges[0].remainingMinor === 185000, "Resident payment options did not expose the payable connected tenancy.");
+  const paymentReturnUrl = "https://app.crecy.example/payments/new?payment=return";
+  const sessionAllocations = JSON.stringify([{ chargeId: generated.chargeIds[0], amountMinor: 50000 }]);
+  await expectDatabaseError(() => db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',50000,'CAD','${sessionAllocations}'::jsonb,'card','${paymentReturnUrl}','resident-payment-currency-0001'
+  )`), "CURRENCY_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',50000,'USD','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":25000},{"chargeId":"${generated.chargeIds[0]}","amountMinor":25000}]'::jsonb,'card','${paymentReturnUrl}','resident-payment-duplicate-0001'
+  )`), "DUPLICATE_ALLOCATION_CHARGE");
+  const paymentPreparation = (await db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',50000,'USD','${sessionAllocations}'::jsonb,'card','${paymentReturnUrl}','resident-payment-session-0001'
+  ) as result`)).rows[0].result;
+  assert(paymentPreparation.paymentId && paymentPreparation.paymentAttemptId && paymentPreparation.providerAccountId === "acct_testFinance" && paymentPreparation.providerMethodCode === "card", "Payment session preparation did not return stable connected-account context.");
+  const preparedResidentHistory = (await db.query("select public.get_resident_payment_history() as result")).rows[0].result;
+  assert(preparedResidentHistory.items.length === 1 && preparedResidentHistory.items[0].paymentId === payment.paymentId, "An uninitiated provider preparation leaked into resident payment history.");
+  await expectDatabaseError(() => db.query(`insert into public.payment_attempts(
+    organization_id,payment_id,provider_connection_id,method_code,provider_event_account_id,provider_status,allocation_preference,idempotency_key,expires_at
+  ) values ('${organization.organizationId}','${paymentPreparation.paymentId}','${providerConnection.providerConnectionId}','card','acct_forged','creating','[]'::jsonb,'forged-attempt',now()+interval '30 minutes')`), "permission denied");
+  await db.exec("reset role; set role service_role");
+  const paymentSession = (await db.query(`select public.complete_resident_payment_session(
+    '${resident}','${organization.organizationId}','${paymentPreparation.paymentId}','${paymentPreparation.paymentAttemptId}',
+    '${activation.tenancyId}',50000,'USD','${sessionAllocations}'::jsonb,'card','${paymentReturnUrl}',
+    '${providerConnection.providerConnectionId}','acct_testFinance','cs_test_resident0001','pi_resident0001','open',
+    'https://checkout.stripe.com/c/pay/cs_test_resident0001',now()+interval '30 minutes','resident-payment-session-0001'
+  ) as result`)).rows[0].result;
+  assert(paymentSession.status === "pending" && paymentSession.checkoutUrl.includes("checkout.stripe.com") && paymentSession.paymentId === paymentPreparation.paymentId, "Provider Checkout completion did not persist the pending session.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const paymentSessionReplay = (await db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',50000,'USD','${sessionAllocations}'::jsonb,'card','${paymentReturnUrl}','resident-payment-session-0001'
+  ) as result`)).rows[0].result;
+  assert(paymentSessionReplay.replayResponse.paymentId === paymentSession.paymentId && paymentSessionReplay.replayResponse.status === "pending", "Payment session replay did not return the canonical response.");
+  await expectDatabaseError(() => db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',51000,'USD','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":51000}]'::jsonb,'card','${paymentReturnUrl}','resident-payment-session-0001'
+  )`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(() => db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',185000,'USD','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":185000}]'::jsonb,'card','${paymentReturnUrl}','resident-payment-session-0002'
+  )`), "ALLOCATION_EXCEEDS_AVAILABLE");
+  const residentAttempts = (await db.query("select count(*)::integer as count from public.payment_attempts")).rows[0].count;
+  assert(residentAttempts === 1, "Resident could not read their own provider payment attempt.");
+  await db.exec("reset role");
+  const sessionTraces = (await db.query(`select
+    (select status from public.payments where id='${paymentSession.paymentId}') as payment_status,
+    (select provider_status from public.payment_attempts where id='${paymentPreparation.paymentAttemptId}') as attempt_status,
+    (select count(*)::integer from audit.audit_events where resource_id in ('${paymentSession.paymentId}','${paymentPreparation.paymentAttemptId}')) as audits,
+    (select count(*)::integer from private.outbox_events where aggregate_id in ('${paymentSession.paymentId}','${paymentPreparation.paymentAttemptId}')) as events
+  `)).rows[0];
+  assert(sessionTraces.payment_status === "pending" && sessionTraces.attempt_status === "open" && sessionTraces.audits === 2 && sessionTraces.events === 2, "Payment session state or audit/outbox trace is incomplete.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentPayments = (await db.query("select public.get_resident_payment_history() as result")).rows[0].result;
   const residentReceipt = (await db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}') as result`)).rows[0].result;
   const residentPaymentDetail = (await db.query(`select public.get_payment_detail('${payment.paymentId}') as result`)).rows[0].result;
   const residentRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${payment.paymentId}'`)).rows[0].count;
-  assert(residentPayments.items.length === 1 && residentPayments.items[0].status === "reversed" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2, "Resident correction history, refund state, or corrected receipt is unavailable.");
+  assert(residentPayments.items.length === 2 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "pending" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2, "Resident payment session, correction history, refund state, or corrected receipt is unavailable.");
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
   const outsiderCharges = (await db.query("select count(*)::integer as count from public.charges")).rows[0].count;
   const outsiderPayments = (await db.query("select count(*)::integer as count from public.payments")).rows[0].count;
+  const outsiderAttempts = (await db.query("select count(*)::integer as count from public.payment_attempts")).rows[0].count;
   const outsiderRefunds = (await db.query("select count(*)::integer as count from public.payment_refunds")).rows[0].count;
   await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',1000,'USD','${receivedAt}','Unauthorized cash','${evidenceDocumentId}','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,null,'outsider-manual-payment')`), "PROPERTY_SCOPE_DENIED");
   await expectDatabaseError(() => db.query(`select public.reverse_or_correct_payment('${payment.paymentId}','metadata_correction','Unauthorized correction','reversed',4,null,'{"manualReason":"Forged change"}'::jsonb,'outsider-payment-correction')`), "PROPERTY_SCOPE_DENIED");
   await expectDatabaseError(() => db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}')`), "RECEIPT_NOT_FOUND");
-  assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderRefunds === 0, "Resident finance data leaked to an unrelated user.");
+  await expectDatabaseError(() => db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',1000,'USD','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,'card','${paymentReturnUrl}','outsider-payment-session-0001'
+  )`), "TENANCY_SCOPE_DENIED");
+  assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0, "Resident finance data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, persistedRefunds: operatorRefunds, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 1, persistedRefunds: operatorRefunds, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
