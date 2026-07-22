@@ -3,6 +3,7 @@ import "server-only";
 import Stripe from "stripe";
 import { buildDirectChargeCheckoutRequest, type DirectChargeCheckoutInput } from "@/lib/stripe/checkout";
 import { buildDirectChargeRefundRequest, normalizeStripeRefundStatus, type DirectChargeRefundInput } from "@/lib/stripe/refund";
+import { listStripePayoutBalanceTransactions, sanitizeStripePayout } from "@/lib/stripe/settlement";
 import { snapshotStripeAccount } from "@/lib/stripe/snapshot";
 
 let client: Stripe | null = null;
@@ -96,4 +97,15 @@ export async function createDirectChargeRefund(input: DirectChargeRefundInput) {
     }
     throw error;
   }
+}
+
+export async function importStripeSettlementEvent(
+  payout: Stripe.Payout,
+  providerAccountId: string,
+  includeItems: boolean,
+) {
+  const items = includeItems && payout.automatic
+    ? await listStripePayoutBalanceTransactions(getStripeClient(), providerAccountId, payout.id)
+    : [];
+  return sanitizeStripePayout(payout, items);
 }

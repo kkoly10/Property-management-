@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { importStripeSettlementEvent, StripeConnectConfigurationError } from "@/lib/stripe/connect";
 import { sanitizeStripeWebhookEvent, verifyStripeWebhook } from "@/lib/stripe/webhook";
+import type Stripe from "stripe";
 
 const errorResponse = (code: string, message: string, status: number) =>
   NextResponse.json({ error: message, code }, { status });
@@ -31,7 +33,31 @@ export async function POST(request: Request) {
 
   const refundEvent = event.type === "refund.created" || event.type === "refund.updated" || event.type === "refund.failed";
   const disputeEvent = event.type === "charge.dispute.created" || event.type === "charge.dispute.updated" || event.type === "charge.dispute.closed";
-  const procedure = disputeEvent ? "process_stripe_dispute_webhook" : refundEvent ? "process_stripe_refund_webhook" : "process_stripe_webhook";
+  const settlementEvent = event.type === "payout.created" || event.type === "payout.updated" || event.type === "payout.paid" || event.type === "payout.failed";
+  const procedure = settlementEvent
+    ? "process_stripe_settlement_webhook"
+    : disputeEvent
+      ? "process_stripe_dispute_webhook"
+      : refundEvent
+        ? "process_stripe_refund_webhook"
+        : "process_stripe_webhook";
+  let eventData;
+  try {
+    eventData = settlementEvent
+      ? await importStripeSettlementEvent(
+          event.data.object as Stripe.Payout,
+          event.account,
+          (event.data.object as Stripe.Payout).status === "paid",
+        )
+      : sanitizeStripeWebhookEvent(event);
+  } catch (error) {
+    const configurationError = error instanceof StripeConnectConfigurationError;
+    return errorResponse(
+      configurationError ? "WEBHOOK_NOT_CONFIGURED" : "SETTLEMENT_IMPORT_FAILED",
+      configurationError ? "Stripe settlement processing is unavailable." : "Stripe payout details could not be imported.",
+      configurationError ? 503 : 500,
+    );
+  }
   const result = await createAdminClient().rpc(procedure, {
     p_provider_event_id: event.id,
     p_provider_account_id: event.account,
@@ -39,7 +65,7 @@ export async function POST(request: Request) {
     p_event_type: event.type,
     p_provider_created_at: new Date(event.created * 1000).toISOString(),
     p_livemode: event.livemode,
-    p_event_data: sanitizeStripeWebhookEvent(event),
+    p_event_data: eventData,
   });
   if (result.error || !result.data) {
     return errorResponse("WEBHOOK_PROCESSING_FAILED", "The signed Stripe event could not be processed.", 500);
@@ -61,6 +87,10 @@ export async function POST(request: Request) {
       "INVALID_PROVIDER_DISPUTE_OBJECT",
       "PROVIDER_DISPUTE_MISMATCH",
       "DISPUTE_ALLOCATION_MISMATCH",
+      "INVALID_PROVIDER_SETTLEMENT_OBJECT",
+      "INVALID_PROVIDER_SETTLEMENT_ITEM",
+      "SETTLEMENT_REPLAY_MISMATCH",
+      "SETTLEMENT_ITEM_REPLAY_MISMATCH",
     ].includes(response.errorCode ?? "");
     return errorResponse(
       response.errorCode ?? "WEBHOOK_PROCESSING_FAILED",
