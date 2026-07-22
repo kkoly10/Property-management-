@@ -17,6 +17,7 @@ const paymentCorrectionsSql = await readFile(resolve(root, "supabase/migrations/
 const stripeOnboardingSql = await readFile(resolve(root, "supabase/migrations/20260722133026_phase_5_stripe_onboarding.sql"), "utf8");
 const residentPaymentSessionSql = await readFile(resolve(root, "supabase/migrations/20260722135623_phase_5_resident_payment_session.sql"), "utf8");
 const stripeWebhookSql = await readFile(resolve(root, "supabase/migrations/20260722150749_phase_5_stripe_webhook.sql"), "utf8");
+const providerRefundsSql = await readFile(resolve(root, "supabase/migrations/20260722154358_phase_5_provider_refunds.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -730,6 +731,7 @@ async function validateRecurringCharges() {
   await db.exec(stripeOnboardingSql);
   await db.exec(residentPaymentSessionSql);
   await db.exec(stripeWebhookSql);
+  await db.exec(providerRefundsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1112,12 +1114,132 @@ async function validateRecurringCharges() {
     (select count(*)::integer from private.outbox_events where aggregate_id in ('${paymentSession.paymentId}','${paymentPreparation.paymentAttemptId}')) as events
   `)).rows[0];
   assert(sessionTraces.payment_status === "succeeded" && sessionTraces.attempt_status === "succeeded" && sessionTraces.audits === 6 && sessionTraces.events === 7, "Payment session state or audit/outbox trace is incomplete.");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const initialRefundEligibility = (await db.query(`select public.get_payment_refund_eligibility('${paymentSession.paymentId}') as result`)).rows[0].result;
+  assert(initialRefundEligibility.canRefund && initialRefundEligibility.refundableMinor === 50000, "The confirmed provider payment did not expose its refundable balance to finance.");
+  const refundRequest = (await db.query(`select public.request_provider_refund(
+    '${paymentSession.paymentId}',20000,'Return the resident overpayment','succeeded',2,'provider-refund-request-0001'
+  ) as result`)).rows[0].result;
+  assert(refundRequest.refundStatus === "requested" && refundRequest.paymentStatus === "succeeded", "The provider refund was not durably reserved before execution.");
+  const refundRequestReplay = (await db.query(`select public.request_provider_refund(
+    '${paymentSession.paymentId}',20000,'Return the resident overpayment','succeeded',2,'provider-refund-request-0001'
+  ) as result`)).rows[0].result;
+  assert(refundRequestReplay.refundId === refundRequest.refundId, "Refund request replay created another refund row.");
+  await expectDatabaseError(() => db.query(`select public.request_provider_refund(
+    '${paymentSession.paymentId}',21000,'Changed retry amount','succeeded',2,'provider-refund-request-0001'
+  )`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(() => db.query(`select public.request_provider_refund(
+    '${paymentSession.paymentId}',31000,'Would exceed the refundable amount','succeeded',2,'provider-refund-over-0001'
+  )`), "PAYMENT_OVERREFUNDED");
+  await expectDatabaseError(() => db.query(`select public.request_provider_refund(
+    '${payment.paymentId}',1000,'Manual payments use corrections','reversed',4,'manual-provider-refund-0001'
+  )`), "MANUAL_PAYMENT_REQUIRES_CORRECTION");
+  await expectDatabaseError(() => db.query(`select public.get_provider_refund_context('${refundRequest.refundId}','${admin}')`), "permission denied");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.request_provider_refund(
+    '${paymentSession.paymentId}',1000,'Unauthorized refund attempt','succeeded',2,'outsider-provider-refund-0001'
+  )`), "PROPERTY_SCOPE_DENIED");
+
+  await db.exec("reset role; set role service_role");
+  const refundContext = (await db.query(`select public.get_provider_refund_context('${refundRequest.refundId}','${admin}') as result`)).rows[0].result;
+  assert(refundContext.providerAccountId === "acct_testFinance" && refundContext.providerChargeId === "ch_resident0001" && refundContext.amountMinor === 20000, "The service-only refund context lost its connected-account scope.");
+  const refundProviderCreatedAt = (await db.query("select now()::text as created_at")).rows[0].created_at;
+  const pendingRefund = (await db.query(`select public.complete_provider_refund(
+    '${refundRequest.refundId}','re_RefundPending001','pending',null,null,'${refundProviderCreatedAt}'
+  ) as result`)).rows[0].result;
+  assert(pendingRefund.refundStatus === "pending" && pendingRefund.paymentStatus === "succeeded" && !pendingRefund.correctiveJournalTransactionId, "A pending Stripe refund changed financial state prematurely.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const pendingEligibility = (await db.query(`select public.get_payment_refund_eligibility('${paymentSession.paymentId}') as result`)).rows[0].result;
+  assert(pendingEligibility.refundableMinor === 30000, "A pending refund did not reserve its amount against concurrent refunds.");
+
+  const refundWebhookData = JSON.stringify({
+    organizationId: organization.organizationId,
+    paymentId: paymentSession.paymentId,
+    refundId: refundRequest.refundId,
+    providerRefundId: "re_RefundPending001",
+    chargeId: "ch_resident0001",
+    amountMinor: 20000,
+    currencyCode: "USD",
+    providerStatus: "succeeded",
+  });
+  await db.exec("reset role; set role service_role");
+  const refundWebhook = (await db.query(`select public.process_stripe_refund_webhook(
+    'evt_RefundSucceeded001','acct_testFinance','${"a".repeat(64)}','refund.updated','${refundProviderCreatedAt}',false,
+    '${refundWebhookData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(refundWebhook.outcome === "processed" && refundWebhook.refundStatus === "succeeded" && refundWebhook.paymentStatus === "partially_refunded", "A signed refund webhook did not post the partial refund.");
+  const refundWebhookReplay = (await db.query(`select public.process_stripe_refund_webhook(
+    'evt_RefundSucceeded001','acct_testFinance','${"a".repeat(64)}','refund.updated','${refundProviderCreatedAt}',false,
+    '${refundWebhookData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(refundWebhookReplay.outcome === "duplicate", "A replayed refund webhook was not deduplicated.");
+  const lateRefundFailure = (await db.query(`select public.process_stripe_refund_webhook(
+    'evt_RefundLateFailure001','acct_testFinance','${"b".repeat(64)}','refund.failed','${refundProviderCreatedAt}',false,
+    '${JSON.stringify({ ...JSON.parse(refundWebhookData), providerStatus: "failed", failureCode: "late_failure" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(lateRefundFailure.outcome === "ignored" && lateRefundFailure.refundStatus === "succeeded", "An out-of-order refund failure regressed a succeeded refund.");
+
+  await db.exec("reset role");
+  const partialRefundPosting = (await db.query(`select p.status,p.version,r.status as refund_status,r.corrective_journal_transaction_id,c.status as charge_status,
+    (select coalesce(sum(pa.amount_minor),0)::integer from public.payment_allocations pa where pa.payment_id=p.id and pa.reversed_at is null) as active_allocations,
+    (select count(*)::integer from public.payment_allocations pa where pa.payment_id=p.id and pa.reversed_at is not null) as reversed_allocations,
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id=r.corrective_journal_transaction_id) as debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id=r.corrective_journal_transaction_id) as credits,
+    (select count(*)::integer from private.outbox_events o where o.event_type='payment.refunded' and o.payload->>'refundId'=r.id::text) as refund_events
+    from public.payments p join public.payment_refunds r on r.payment_id=p.id
+    join public.charges c on c.id='${generated.chargeIds[0]}'
+    where p.id='${paymentSession.paymentId}' and r.id='${refundRequest.refundId}'`)).rows[0];
+  assert(partialRefundPosting.status === "partially_refunded" && partialRefundPosting.version === 3 && partialRefundPosting.refund_status === "succeeded", "Partial refund state did not advance monotonically.");
+  assert(partialRefundPosting.active_allocations === 30000 && partialRefundPosting.reversed_allocations === 1 && partialRefundPosting.charge_status === "partially_paid", "Partial refund did not retain allocation history and reopen the correct receivable amount.");
+  assert(partialRefundPosting.debits === 20000 && partialRefundPosting.credits === 20000 && partialRefundPosting.refund_events === 1, "Partial refund journal or outbox trace is incomplete.");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const failedRefundRequest = (await db.query(`select public.request_provider_refund(
+    '${paymentSession.paymentId}',5000,'Test a definitive provider decline','partially_refunded',3,'provider-refund-failed-0001'
+  ) as result`)).rows[0].result;
+  await db.exec("reset role; set role service_role");
+  const failedRefund = (await db.query(`select public.complete_provider_refund(
+    '${failedRefundRequest.refundId}',null,'failed','declined','Stripe declined the refund',now()
+  ) as result`)).rows[0].result;
+  assert(failedRefund.refundStatus === "failed" && failedRefund.paymentStatus === "partially_refunded", "A definitive provider failure changed payment financial state.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const afterFailureEligibility = (await db.query(`select public.get_payment_refund_eligibility('${paymentSession.paymentId}') as result`)).rows[0].result;
+  assert(afterFailureEligibility.refundableMinor === 30000, "A failed provider refund continued consuming refundable value.");
+  const finalRefundRequest = (await db.query(`select public.request_provider_refund(
+    '${paymentSession.paymentId}',30000,'Return the remaining provider payment','partially_refunded',3,'provider-refund-final-0001'
+  ) as result`)).rows[0].result;
+  await db.exec("reset role; set role service_role");
+  const finalRefundCreatedAt = (await db.query("select now()::text as created_at")).rows[0].created_at;
+  const finalRefund = (await db.query(`select public.complete_provider_refund(
+    '${finalRefundRequest.refundId}','re_RefundFinal001','succeeded',null,null,'${finalRefundCreatedAt}'
+  ) as result`)).rows[0].result;
+  assert(finalRefund.refundStatus === "succeeded" && finalRefund.paymentStatus === "refunded" && finalRefund.correctiveJournalTransactionId, "The final provider refund did not close the payment.");
+  const finalRefundReplay = (await db.query(`select public.complete_provider_refund(
+    '${finalRefundRequest.refundId}','re_RefundFinal001','succeeded',null,null,'${finalRefundCreatedAt}'
+  ) as result`)).rows[0].result;
+  assert(finalRefundReplay.correctiveJournalTransactionId === finalRefund.correctiveJournalTransactionId, "Provider refund completion replay created another journal.");
+
+  await db.exec("reset role");
+  const finalRefundPosting = (await db.query(`select p.status,p.version,c.status as charge_status,
+    (select coalesce(sum(pa.amount_minor),0)::integer from public.payment_allocations pa where pa.payment_id=p.id and pa.reversed_at is null) as active_allocations,
+    (select count(*)::integer from public.payment_refunds r where r.payment_id=p.id and r.status='succeeded') as succeeded_refunds,
+    (select count(*)::integer from public.payment_refunds r where r.payment_id=p.id and r.status='failed') as failed_refunds,
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${finalRefund.correctiveJournalTransactionId}') as debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${finalRefund.correctiveJournalTransactionId}') as credits
+    from public.payments p join public.charges c on c.id='${generated.chargeIds[0]}' where p.id='${paymentSession.paymentId}'`)).rows[0];
+  assert(finalRefundPosting.status === "refunded" && finalRefundPosting.version === 4 && finalRefundPosting.charge_status === "open" && finalRefundPosting.active_allocations === 0, "Full refund did not reopen the full provider-funded receivable.");
+  assert(finalRefundPosting.succeeded_refunds === 2 && finalRefundPosting.failed_refunds === 1 && finalRefundPosting.debits === 30000 && finalRefundPosting.credits === 30000, "Full refund history or corrective journal is incomplete.");
+
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentPayments = (await db.query("select public.get_resident_payment_history() as result")).rows[0].result;
   const residentReceipt = (await db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}') as result`)).rows[0].result;
   const residentPaymentDetail = (await db.query(`select public.get_payment_detail('${payment.paymentId}') as result`)).rows[0].result;
   const residentRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${payment.paymentId}'`)).rows[0].count;
-  assert(residentPayments.items.length === 3 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "succeeded" && residentPayments.items.find((item) => item.paymentId === failedPreparation.paymentId)?.status === "failed" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2, "Resident payment session, correction history, refund state, or corrected receipt is unavailable.");
+  const residentProviderRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${paymentSession.paymentId}'`)).rows[0].count;
+  assert(residentPayments.items.length === 3 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "refunded" && residentPayments.items.find((item) => item.paymentId === failedPreparation.paymentId)?.status === "failed" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2 && residentProviderRefunds === 3, "Resident payment session, correction history, refund state, or corrected receipt is unavailable.");
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;

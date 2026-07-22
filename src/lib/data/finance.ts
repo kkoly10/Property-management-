@@ -30,9 +30,11 @@ export type PaymentReceipt = Omit<PaymentSummaryItem, "receivedAt" | "receiptDoc
 };
 export type PaymentDetail = PaymentSummaryItem & {
   organizationId: string; version: number; reason: string | null; journalTransactionId: string | null; canCorrect: boolean;
+  canRefund: boolean; refundableMinor: number;
   allocations: { allocationId: string; chargeId: string; description: string; dueDate: string; amountMinor: number; allocatedAt: string; reversedAt: string | null; reversalReason: string | null }[];
   eligibleCharges: { chargeId: string; description: string; dueDate: string; amountMinor: number; availableMinor: number }[];
-  refunds: { refundId: string; amountMinor: number; status: string; reason: string; requestedAt: string; completedAt: string | null }[];
+  refunds: { refundId: string; amountMinor: number; status: string; reason: string; requestedAt: string; completedAt: string | null;
+    correctiveJournalTransactionId: string | null; failureCode: string | null }[];
   corrections: { correctionId: string; correctionType: string; reason: string; paymentStatus: string; version: number; correctiveJournalTransactionId: string | null; correctedAt: string }[];
 };
 type DataMode = "setup" | "ready" | "error";
@@ -102,6 +104,7 @@ function normalizePaymentDetail(data: unknown): PaymentDetail | null {
     version: Number(item.version), reconciliationStatus: String(item.reconciliationStatus), receivedAt: String(item.receivedAt),
     reason: item.reason ? String(item.reason) : null, externalReference: item.externalReference ? String(item.externalReference) : null,
     receiptDocumentId: item.receiptDocumentId ? String(item.receiptDocumentId) : null, journalTransactionId: item.journalTransactionId ? String(item.journalTransactionId) : null, canCorrect: Boolean(item.canCorrect),
+    canRefund: false, refundableMinor: 0,
     allocations: objects(item, "allocations").map((raw) => { const value = raw as Record<string, unknown>; return {
       allocationId: String(value.allocationId), chargeId: String(value.chargeId), description: String(value.description), dueDate: String(value.dueDate),
       amountMinor: Number(value.amountMinor), allocatedAt: String(value.allocatedAt), reversedAt: value.reversedAt ? String(value.reversedAt) : null,
@@ -113,6 +116,8 @@ function normalizePaymentDetail(data: unknown): PaymentDetail | null {
     refunds: objects(item, "refunds").map((raw) => { const value = raw as Record<string, unknown>; return {
       refundId: String(value.refundId), amountMinor: Number(value.amountMinor), status: String(value.status), reason: String(value.reason),
       requestedAt: String(value.requestedAt), completedAt: value.completedAt ? String(value.completedAt) : null,
+      correctiveJournalTransactionId: value.correctiveJournalTransactionId ? String(value.correctiveJournalTransactionId) : null,
+      failureCode: value.failureCode ? String(value.failureCode) : null,
     }; }),
     corrections: objects(item, "corrections").map((raw) => { const value = raw as Record<string, unknown>; return {
       correctionId: String(value.correctionId), correctionType: String(value.correctionType), reason: String(value.reason), paymentStatus: String(value.paymentStatus),
@@ -126,7 +131,7 @@ const previewReceivable: ReceivableSummaryItem = { tenancyId: "20000000-0000-400
 const previewPayment: PaymentSummaryItem = { paymentId: "50000000-0000-4000-8000-000000000005", publicReference: "PAY-8C4A2F7B91D0", propertyName: "Maple Court", unitCode: "101", householdName: "Morgan household", source: "check", amountMinor: 85000, currencyCode: "USD", status: "succeeded", reconciliationStatus: "unreconciled", receivedAt: "2026-07-20T15:45:00Z", allocatedMinor: 85000, externalReference: "CHECK-1042", receiptDocumentId: "60000000-0000-4000-8000-000000000006" };
 const previewOption: ManualPaymentOption = { organizationId: "10000000-0000-4000-8000-000000000001", tenancyId: previewReceivable.tenancyId, propertyName: "Maple Court", unitCode: "101", householdName: "Morgan household", currencyCode: "USD", evidenceThresholdMinor: 0, charges: [{ chargeId: "40000000-0000-4000-8000-000000000004", description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 185000, allocatedMinor: 85000, remainingMinor: 100000 }], evidenceDocuments: [{ documentId: "30000000-0000-4000-8000-000000000003", title: "Check 1042 scan" }] };
 const previewResidentPaymentOption: ResidentPaymentSessionOption = { organizationId: previewOption.organizationId, tenancyId: previewOption.tenancyId, organizationName: "Crecy Demo", propertyName: previewOption.propertyName, unitCode: previewOption.unitCode, currencyCode: previewOption.currencyCode, connectionStatus: "enabled", availableMethods: ["card", "bank"], charges: previewOption.charges.map((charge) => ({ chargeId: charge.chargeId, description: charge.description, dueDate: charge.dueDate, amountMinor: charge.amountMinor, remainingMinor: charge.remainingMinor })) };
-const previewPaymentDetail: PaymentDetail = { ...previewPayment, organizationId: previewOption.organizationId, version: 1, reason: "Check received at the office", journalTransactionId: "70000000-0000-4000-8000-000000000007", canCorrect: true,
+const previewPaymentDetail: PaymentDetail = { ...previewPayment, organizationId: previewOption.organizationId, version: 1, reason: "Check received at the office", journalTransactionId: "70000000-0000-4000-8000-000000000007", canCorrect: true, canRefund: false, refundableMinor: 0,
   allocations: [{ allocationId: "80000000-0000-4000-8000-000000000008", chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 85000, allocatedAt: previewPayment.receivedAt!, reversedAt: null, reversalReason: null }],
   eligibleCharges: [{ chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 185000, availableMinor: 185000 }], refunds: [], corrections: [] };
 
@@ -184,9 +189,23 @@ export async function getPaymentDetail(paymentId: string): Promise<{ mode: DataM
   if (!getPublicSupabaseConfig()) return paymentId === previewPayment.paymentId ? { mode: "setup", payment: previewPaymentDetail } : { mode: "not_found" };
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("get_payment_detail", { p_payment_id: paymentId });
-    if (error || !data) return { mode: "not_found" };
-    const payment = normalizePaymentDetail(data);
+    const [detail, eligibility] = await Promise.all([
+      supabase.rpc("get_payment_detail", { p_payment_id: paymentId }),
+      supabase.rpc("get_payment_refund_eligibility", { p_payment_id: paymentId }),
+    ]);
+    if (detail.error || !detail.data || eligibility.error || !eligibility.data) return { mode: "not_found" };
+    const payment = normalizePaymentDetail(detail.data);
+    if (payment) {
+      const refund = eligibility.data as Record<string, unknown>;
+      payment.canRefund = Boolean(refund.canRefund);
+      payment.refundableMinor = Number(refund.refundableMinor ?? 0);
+      payment.refunds = objects(refund, "refunds").map((raw) => { const value = raw as Record<string, unknown>; return {
+        refundId: String(value.refundId), amountMinor: Number(value.amountMinor), status: String(value.status), reason: String(value.reason),
+        requestedAt: String(value.requestedAt), completedAt: value.completedAt ? String(value.completedAt) : null,
+        correctiveJournalTransactionId: value.correctiveJournalTransactionId ? String(value.correctiveJournalTransactionId) : null,
+        failureCode: value.failureCode ? String(value.failureCode) : null,
+      }; });
+    }
     return payment ? { mode: "ready", payment } : { mode: "not_found" };
   } catch { return { mode: "error", requestId: crypto.randomUUID() }; }
 }

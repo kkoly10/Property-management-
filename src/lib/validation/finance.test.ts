@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createResidentPaymentSessionSchema, generateRecurringChargesSchema, recordManualPaymentSchema } from "@/lib/validation/finance";
+import { createResidentPaymentSessionSchema, generateRecurringChargesSchema, recordManualPaymentSchema, refundPaymentSchema } from "@/lib/validation/finance";
 
 describe("generateRecurringChargesSchema", () => {
   it("accepts a bounded worker run", () => {
@@ -63,5 +63,25 @@ describe("createResidentPaymentSessionSchema", () => {
     expect(createResidentPaymentSessionSchema.safeParse({ ...session, amountMinor: 100000, allocationPreference: [session.allocationPreference[0], session.allocationPreference[0]] }).success).toBe(false);
     expect(createResidentPaymentSessionSchema.safeParse({ ...session, amountMinor: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
     expect(createResidentPaymentSessionSchema.safeParse({ ...session, providerAccountId: "acct_forged" }).success).toBe(false);
+  });
+});
+
+describe("refundPaymentSchema", () => {
+  const refund = {
+    amountMinor: 20_000,
+    reason: "Return the resident overpayment",
+    expectedStatus: "succeeded",
+    expectedVersion: 2,
+    idempotencyKey: "provider-refund-request-0001",
+  };
+
+  it("accepts a bounded optimistic refund request", () => {
+    expect(refundPaymentSchema.safeParse(refund).success).toBe(true);
+  });
+
+  it("rejects unsafe amounts, stale version shapes, and extra provider fields", () => {
+    expect(refundPaymentSchema.safeParse({ ...refund, amountMinor: 0 }).success).toBe(false);
+    expect(refundPaymentSchema.safeParse({ ...refund, expectedVersion: 0 }).success).toBe(false);
+    expect(refundPaymentSchema.safeParse({ ...refund, providerChargeId: "ch_forged" }).success).toBe(false);
   });
 });

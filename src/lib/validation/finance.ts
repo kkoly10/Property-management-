@@ -89,7 +89,16 @@ export const createResidentPaymentSessionSchema = z.object({
   }
 });
 
+export const refundPaymentSchema = z.object({
+  amountMinor: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  reason: z.string().trim().min(3).max(1000),
+  expectedStatus: z.string().trim().min(1).max(40),
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: z.string().trim().min(8).max(200),
+}).strict();
+
 export type GenerateRecurringChargesInput = z.infer<typeof generateRecurringChargesSchema>;
 export type RecordManualPaymentInput = z.infer<typeof recordManualPaymentSchema>;
 export type CorrectPaymentInput = z.infer<typeof correctPaymentSchema>;
 export type CreateResidentPaymentSessionInput = z.infer<typeof createResidentPaymentSessionSchema>;
+export type RefundPaymentInput = z.infer<typeof refundPaymentSchema>;
