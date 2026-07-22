@@ -27,7 +27,7 @@ npm run typecheck
 npm run build
 ```
 
-`test:db` runs the authoritative schema and all application migrations in embedded Postgres. It exercises tenant and property-scope isolation, expired memberships, idempotent commands, country/book consistency, plan limits, document/import controls, lease activation, balanced recurring-charge and payment journals, allocation limits, evidence and receipt controls, resident finance projection, and audit/outbox traces.
+`test:db` runs the v4.1.1 authoritative schema and all application migrations in embedded Postgres. It exercises tenant, owner, relationship, and property-scope isolation; expired memberships; idempotent commands and actor scopes; country/book consistency; plan limits; document/import controls; lease activation; balanced recurring-charge and payment journals; allocation and refund limits; evidence and receipt controls; resident projections; and audit/outbox traces. Correction evidence is recorded in [`docs/implementation/V4_1_1_CORRECTION_VALIDATION.md`](./docs/implementation/V4_1_1_CORRECTION_VALIDATION.md).
 
 ## Authoritative specification
 

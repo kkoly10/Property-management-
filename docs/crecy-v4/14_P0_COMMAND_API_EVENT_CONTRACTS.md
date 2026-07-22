@@ -1,4 +1,4 @@
-# P0 Command, API, Error, and Event Contracts v4.1
+# P0 Command, API, Error, and Event Contracts v4.1.1
 
 **Status:** Binding P0 server contract. Implement with route handlers/server actions plus domain services. Names may map to established repository conventions only if request, authorization, invariants, response, errors, and events remain equivalent.
 
@@ -10,6 +10,7 @@ Every user command requires:
 
 - authenticated user;
 - `Idempotency-Key` header for create/financial/transition commands;
+- server-derived `actorScope` (`user:<uuid>`, signed `preauth:<session-id>`, or `system:<worker>`) stored with idempotency; clients never choose arbitrary actor scope;
 - `X-Request-ID` accepted or generated;
 - JSON body validated with Zod or equivalent;
 - current database membership/relationship authorization;
@@ -148,8 +149,8 @@ interface CreateOrganizationResponse {
 }
 ```
 
-Authorization: authenticated user with no conflicting active organization slug.  
-Transaction: organization + org-owner membership + Growth trial subscription + audit + event.  
+Authorization: authenticated user with no conflicting active organization slug. The server derives `actorScope=user:<auth.uid()>`; pre-auth onboarding, if later supported, must use a signed `preauth:<session-id>` scope.
+Transaction: acquire/replay `private.idempotency_records` using `(organization_id NULL, actorScope, route, key)`, then create organization + org-owner membership + Growth trial subscription + audit + event.
 Errors: `VALIDATION_FAILED`, `RESOURCE_CONFLICT`.  
 Event: `organization.created` `{displayName, customerPath, headquartersCountryCode}`.
 
@@ -234,6 +235,7 @@ Event: `unit.created`.
 ```ts
 interface CreateImportRequest {
   organizationId: string;
+  propertyId?: string;              // required except portfolio imports
   importType: 'portfolio'|'residents'|'leases'|'opening_balances'|'documents'|'combined';
   sourceDocumentId: string;
 }
@@ -248,8 +250,8 @@ interface CommitImportRequest { expectedValidationHash: string; }
 interface CommitImportResponse { status:'completed'; committed:Record<string,number>; reportDocumentId:string; }
 ```
 
-Permission: `property.manage` plus `finance.manage` for opening balances.  
-Rules: original file immutable; commit only after zero blocking errors; all-or-nothing per declared batch; opening balances create balanced opening journals; commit cannot be replayed with changed hash.  
+Permission: property-scoped `property.manage` for all non-portfolio imports; unscoped `organization.manage` for portfolio imports; plus property-scoped `finance.manage` for opening balances.
+Rules: `propertyId` is required for residents, leases, opening balances, documents, and combined imports; portfolio imports must omit it; original file immutable; commit only after zero blocking errors; all-or-nothing per declared batch; opening balances create balanced opening journals; commit cannot be replayed with changed hash.
 Events: `import.created`, `import.validated`, `import.committed`, `import.failed`.
 
 ### 4.6 RecordExistingLeaseAndActivateTenancy
@@ -505,10 +507,16 @@ Authorization: internal worker identity only. Each generated charge uses idempot
 `POST /api/v1/payments/{id}/refunds`
 
 ```ts
-interface RefundPaymentRequest { amountMinor:number; reason:string; expectedStatus:string; idempotencyKey:string; }
-interface RefundPaymentResponse { paymentId:string; refundId:string; status:'partially_refunded'|'refunded'; correctiveJournalTransactionId:string; }
+interface RefundPaymentRequest { amountMinor:number; reason:string; expectedStatus:string; expectedVersion:number; idempotencyKey:string; }
+interface RefundPaymentResponse {
+  paymentId:string;
+  refundId:string;                   // public.payment_refunds.id, persisted before provider call
+  refundStatus:'requested'|'pending'|'succeeded';
+  paymentStatus:'partially_refunded'|'refunded';
+  correctiveJournalTransactionId:string|null;
+}
 ```
-Permission: property-scoped `finance.manage`. The command creates a canonical `payment_refunds` row before provider execution and finalizes that row, the corrective journal, affected allocations, audit event, and outbox event transactionally. Provider refunds execute in connected-account context; manual payments use a correction workflow. Never mutate the original journal or allocation rows. The sum of successful refunds for a payment may not exceed the original payment amount.
+Permission: property-scoped `finance.manage`. The transaction first inserts `public.payment_refunds` and the outbox/audit record under the idempotency key. Provider refunds execute in connected-account context; manual payments use a correction workflow. On provider success, update the refund status and create the corrective journal atomically. The sum of nonfailed refunds may not exceed the original payment. Never mutate the original journal or allocation rows. Events: `payment.refund_requested`, then `payment.refunded` or `payment.refund_failed`.
 
 ### 4.19 ReverseOrCorrectPayment
 
@@ -638,4 +646,4 @@ Provider events cannot move a terminal state backward without an explicit correc
 
 ## 8. Idempotency persistence
 
-Store the exact command lifecycle in `private.idempotency_records`: `{organization_id, actor_user_id, route, idempotency_key, request_hash, state, response_status, response_body, resource_type, resource_id, created_at, completed_at, expires_at}`. The database uniqueness scope is `NULLS NOT DISTINCT (organization_id, actor_user_id, route, idempotency_key)` so pre-organization commands such as `CreateOrganization` deduplicate correctly. Same key + same request returns prior result; same key + different request returns `IDEMPOTENCY_CONFLICT`.
+Store the exact command lifecycle in `private.idempotency_records`: `{organization_id, actor_user_id, route, idempotency_key, request_hash, state, response_status, response_body, resource_type, resource_id, created_at, completed_at, expires_at}`. Same key + same request returns prior result; same key + different request returns `IDEMPOTENCY_CONFLICT`.

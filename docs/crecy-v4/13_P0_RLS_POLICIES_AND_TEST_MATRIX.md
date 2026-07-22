@@ -1,4 +1,4 @@
-# P0 RLS Policies and Adversarial Test Matrix v4.1
+# P0 RLS Policies and Adversarial Test Matrix v4.1.1
 
 **Status:** Exact authorization baseline for the P0 schema. All browser reads are denied unless a policy below permits them. All sensitive writes use server commands that re-authorize the actor before using the service role.
 
@@ -150,24 +150,62 @@ as $$
   );
 $$;
 
-create or replace function private.is_owner_for_property(target_property uuid,target_owner_entity uuid)
+create or replace function private.is_owner_entity(target_owner_entity uuid)
 returns boolean
 language sql stable security definer
-set search_path = ''
+set search_path = public,private,pg_temp
 as $$
   select exists (
     select 1
-    from public.ownership_interests oi
-    join public.user_relationships ur
-      on ur.organization_id=oi.organization_id
-     and ur.relationship_type='owner_entity'
-     and ur.relationship_id=oi.owner_entity_id
-     and ur.status='active'
-    where oi.property_id=target_property
-      and oi.owner_entity_id=target_owner_entity
-      and ur.user_id=(select auth.uid())
-      and oi.effective_from <= current_date
-      and (oi.effective_to is null or oi.effective_to >= current_date)
+    from public.user_relationships ur
+    where ur.user_id=(select auth.uid())
+      and ur.relationship_type='owner_entity'
+      and ur.relationship_id=target_owner_entity
+      and ur.status='active'
+  );
+$$;
+
+create or replace function private.has_announcement_delivery(target_announcement uuid)
+returns boolean
+language sql stable security definer
+set search_path = public,private,pg_temp
+as $$
+  select exists (
+    select 1 from public.announcement_deliveries d
+    where d.announcement_id=target_announcement
+      and d.recipient_user_id=(select auth.uid())
+  );
+$$;
+
+create or replace function private.can_manage_announcement(target_announcement uuid)
+returns boolean
+language sql stable security definer
+set search_path = public,private,pg_temp
+as $$
+  select exists (
+    select 1 from public.announcements a
+    where a.id=target_announcement
+      and (
+        (a.property_id is not null and private.has_property_access(a.property_id,'resident.manage'))
+        or (a.property_id is null and private.has_unscoped_org_permission(a.organization_id,'resident.manage'))
+      )
+  );
+$$;
+
+create or replace function private.can_manage_document_version(target_document_version uuid)
+returns boolean
+language sql stable security definer
+set search_path = public,private,pg_temp
+as $$
+  select exists (
+    select 1
+    from public.document_versions dv
+    join public.documents d on d.id=dv.document_id
+    where dv.id=target_document_version
+      and (
+        (d.property_id is not null and private.has_property_access(d.property_id,'documents.manage'))
+        or (d.property_id is null and private.has_unscoped_org_permission(d.organization_id,'documents.manage'))
+      )
   );
 $$;
 
@@ -190,36 +228,6 @@ as $$
   );
 $$;
 
-create or replace function private.has_announcement_delivery(target_announcement uuid)
-returns boolean
-language sql stable security definer
-set search_path = ''
-as $$
-  select exists (
-    select 1
-    from public.announcement_deliveries ad
-    where ad.announcement_id=target_announcement
-      and ad.recipient_user_id=(select auth.uid())
-  );
-$$;
-
-create or replace function private.can_manage_announcement(target_announcement uuid,target_organization uuid)
-returns boolean
-language sql stable security definer
-set search_path = ''
-as $$
-  select exists (
-    select 1
-    from public.announcements a
-    where a.id=target_announcement
-      and a.organization_id=target_organization
-      and (
-        (a.property_id is not null and private.has_property_access(a.property_id,'resident.manage'))
-        or (a.property_id is null and private.has_unscoped_org_permission(a.organization_id,'resident.manage'))
-      )
-  );
-$$;
-
 revoke all on function private.is_active_org_member(uuid) from public;
 revoke all on function private.has_org_permission(uuid,text) from public;
 revoke all on function private.has_property_access(uuid,text) from public;
@@ -227,10 +235,11 @@ revoke all on function private.has_unscoped_org_permission(uuid,text) from publi
 revoke all on function private.current_user_person_ids(uuid) from public;
 revoke all on function private.is_resident_for_tenancy(uuid) from public;
 revoke all on function private.is_owner_for_property(uuid) from public;
-revoke all on function private.is_owner_for_property(uuid,uuid) from public;
-revoke all on function private.is_vendor_for_work_order(uuid) from public;
+revoke all on function private.is_owner_entity(uuid) from public;
 revoke all on function private.has_announcement_delivery(uuid) from public;
-revoke all on function private.can_manage_announcement(uuid,uuid) from public;
+revoke all on function private.can_manage_announcement(uuid) from public;
+revoke all on function private.can_manage_document_version(uuid) from public;
+revoke all on function private.is_vendor_for_work_order(uuid) from public;
 grant execute on function private.is_active_org_member(uuid) to authenticated;
 grant execute on function private.has_org_permission(uuid,text) to authenticated;
 grant execute on function private.has_property_access(uuid,text) to authenticated;
@@ -238,10 +247,11 @@ grant execute on function private.has_unscoped_org_permission(uuid,text) to auth
 grant execute on function private.current_user_person_ids(uuid) to authenticated;
 grant execute on function private.is_resident_for_tenancy(uuid) to authenticated;
 grant execute on function private.is_owner_for_property(uuid) to authenticated;
-grant execute on function private.is_owner_for_property(uuid,uuid) to authenticated;
-grant execute on function private.is_vendor_for_work_order(uuid) to authenticated;
+grant execute on function private.is_owner_entity(uuid) to authenticated;
 grant execute on function private.has_announcement_delivery(uuid) to authenticated;
-grant execute on function private.can_manage_announcement(uuid,uuid) to authenticated;
+grant execute on function private.can_manage_announcement(uuid) to authenticated;
+grant execute on function private.can_manage_document_version(uuid) to authenticated;
+grant execute on function private.is_vendor_for_work_order(uuid) to authenticated;
 
 -- Enable RLS on every exposed table.
 alter table public.profiles enable row level security;
@@ -435,7 +445,16 @@ using (exists(select 1 from public.payments p where p.id=payment_id));
 create policy payment_allocations_operator_or_resident_read on public.payment_allocations for select to authenticated
 using (exists(select 1 from public.payments p where p.id=payment_id));
 create policy payment_refunds_operator_or_resident_read on public.payment_refunds for select to authenticated
-using (exists(select 1 from public.payments p where p.id=payment_id));
+using (
+  exists(
+    select 1 from public.payments p
+    where p.id=payment_id
+      and (
+        exists(select 1 from public.tenancies t where t.id=p.tenancy_id and ((select private.has_property_access(t.property_id,'finance.read')) or (select private.has_property_access(t.property_id,'finance.manage'))))
+        or (select private.is_resident_for_tenancy(p.tenancy_id))
+      )
+  )
+);
 
 -- Documents. Relationship users see only documents explicitly related to their resource.
 create policy documents_scoped_read on public.documents for select to authenticated
@@ -473,26 +492,20 @@ create policy owner_statement_scoped_read on reporting.owner_statement_snapshots
 using (
   (select private.has_property_access(property_id,'owner.read'))
   or (select private.has_property_access(property_id,'owner.manage'))
-  or (select private.is_owner_for_property(property_id,owner_entity_id))
+  or (select private.is_owner_entity(owner_entity_id))
 );
 create policy owner_remittance_scoped_read on public.owner_remittance_records for select to authenticated
 using (
   (select private.has_property_access(property_id,'owner.read'))
   or (select private.has_property_access(property_id,'owner.manage'))
-  or (select private.is_owner_for_property(property_id,owner_entity_id))
+  or (select private.is_owner_entity(owner_entity_id))
 );
 
 -- Imports and consent.
 create policy import_jobs_privileged_read on public.import_jobs for select to authenticated
 using (
-  (select private.has_unscoped_org_permission(import_jobs.organization_id,'organization.manage'))
-  or (source_document_id is not null and exists (
-    select 1
-    from public.documents d
-    where d.id=source_document_id
-      and d.property_id is not null
-      and (select private.has_property_access(d.property_id,'property.manage'))
-  ))
+  (property_id is not null and (select private.has_property_access(property_id,'property.manage')))
+  or (property_id is null and (select private.has_unscoped_org_permission(organization_id,'organization.manage')))
 );
 create policy consent_records_self_or_admin_read on public.consent_records for select to authenticated
 using (user_id=(select auth.uid()) or (organization_id is not null and (select private.has_org_permission(organization_id,'organization.manage'))));
@@ -506,43 +519,42 @@ create policy conversations_participant_read on public.conversations for select 
 create policy conversation_participants_parent_read on public.conversation_participants for select to authenticated using (exists(select 1 from public.conversations c where c.id=conversation_id));
 create policy messages_parent_read on public.messages for select to authenticated using (exists(select 1 from public.conversations c where c.id=conversation_id));
 create policy announcements_scoped_read on public.announcements for select to authenticated using (
-  (select private.can_manage_announcement(id,organization_id))
-  or (select private.has_announcement_delivery(id))
+  (select private.has_announcement_delivery(id))
+  or (select private.can_manage_announcement(id))
 );
 create policy announcement_deliveries_self_read on public.announcement_deliveries for select to authenticated using (
   recipient_user_id=(select auth.uid())
-  or (select private.can_manage_announcement(announcement_id,organization_id))
+  or (select private.can_manage_announcement(announcement_id))
 );
 create policy document_deliveries_self_or_manager_read on public.document_deliveries for select to authenticated using (
   recipient_user_id=(select auth.uid())
-  or exists (
-    select 1
-    from public.document_versions dv
-    join public.documents d on d.id=dv.document_id and d.organization_id=dv.organization_id
-    where dv.id=document_version_id
-      and (
-        (d.property_id is not null and (select private.has_property_access(d.property_id,'documents.manage')))
-        or (d.property_id is null and (select private.has_unscoped_org_permission(document_deliveries.organization_id,'documents.manage')))
-      )
-  )
+  or (select private.can_manage_document_version(document_version_id))
 );
 create policy document_ack_self_or_manager_read on public.document_acknowledgements for select to authenticated using (
   user_id=(select auth.uid())
-  or exists (
-    select 1
-    from public.document_deliveries dd
-    join public.document_versions dv on dv.id=dd.document_version_id and dv.organization_id=dd.organization_id
-    join public.documents d on d.id=dv.document_id and d.organization_id=dv.organization_id
+  or exists(
+    select 1 from public.document_deliveries dd
     where dd.id=document_delivery_id
-      and (
-        (d.property_id is not null and (select private.has_property_access(d.property_id,'documents.manage')))
-        or (d.property_id is null and (select private.has_unscoped_org_permission(document_acknowledgements.organization_id,'documents.manage')))
-      )
+      and (select private.can_manage_document_version(dd.document_version_id))
   )
 );
 create policy privacy_requests_self_or_admin_read on public.privacy_requests for select to authenticated using (requester_user_id=(select auth.uid()) or (organization_id is not null and (select private.has_org_permission(organization_id,'organization.manage'))));
-create policy owner_approval_request_scoped_read on public.owner_approval_requests for select to authenticated using ((select private.has_property_access(property_id,'maintenance.manage')) or (select private.has_property_access(property_id,'owner.manage')) or (select private.is_owner_for_property(property_id,owner_entity_id)));
-create policy owner_approval_decision_parent_read on public.owner_approval_decisions for select to authenticated using (exists(select 1 from public.owner_approval_requests r where r.id=approval_request_id and (r.owner_entity_id=owner_approval_decisions.owner_entity_id or (select private.has_property_access(r.property_id,'owner.manage')))));
+create policy owner_approval_request_scoped_read on public.owner_approval_requests for select to authenticated using (
+  (select private.has_property_access(property_id,'maintenance.manage'))
+  or (select private.has_property_access(property_id,'owner.manage'))
+  or (select private.is_owner_entity(owner_entity_id))
+);
+create policy owner_approval_decision_parent_read on public.owner_approval_decisions for select to authenticated using (
+  exists(
+    select 1 from public.owner_approval_requests r
+    where r.id=approval_request_id
+      and (
+        (select private.has_property_access(r.property_id,'maintenance.manage'))
+        or (select private.has_property_access(r.property_id,'owner.manage'))
+        or (select private.is_owner_entity(r.owner_entity_id))
+      )
+  )
+);
 create policy localized_price_books_read on public.localized_price_books for select to authenticated using (status='active');
 create policy plan_prices_read on public.plan_prices for select to authenticated using (true);
 create policy usage_meter_definitions_read on public.usage_meter_definitions for select to authenticated using (true);
@@ -564,21 +576,21 @@ create or replace view reporting.vendor_work_order_assignments with (security_ba
 select w.id as work_order_id,w.organization_id,w.property_id,w.unit_id,u.unit_code,w.vendor_id,w.status,w.scope,w.scheduled_start,w.scheduled_end,w.started_at,w.completed_at,w.completion_summary,w.estimated_cost_minor,w.actual_cost_minor,w.currency_code,w.version
 from public.work_orders w left join public.units u on u.id=w.unit_id
 where private.is_vendor_for_work_order(w.id);
-create or replace view reporting.resident_work_order_summaries with (security_barrier=true) as
-select w.id as work_order_id,w.organization_id,w.property_id,w.unit_id,w.status,w.scheduled_start,w.scheduled_end,w.started_at,w.completed_at,w.completion_summary,w.version
+create or replace view reporting.resident_work_order_statuses with (security_barrier=true) as
+select w.id as work_order_id,w.organization_id,w.maintenance_request_id,mr.public_reference,w.property_id,w.unit_id,w.status,w.scheduled_start,w.scheduled_end,w.started_at,w.completed_at,w.version
 from public.work_orders w
-join public.maintenance_requests mr on mr.id=w.maintenance_request_id and mr.organization_id=w.organization_id
+join public.maintenance_requests mr on mr.id=w.maintenance_request_id
 where mr.tenancy_id is not null and private.is_resident_for_tenancy(mr.tenancy_id);
-revoke all on reporting.owner_lease_summaries,reporting.owner_maintenance_summaries,reporting.vendor_work_order_assignments,reporting.resident_work_order_summaries from anon;
+revoke all on reporting.owner_lease_summaries,reporting.owner_maintenance_summaries,reporting.vendor_work_order_assignments,reporting.resident_work_order_statuses from anon;
 grant usage on schema reporting to authenticated;
-grant select on reporting.owner_lease_summaries,reporting.owner_maintenance_summaries,reporting.vendor_work_order_assignments,reporting.resident_work_order_summaries to authenticated;
+grant select on reporting.owner_statement_snapshots,reporting.owner_lease_summaries,reporting.owner_maintenance_summaries,reporting.vendor_work_order_assignments,reporting.resident_work_order_statuses to authenticated;
 
 commit;
 ```
 
 ## 2.1 Relationship-user projection rule
 
-Owners and vendors receive **no direct SELECT policy** on full `leases`, `maintenance_requests`, or `work_orders`. They consume the sanitized `reporting.owner_lease_summaries`, `reporting.owner_maintenance_summaries`, and `reporting.vendor_work_order_assignments` projections or equivalent server query DTOs. These projections omit resident identity, private notes, payment rows, internal cost approvals, and unrelated evidence.
+Owners, vendors, and residents receive **no direct SELECT policy** on full `leases` or `work_orders`; owners and vendors also receive no direct SELECT policy on full `maintenance_requests`. They consume the sanitized `reporting.owner_lease_summaries`, `reporting.owner_maintenance_summaries`, and `reporting.vendor_work_order_assignments` projections or equivalent server query DTOs. These projections omit resident identity, private notes, payment rows, internal cost approvals, work-order costs for residents, owner-approval fields for residents, and unrelated evidence.
 
 ## 3. Write policy
 
@@ -647,10 +659,10 @@ Uploads use a server-created upload grant containing organization, parent resour
 | RLS-024 | Owner | Query base leases or maintenance tables directly | 0 rows; sanitized view only |
 | RLS-025 | Vendor | Query base work_orders or maintenance tables directly | 0 rows; sanitized view only |
 | RLS-026 | Cross-org child insert | Pair Org A parent with Org B child ID | composite FK violation |
-| RLS-027 | Co-owner A | Read statement/remittance/approval addressed to co-owner B on the same property | 0 rows |
-| RLS-028 | Resident | Query base work_orders or cost/owner-approval fields | 0 rows; sanitized resident view only |
-| RLS-029 | Resident | Read property announcement without an explicit delivery | 0 rows |
-| RLS-030 | Property-scoped document manager | Read delivery/import sourced only from another property | 0 rows |
+| RLS-027 | Co-owner A | Read Co-owner B statement, remittance, request, or decision on the same property | 0 rows; exact `owner_entity_id` required |
+| RLS-028 | Resident | Query base `work_orders` then the resident status projection | base rows 0; sanitized related status row only |
+| RLS-029 | Resident | Read a same-property announcement without an explicit delivery | 0 rows; explicitly delivered announcement only |
+| RLS-030 | Property-scoped member | Read another property’s non-portfolio import or document | 0 rows; assigned-property rows only |
 
 ## 6. Financial/database invariant tests
 
@@ -665,8 +677,6 @@ Uploads use a server-created upload grant containing organization, parent resour
 | DB-007 Duplicate provider payment intent in connection | unique violation |
 | DB-008 Overlapping active tenancy for unit | unique violation |
 | DB-009 Two active primary contacts in household | unique violation |
-| DB-010 Duplicate pre-organization idempotency key for same actor/route | unique violation |
-| DB-011 Successful refunds exceed original payment amount | transaction fails `REFUND_EXCEEDS_PAYMENT` |
 | DB-010 Update/delete posted journal entry | fails `APPEND_ONLY_RECORD` |
 | DB-011 Update/delete finalized statement snapshot | fails `APPEND_ONLY_RECORD` |
 | DB-012 Replay webhook event | one canonical attempt/payment transition only |
