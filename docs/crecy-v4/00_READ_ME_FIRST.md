@@ -1,16 +1,16 @@
-# Crecy Senior Engineering Specification — v4.1.1 Gate 0 Complete
+# Crecy Senior Engineering Specification — v4 Gate 0 Complete
 
 **Status:** Authoritative implementation package  
 **Product:** Crecy global rental operating system  
-**Authority date:** 2026-07-20  
+**Authority date:** 2026-07-19
 **Commercial launch family:** United States, Canada, Mexico  
 **First controlled pilot:** United States with Virginia-based operators, without jurisdiction-certified legal automation
 
 ## v4.1.1 authority
 
-This directory is the authoritative **Crecy v4.1.1** implementation package. v4.1.1 supersedes v4 and v4.1 wherever they conflict. Files `12` through `17` are normal repository files and must exist before implementation. No bootstrap or GitHub Action is required.
+This directory is the authoritative **Crecy v4.1.1** implementation package. v4.1.1 supersedes v4 wherever they conflict. Files `12` through `17` are normal repository files and must exist before implementation. No bootstrap or GitHub Action is required.
 
-The v4.1 correction pass closes persistence, command/schema traceability, property-scoped authorization, relationship-user data minimization, and the final Crecy naming contradiction.
+The v4.1.1 correction pass closes persistence, command/schema traceability, property-scoped authorization, relationship-user data minimization, and the final Crecy naming contradiction.
 
 ## 1. Authority and supersession
 
@@ -101,19 +101,19 @@ See `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` for exclusions.
 - `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` — binding lean MVP
 - `11_PRICING_ENTITLEMENTS_AND_BILLING_SPEC.md` — binding prices and feature limits
 - `12_P0_EXECUTABLE_SCHEMA.sql` — executable schema baseline
-- `13_P0_RLS_POLICIES_AND_TEST_MATRIX.md` — exact policies and attack cases
-- `14_P0_COMMAND_API_EVENT_CONTRACTS.md` — exact P0 commands, errors, and events
+- `13_P0_RLS_POLICIES_AND_TEST_MATRIX.md` — exact policies, sanitized projections, and attack cases
+- `14_P0_COMMAND_API_EVENT_CONTRACTS.md` — exact P0 commands, errors, persistence, and events
 - `15_P0_SCREEN_AND_STATE_SPECIFICATIONS.md` — route-level UX contracts
-- `16_BRAND_FIGMA_COMPONENT_VISUAL_DIRECTION.md` — brand/system decisions
-- `17_P0_DATA_CONTRACT_TRACEABILITY_MATRIX.md` — route-to-persistence and authorization traceability
+- `16_BRAND_FIGMA_COMPONENT_VISUAL_DIRECTION.md` — locked Crecy brand/system decisions
+- `17_P0_DATA_CONTRACT_TRACEABILITY_MATRIX.md` — route-to-table-to-policy-to-event traceability
 - `18_MARKETING_CLAIMS_AND_EVIDENCE_POLICY.md` — safe claims
-- `19_OFFICIAL_SOURCE_AND_VERIFICATION_NOTES.md` — source register
 - `20_COUNSEL_AND_COMPLIANCE_LAUNCH_CHECKLIST.md` — production evidence
-- `21_GATE_0_COMPLETION_REPORT.md` — resolution of Codex findings
+- `21_GATE_0_COMPLETION_REPORT.md` — Gate 0 resolution record
 - `22_CODEX_CLAUDE_EXECUTION_PROMPT.md` — implementation instruction
-- `23_V4_1_CORRECTION_REPORT.md` — v4.1 closure report
-- `24_CODEX_APPLY_V4_1_PROMPT.md` — repository application instructions
-- `design-references/REFERENCE_IMAGE_MANIFEST.md` — image authority and corrections
+- `23_V4_1_CORRECTION_REPORT.md` — v4.1 correction history
+- `24_CODEX_APPLY_V4_1_PROMPT.md` — historical v4.1 application prompt
+- `25_V4_1_1_CORRECTION_REPORT.md` — targeted v4.1.1 correction history
+- `26_CODEX_APPLY_V4_1_1_PROMPT.md` — current application and validation prompt
 - `AGENTS.md` — repository agent rules
 
 ## 7. Non-negotiable invariants

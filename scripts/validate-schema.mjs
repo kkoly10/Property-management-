@@ -12,6 +12,7 @@ const importsSql = await readFile(resolve(root, "supabase/migrations/20260720121
 const leasingSql = await readFile(resolve(root, "supabase/migrations/20260720130951_phase_3_existing_lease.sql"), "utf8");
 const financeSql = await readFile(resolve(root, "supabase/migrations/20260720144109_phase_4_recurring_charges.sql"), "utf8");
 const manualPaymentsSql = await readFile(resolve(root, "supabase/migrations/20260720150956_phase_4_manual_payments.sql"), "utf8");
+const contractCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260722095618_v4_1_1_contract_corrections.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -73,6 +74,8 @@ async function expectDatabaseError(action, expectedMessage) {
 }
 
 async function validateAuthority() {
+  assert(!/grant[^;]+reporting\.(owner_lease_summaries|owner_maintenance_summaries|vendor_work_order_assignments|resident_work_order_statuses)/i.test(authoritySql), "File 12 grants a view that is created only by file 13.");
+  assert(rlsMarkdown.includes("| RLS-030 |"), "The mandatory v4.1.1 RLS matrix does not reach RLS-030.");
   const db = createDatabase();
   await prepareSupabasePrelude(db);
   await db.exec(authoritySql);
@@ -81,8 +84,112 @@ async function validateAuthority() {
   const policyResult = await db.query(`select count(*)::integer as count from pg_policies where schemaname in ('public','reporting')`);
   assert(tableResult.rows[0].count === 73, "Authority schema table count changed unexpectedly.");
   assert(policyResult.rows[0].count === 58, "Authority RLS policy count changed unexpectedly.");
+
+  const admin = "d0000000-0000-4000-8000-000000000001";
+  const ownerA = "d0000000-0000-4000-8000-000000000002";
+  const ownerB = "d0000000-0000-4000-8000-000000000003";
+  const resident = "d0000000-0000-4000-8000-000000000004";
+  const scopedManager = "d0000000-0000-4000-8000-000000000005";
+  const org = "d1000000-0000-4000-8000-000000000001";
+  const entity = "d2000000-0000-4000-8000-000000000001";
+  const book = "d3000000-0000-4000-8000-000000000001";
+  const propertyA = "d4000000-0000-4000-8000-000000000001";
+  const propertyB = "d4000000-0000-4000-8000-000000000002";
+  const unitA = "d5000000-0000-4000-8000-000000000001";
+  const ownerEntityA = "d6000000-0000-4000-8000-000000000001";
+  const ownerEntityB = "d6000000-0000-4000-8000-000000000002";
+  const tenancy = "dd000000-0000-4000-8000-000000000001";
+  const announcementA = "e0000000-0000-4000-8000-000000000001";
+  const announcementB = "e0000000-0000-4000-8000-000000000002";
+  await db.exec(`
+    insert into auth.users(id) values ('${admin}'),('${ownerA}'),('${ownerB}'),('${resident}'),('${scopedManager}');
+    insert into public.organizations(id,display_name,slug,headquarters_country_code,default_time_zone,customer_path,status,created_by)
+    values ('${org}','Authority Atlas','authority-atlas','US','America/New_York','property_manager','active','${admin}');
+    insert into public.operating_entities(id,organization_id,legal_name,display_name,country_code,entity_type,status,created_by)
+    values ('${entity}','${org}','Authority Atlas LLC','Authority Atlas','US','company','active','${admin}');
+    insert into public.accounting_books(id,organization_id,operating_entity_id,name,functional_currency_code,status,created_by)
+    values ('${book}','${org}','${entity}','Operating book','USD','open','${admin}');
+    insert into public.properties(id,organization_id,operating_entity_id,accounting_book_id,country_profile_id,name,property_type,country_code,locality,postal_code,address_line1,time_zone,status,created_by)
+    values
+      ('${propertyA}','${org}','${entity}','${book}',(select id from public.country_profiles where code='US_NATIONAL'),'Maple Court','multifamily','US','Richmond','23220','100 Main Street','America/New_York','active','${admin}'),
+      ('${propertyB}','${org}','${entity}','${book}',(select id from public.country_profiles where code='US_NATIONAL'),'Oak Court','multifamily','US','Richmond','23221','200 Main Street','America/New_York','active','${admin}');
+    insert into public.units(id,organization_id,property_id,unit_code,unit_type) values ('${unitA}','${org}','${propertyA}','101','Apartment');
+    insert into public.organization_memberships(id,organization_id,user_id,role_code,status)
+    values ('e4000000-0000-4000-8000-000000000001','${org}','${scopedManager}','property_manager','active');
+    insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    values ('${org}','e4000000-0000-4000-8000-000000000001','${propertyA}');
+
+    insert into public.owner_entities(id,organization_id,display_name,entity_type) values
+      ('${ownerEntityA}','${org}','Owner A LLC','company'),('${ownerEntityB}','${org}','Owner B LLC','company');
+    insert into public.ownership_interests(id,organization_id,property_id,owner_entity_id,ownership_fraction,effective_from) values
+      ('d7000000-0000-4000-8000-000000000001','${org}','${propertyA}','${ownerEntityA}',0.5,'2026-01-01'),
+      ('d7000000-0000-4000-8000-000000000002','${org}','${propertyA}','${ownerEntityB}',0.5,'2026-01-01');
+    insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values
+      ('${ownerA}','${org}','owner_entity','${ownerEntityA}','active'),('${ownerB}','${org}','owner_entity','${ownerEntityB}','active');
+    insert into reporting.owner_statement_snapshots(id,organization_id,accounting_book_id,owner_entity_id,property_id,period_start,period_end,currency_code,income_minor,expense_minor,net_owner_position_minor,snapshot_data,finalized_at,finalized_by,sha256_hex) values
+      ('d8000000-0000-4000-8000-000000000001','${org}','${book}','${ownerEntityA}','${propertyA}','2026-06-01','2026-06-30','USD',100000,10000,90000,'{}',now(),'${admin}','${"c".repeat(64)}'),
+      ('d8000000-0000-4000-8000-000000000002','${org}','${book}','${ownerEntityB}','${propertyA}','2026-06-01','2026-06-30','USD',100000,10000,90000,'{}',now(),'${admin}','${"d".repeat(64)}');
+    insert into public.owner_remittance_records(id,organization_id,owner_entity_id,property_id,amount_minor,currency_code,recorded_at,recorded_by) values
+      ('d8100000-0000-4000-8000-000000000001','${org}','${ownerEntityA}','${propertyA}',90000,'USD',now(),'${admin}'),
+      ('d8100000-0000-4000-8000-000000000002','${org}','${ownerEntityB}','${propertyA}',90000,'USD',now(),'${admin}');
+
+    insert into public.people(id,organization_id,first_name,last_name,email) values ('d9000000-0000-4000-8000-000000000001','${org}','Avery','Morgan','avery@example.com');
+    insert into public.households(id,organization_id,display_name,status) values ('da000000-0000-4000-8000-000000000001','${org}','Morgan household','resident');
+    insert into public.household_members(organization_id,household_id,person_id,is_primary_contact,is_financially_responsible) values ('${org}','da000000-0000-4000-8000-000000000001','d9000000-0000-4000-8000-000000000001',true,true);
+    insert into public.leases(id,organization_id,property_id,unit_id,household_id,country_profile_id,start_date,end_date,rent_amount_minor,currency_code,rent_frequency,status,created_by)
+    values ('db000000-0000-4000-8000-000000000001','${org}','${propertyA}','${unitA}','da000000-0000-4000-8000-000000000001',(select id from public.country_profiles where code='US_NATIONAL'),'2026-01-01','2027-12-31',185000,'USD','monthly','active','${admin}');
+    insert into public.receivable_accounts(id,organization_id,accounting_book_id,public_reference,currency_code) values ('dc000000-0000-4000-8000-000000000001','${org}','${book}','TEN-AUTH-001','USD');
+    insert into public.tenancies(id,organization_id,property_id,unit_id,household_id,lease_id,receivable_account_id,possession_start,status)
+    values ('${tenancy}','${org}','${propertyA}','${unitA}','da000000-0000-4000-8000-000000000001','db000000-0000-4000-8000-000000000001','dc000000-0000-4000-8000-000000000001','2026-01-01','active');
+    insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status)
+    values ('${resident}','${org}','resident_person','d9000000-0000-4000-8000-000000000001','active');
+    insert into public.maintenance_requests(id,organization_id,property_id,unit_id,tenancy_id,reported_by_user_id,public_reference,category,title,description)
+    values ('de000000-0000-4000-8000-000000000001','${org}','${propertyA}','${unitA}','${tenancy}','${resident}','MR-AUTH-001','plumbing','Leaking sink','Kitchen sink is leaking');
+    insert into public.work_orders(id,organization_id,maintenance_request_id,property_id,unit_id,status,scope,estimated_cost_minor,actual_cost_minor,currency_code,owner_approval_required,owner_approval_status,created_by)
+    values ('df000000-0000-4000-8000-000000000001','${org}','de000000-0000-4000-8000-000000000001','${propertyA}','${unitA}','assigned','Repair sink',25000,20000,'USD',true,'approved','${admin}');
+
+    insert into public.announcements(id,organization_id,property_id,title,body_text,locale,audience_type,status,published_at,created_by) values
+      ('${announcementA}','${org}','${propertyA}','Delivered notice','Water will be off','en-US','selected_tenancies','published',now(),'${admin}'),
+      ('${announcementB}','${org}','${propertyA}','Undelivered notice','Private selected notice','en-US','selected_tenancies','published',now(),'${admin}');
+    insert into public.announcement_deliveries(id,organization_id,announcement_id,recipient_user_id,recipient_relationship_type,recipient_relationship_id,delivery_status,delivered_at)
+    values ('e1000000-0000-4000-8000-000000000001','${org}','${announcementA}','${resident}','resident_person','d9000000-0000-4000-8000-000000000001','delivered',now());
+
+    insert into public.documents(id,organization_id,property_id,document_type,title,source,status,created_by) values
+      ('e2000000-0000-4000-8000-000000000001','${org}','${propertyA}','import_source','Property A import','operator_supplied','active','${admin}'),
+      ('e2000000-0000-4000-8000-000000000002','${org}','${propertyB}','import_source','Property B import','operator_supplied','active','${admin}');
+    insert into public.import_jobs(id,organization_id,property_id,import_type,status,source_document_id,created_by) values
+      ('e3000000-0000-4000-8000-000000000001','${org}','${propertyA}','documents','ready','e2000000-0000-4000-8000-000000000001','${admin}'),
+      ('e3000000-0000-4000-8000-000000000002','${org}','${propertyB}','documents','ready','e2000000-0000-4000-8000-000000000002','${admin}');
+    insert into public.organizations(id,display_name,slug,status,created_by) values ('d1000000-0000-4000-8000-000000000002','Other Authority Org','other-authority-org','active','${admin}');
+    insert into public.owner_entities(id,organization_id,display_name,entity_type) values ('d6000000-0000-4000-8000-000000000003','d1000000-0000-4000-8000-000000000002','Cross-org owner','company');
+  `);
+  await expectDatabaseError(() => db.query(`insert into public.owner_remittance_records(organization_id,owner_entity_id,property_id,amount_minor,currency_code,recorded_at,recorded_by) values ('${org}','d6000000-0000-4000-8000-000000000003','${propertyA}',1,'USD',now(),'${admin}')`), "foreign key constraint");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
+  const ownerRows = await db.query(`select
+    (select count(*)::integer from reporting.owner_statement_snapshots) as statements,
+    (select count(*)::integer from public.owner_remittance_records) as remittances`);
+  assert(ownerRows.rows[0].statements === 1 && ownerRows.rows[0].remittances === 1, "RLS-027 failed: a co-owner crossed the exact owner-entity boundary.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const residentRows = await db.query(`select
+    (select count(*)::integer from public.work_orders) as base_work_orders,
+    (select count(*)::integer from reporting.resident_work_order_statuses) as projected_work_orders,
+    (select count(*)::integer from public.announcements) as announcements`);
+  assert(residentRows.rows[0].base_work_orders === 0 && residentRows.rows[0].projected_work_orders === 1, "RLS-028 failed: resident work-order data is not projection-only.");
+  assert(residentRows.rows[0].announcements === 1, "RLS-029 failed: announcement access was not limited to explicit deliveries.");
+  const residentProjectionColumns = await db.query(`select count(*)::integer as count from information_schema.columns where table_schema='reporting' and table_name='resident_work_order_statuses' and column_name in ('estimated_cost_minor','actual_cost_minor','completion_summary','owner_approval_status')`);
+  assert(residentProjectionColumns.rows[0].count === 0, "Resident work-order projection exposes sensitive operational fields.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedManager}'`);
+  const scopedRows = await db.query(`select
+    (select count(*)::integer from public.documents) as documents,
+    (select count(*)::integer from public.import_jobs) as imports,
+    (select count(*)::integer from public.properties) as properties`);
+  assert(scopedRows.rows[0].documents === 1 && scopedRows.rows[0].imports === 1 && scopedRows.rows[0].properties === 1, "RLS-030 failed: property-scoped import or document data leaked.");
+
   await db.close();
-  return { tables: tableResult.rows[0].count, policies: policyResult.rows[0].count };
+  return { tables: tableResult.rows[0].count, policies: policyResult.rows[0].count, coOwnerRows: ownerRows.rows[0].statements, residentWorkOrders: residentRows.rows[0].projected_work_orders, deliveredAnnouncements: residentRows.rows[0].announcements, scopedImports: scopedRows.rows[0].imports };
 }
 
 async function validateFoundation() {
@@ -607,6 +714,7 @@ async function validateRecurringCharges() {
   await db.exec(leasingSql);
   await db.exec(financeSql);
   await db.exec(manualPaymentsSql);
+  await db.exec(contractCorrectionsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -688,6 +796,28 @@ async function validateRecurringCharges() {
   assert(paymentPosting.source === "system_generated" && !paymentPosting.operator_supplied_unverified, "Receipt document provenance is incorrect.");
   await expectDatabaseError(() => db.query(`update public.documents set title='Changed' where id='${payment.receiptDocumentId}'`), "APPEND_ONLY_RECORD");
 
+  const actorScopes = await db.query(`select count(*)::integer as total,count(actor_scope)::integer as scoped,
+    count(*) filter (where actor_scope='user:'||actor_user_id::text)::integer as user_scoped
+    from private.idempotency_records where actor_user_id is not null`);
+  assert(actorScopes.rows[0].total === actorScopes.rows[0].scoped && actorScopes.rows[0].total === actorScopes.rows[0].user_scoped, "Idempotency actor scopes were not server-derived for existing and new commands.");
+  await db.exec(`insert into private.idempotency_records(organization_id,actor_user_id,route,idempotency_key,request_hash,expires_at) values (null,null,'SystemCorrectionTest','system-correction-key','hash-a',now()+interval '1 hour')`);
+  await expectDatabaseError(() => db.query(`insert into private.idempotency_records(organization_id,actor_user_id,route,idempotency_key,request_hash,expires_at) values (null,null,'SystemCorrectionTest','system-correction-key','hash-b',now()+interval '1 hour')`), "duplicate key");
+
+  const refundId = "c7000000-0000-4000-8000-000000000007";
+  await db.exec(`insert into public.payment_refunds(id,organization_id,payment_id,amount_minor,currency_code,reason,status,created_by)
+    values ('${refundId}','${organization.organizationId}','${payment.paymentId}',50000,'USD','Resident refund requested','requested','${admin}')`);
+  await expectDatabaseError(() => db.query(`insert into public.payment_refunds(organization_id,payment_id,amount_minor,currency_code,reason,status,created_by)
+    values ('${organization.organizationId}','${payment.paymentId}',40000,'USD','Would exceed payment','pending','${admin}')`), "PAYMENT_OVERREFUNDED");
+  await expectDatabaseError(() => db.query(`insert into public.payment_refunds(organization_id,payment_id,amount_minor,currency_code,reason,status,failure_code,created_by)
+    values ('${organization.organizationId}','${payment.paymentId}',1000,'CAD','Wrong currency','failed','provider_declined','${admin}')`), "REFUND_CURRENCY_MISMATCH");
+  await db.exec(`insert into public.payment_refunds(organization_id,payment_id,amount_minor,currency_code,reason,status,failure_code,created_by)
+    values ('${organization.organizationId}','${payment.paymentId}',90000,'USD','Failed attempt does not consume refundable amount','failed','provider_declined','${admin}')`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const operatorRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${payment.paymentId}'`)).rows[0].count;
+  assert(operatorRefunds === 2, "Authorized finance operator cannot read persisted refunds.");
+  await expectDatabaseError(() => db.query(`insert into public.payment_refunds(organization_id,payment_id,amount_minor,currency_code,reason) values ('${organization.organizationId}','${payment.paymentId}',1,'USD','Forged refund')`), "permission denied");
+  await db.exec("reset role");
+
   const person = (await db.query(`select hm.person_id from public.household_members hm where hm.household_id='${activation.householdId}' and hm.is_primary_contact`)).rows[0].person_id;
   await db.exec(`insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values ('${resident}','${organization.organizationId}','resident_person','${person}','active')`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
@@ -697,18 +827,20 @@ async function validateRecurringCharges() {
   assert(residentCharges === 1, "Resident could not read their own canonical charge.");
   const residentPayments = (await db.query("select public.get_resident_payment_history() as result")).rows[0].result;
   const residentReceipt = (await db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}') as result`)).rows[0].result;
-  assert(residentPayments.items.length === 1 && residentReceipt.paymentId === payment.paymentId, "Resident payment history or receipt is unavailable.");
+  const residentRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${payment.paymentId}'`)).rows[0].count;
+  assert(residentPayments.items.length === 1 && residentReceipt.paymentId === payment.paymentId && residentRefunds === 2, "Resident payment history, refund state, or receipt is unavailable.");
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
   const outsiderCharges = (await db.query("select count(*)::integer as count from public.charges")).rows[0].count;
   const outsiderPayments = (await db.query("select count(*)::integer as count from public.payments")).rows[0].count;
+  const outsiderRefunds = (await db.query("select count(*)::integer as count from public.payment_refunds")).rows[0].count;
   await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',1000,'USD','${receivedAt}','Unauthorized cash','${evidenceDocumentId}','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,null,'outsider-manual-payment')`), "PROPERTY_SCOPE_DENIED");
   await expectDatabaseError(() => db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}')`), "RECEIPT_NOT_FOUND");
-  assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0, "Resident finance data leaked to an unrelated user.");
+  assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderRefunds === 0, "Resident finance data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, persistedRefunds: operatorRefunds, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

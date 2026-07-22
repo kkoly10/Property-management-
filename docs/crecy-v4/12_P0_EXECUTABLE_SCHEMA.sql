@@ -1,4 +1,4 @@
--- Crecy P0 executable schema baseline v4.1
+-- Crecy P0 executable schema baseline v4.1.1
 -- PostgreSQL 15+ / Supabase. Decompose into reviewed forward-only migrations.
 -- This file establishes exact P0 names and invariants. Do not run against production as one unreviewed migration.
 
@@ -580,62 +580,71 @@ create table public.payment_refunds (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete restrict,
   payment_id uuid not null references public.payments(id) on delete restrict,
+  provider_refund_id text,
   amount_minor bigint not null check (amount_minor > 0),
   currency_code char(3) not null,
   reason text not null,
-  status text not null default 'requested' check (status in ('requested','processing','succeeded','failed','canceled')),
-  provider_refund_id text,
+  status text not null default 'requested' check (status in ('requested','pending','succeeded','failed','canceled')),
   corrective_journal_transaction_id uuid references public.journal_transactions(id) on delete restrict,
-  idempotency_key text not null,
-  requested_at timestamptz not null default now(),
-  processed_at timestamptz,
-  requested_by uuid references auth.users(id) on delete restrict,
   failure_code text,
+  failure_detail text,
+  requested_at timestamptz not null default now(),
+  completed_at timestamptz,
+  created_by uuid references auth.users(id) on delete restrict,
+  updated_at timestamptz not null default now(),
+  version integer not null default 1 check (version > 0),
   unique(organization_id,id),
-  unique(payment_id,idempotency_key),
-  unique(provider_refund_id)
+  check (completed_at is null or completed_at >= requested_at)
 );
+create unique index payment_refunds_provider_unique_idx
+  on public.payment_refunds(organization_id,provider_refund_id)
+  where provider_refund_id is not null;
 create index payment_refunds_payment_status_idx on public.payment_refunds(payment_id,status,requested_at);
 
-create or replace function private.validate_payment_refund()
-returns trigger
+create or replace function private.assert_payment_refund_limit(p_payment_id uuid)
+returns void
 language plpgsql
 set search_path = ''
 as $$
 declare
-  payment_amount bigint;
-  payment_currency char(3);
-  refunded_amount bigint;
+  v_payment_amount bigint;
+  v_payment_currency char(3);
+  v_refund_amount bigint;
 begin
-  select p.amount_minor,p.currency_code
-    into payment_amount,payment_currency
-  from public.payments p
-  where p.id=new.payment_id and p.organization_id=new.organization_id
-  for update;
-
-  if payment_amount is null then
-    raise exception using errcode='23503',message='PAYMENT_NOT_FOUND';
-  end if;
-  if new.currency_code <> payment_currency then
+  select p.amount_minor,p.currency_code into v_payment_amount,v_payment_currency
+  from public.payments p where p.id=p_payment_id;
+  if not found then return; end if;
+  if exists(select 1 from public.payment_refunds r where r.payment_id=p_payment_id and r.currency_code<>v_payment_currency) then
     raise exception using errcode='23514',message='REFUND_CURRENCY_MISMATCH';
   end if;
-
-  if new.status='succeeded' then
-    select coalesce(sum(r.amount_minor),0)
-      into refunded_amount
-    from public.payment_refunds r
-    where r.payment_id=new.payment_id
-      and r.status='succeeded'
-      and r.id<>new.id;
-    if refunded_amount + new.amount_minor > payment_amount then
-      raise exception using errcode='23514',message='REFUND_EXCEEDS_PAYMENT';
-    end if;
-  end if;
-  return new;
+  select coalesce(sum(r.amount_minor),0) into v_refund_amount
+  from public.payment_refunds r where r.payment_id=p_payment_id and r.status not in ('failed','canceled');
+  if v_refund_amount>v_payment_amount then raise exception using errcode='23514',message='PAYMENT_OVERREFUNDED'; end if;
 end;
 $$;
-create trigger payment_refunds_validate before insert or update on public.payment_refunds
-for each row execute function private.validate_payment_refund();
+revoke all on function private.assert_payment_refund_limit(uuid) from public,anon,authenticated,service_role;
+
+create or replace function private.enforce_payment_refund_limit()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op='DELETE' then
+    perform private.assert_payment_refund_limit(old.payment_id);
+  elsif tg_op='UPDATE' then
+    perform private.assert_payment_refund_limit(new.payment_id);
+    if old.payment_id<>new.payment_id then perform private.assert_payment_refund_limit(old.payment_id); end if;
+  else
+    perform private.assert_payment_refund_limit(new.payment_id);
+  end if;
+  return null;
+end;
+$$;
+revoke all on function private.enforce_payment_refund_limit() from public,anon,authenticated,service_role;
+create constraint trigger payment_refunds_limit
+after insert or update or delete on public.payment_refunds
+deferrable initially deferred for each row execute function private.enforce_payment_refund_limit();
 
 create table public.documents (
   id uuid primary key default gen_random_uuid(),
@@ -808,6 +817,7 @@ create table private.idempotency_records (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid references public.organizations(id) on delete restrict,
   actor_user_id uuid references auth.users(id) on delete restrict,
+  actor_scope text not null check (length(actor_scope) between 3 and 200),
   route text not null,
   idempotency_key text not null,
   request_hash text not null,
@@ -819,7 +829,7 @@ create table private.idempotency_records (
   created_at timestamptz not null default now(),
   completed_at timestamptz,
   expires_at timestamptz not null,
-  unique nulls not distinct (organization_id,actor_user_id,route,idempotency_key)
+  unique nulls not distinct (organization_id,actor_scope,route,idempotency_key)
 );
 create index idempotency_expiry_idx on private.idempotency_records(expires_at);
 
@@ -1079,6 +1089,7 @@ create table public.owner_approval_decisions (
 create table public.import_jobs (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete restrict,
+  property_id uuid references public.properties(id) on delete restrict,
   import_type text not null check (import_type in ('portfolio','residents','leases','opening_balances','documents','combined')),
   status public.import_status not null default 'uploaded',
   source_document_id uuid references public.documents(id) on delete restrict,
@@ -1088,7 +1099,8 @@ create table public.import_jobs (
   created_at timestamptz not null default now(),
   created_by uuid references auth.users(id) on delete restrict,
   committed_at timestamptz,
-  unique(organization_id,id)
+  unique(organization_id,id),
+  check ((import_type = 'portfolio' and property_id is null) or (import_type <> 'portfolio' and property_id is not null))
 );
 
 create table private.import_rows (
@@ -1300,32 +1312,33 @@ alter table public.charges add constraint charges_schedule_org_fk foreign key (o
 alter table public.payments add constraint payments_entity_org_fk foreign key (organization_id,operating_entity_id) references public.operating_entities(organization_id,id) on delete restrict;
 alter table public.payments add constraint payments_book_org_fk foreign key (organization_id,accounting_book_id) references public.accounting_books(organization_id,id) on delete restrict;
 alter table public.payments add constraint payments_receivable_org_fk foreign key (organization_id,receivable_account_id) references public.receivable_accounts(organization_id,id) on delete restrict;
-alter table public.payment_attempts add constraint payment_attempts_payment_org_fk foreign key (organization_id,payment_id) references public.payments(organization_id,id) on delete restrict;
-alter table public.payment_allocations add constraint allocations_payment_org_fk foreign key (organization_id,payment_id) references public.payments(organization_id,id) on delete restrict;
-alter table public.payment_allocations add constraint allocations_charge_org_fk foreign key (organization_id,charge_id) references public.charges(organization_id,id) on delete restrict;
 alter table public.payment_refunds add constraint payment_refunds_payment_org_fk foreign key (organization_id,payment_id) references public.payments(organization_id,id) on delete restrict;
 alter table public.payment_refunds add constraint payment_refunds_journal_org_fk foreign key (organization_id,corrective_journal_transaction_id) references public.journal_transactions(organization_id,id) on delete restrict;
-alter table public.work_orders add constraint work_orders_request_org_fk foreign key (organization_id,maintenance_request_id) references public.maintenance_requests(organization_id,id) on delete restrict;
-alter table public.work_orders add constraint work_orders_unit_org_fk foreign key (organization_id,unit_id) references public.units(organization_id,id) on delete restrict;
+alter table public.import_jobs add constraint import_jobs_property_org_fk foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict;
+alter table public.import_jobs add constraint import_jobs_source_document_org_fk foreign key (organization_id,source_document_id) references public.documents(organization_id,id) on delete restrict;
+alter table public.document_deliveries add constraint document_deliveries_version_org_fk foreign key (organization_id,document_version_id) references public.document_versions(organization_id,id) on delete restrict;
+alter table public.document_acknowledgements add constraint document_ack_delivery_org_fk foreign key (organization_id,document_delivery_id) references public.document_deliveries(organization_id,id) on delete restrict;
+alter table public.announcement_deliveries add constraint announcement_delivery_parent_org_fk foreign key (organization_id,announcement_id) references public.announcements(organization_id,id) on delete cascade;
+alter table public.announcements add constraint announcements_property_org_fk foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict;
+alter table public.owner_remittance_records add constraint owner_remittance_owner_org_fk foreign key (organization_id,owner_entity_id) references public.owner_entities(organization_id,id) on delete restrict;
+alter table public.owner_remittance_records add constraint owner_remittance_property_org_fk foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict;
+alter table public.owner_remittance_records add constraint owner_remittance_statement_org_fk foreign key (organization_id,statement_snapshot_id) references reporting.owner_statement_snapshots(organization_id,id) on delete restrict;
 alter table reporting.owner_statement_snapshots add constraint owner_statements_book_org_fk foreign key (organization_id,accounting_book_id) references public.accounting_books(organization_id,id) on delete restrict;
 alter table reporting.owner_statement_snapshots add constraint owner_statements_owner_org_fk foreign key (organization_id,owner_entity_id) references public.owner_entities(organization_id,id) on delete restrict;
 alter table reporting.owner_statement_snapshots add constraint owner_statements_property_org_fk foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict;
-alter table public.owner_remittance_records add constraint owner_remittances_owner_org_fk foreign key (organization_id,owner_entity_id) references public.owner_entities(organization_id,id) on delete restrict;
-alter table public.owner_remittance_records add constraint owner_remittances_property_org_fk foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict;
-alter table public.owner_remittance_records add constraint owner_remittances_statement_org_fk foreign key (organization_id,statement_snapshot_id) references reporting.owner_statement_snapshots(organization_id,id) on delete restrict;
-alter table public.owner_approval_requests add constraint owner_approvals_property_org_fk foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict;
-alter table public.owner_approval_requests add constraint owner_approvals_owner_org_fk foreign key (organization_id,owner_entity_id) references public.owner_entities(organization_id,id) on delete restrict;
-alter table public.owner_approval_requests add constraint owner_approvals_work_order_org_fk foreign key (organization_id,work_order_id) references public.work_orders(organization_id,id) on delete restrict;
-alter table public.owner_approval_decisions add constraint owner_decisions_request_org_fk foreign key (organization_id,approval_request_id) references public.owner_approval_requests(organization_id,id) on delete restrict;
-alter table public.owner_approval_decisions add constraint owner_decisions_owner_org_fk foreign key (organization_id,owner_entity_id) references public.owner_entities(organization_id,id) on delete restrict;
+alter table public.owner_approval_requests add constraint owner_approval_owner_org_fk foreign key (organization_id,owner_entity_id) references public.owner_entities(organization_id,id) on delete restrict;
+alter table public.owner_approval_requests add constraint owner_approval_property_org_fk foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict;
+alter table public.owner_approval_requests add constraint owner_approval_work_order_org_fk foreign key (organization_id,work_order_id) references public.work_orders(organization_id,id) on delete restrict;
+alter table public.owner_approval_requests add constraint owner_approval_work_order_property_fk foreign key (organization_id,property_id,work_order_id) references public.work_orders(organization_id,property_id,id) on delete restrict;
+alter table public.owner_approval_decisions add constraint owner_decision_request_org_fk foreign key (organization_id,approval_request_id) references public.owner_approval_requests(organization_id,id) on delete restrict;
+alter table public.owner_approval_decisions add constraint owner_decision_owner_org_fk foreign key (organization_id,owner_entity_id) references public.owner_entities(organization_id,id) on delete restrict;
+alter table public.payment_attempts add constraint payment_attempts_payment_org_fk foreign key (organization_id,payment_id) references public.payments(organization_id,id) on delete restrict;
+alter table public.payment_allocations add constraint allocations_payment_org_fk foreign key (organization_id,payment_id) references public.payments(organization_id,id) on delete restrict;
+alter table public.payment_allocations add constraint allocations_charge_org_fk foreign key (organization_id,charge_id) references public.charges(organization_id,id) on delete restrict;
+alter table public.work_orders add constraint work_orders_request_org_fk foreign key (organization_id,maintenance_request_id) references public.maintenance_requests(organization_id,id) on delete restrict;
+alter table public.work_orders add constraint work_orders_unit_org_fk foreign key (organization_id,unit_id) references public.units(organization_id,id) on delete restrict;
 alter table public.work_orders add constraint work_orders_request_property_fk foreign key (organization_id,property_id,maintenance_request_id) references public.maintenance_requests(organization_id,property_id,id) on delete restrict;
 alter table public.work_orders add constraint work_orders_unit_property_fk foreign key (organization_id,property_id,unit_id) references public.units(organization_id,property_id,id) on delete restrict;
-alter table public.owner_approval_requests add constraint owner_approvals_work_order_property_fk foreign key (organization_id,property_id,work_order_id) references public.work_orders(organization_id,property_id,id) on delete restrict;
-alter table public.announcements add constraint announcements_property_org_fk foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict;
-alter table public.announcement_deliveries add constraint announcement_deliveries_announcement_org_fk foreign key (organization_id,announcement_id) references public.announcements(organization_id,id) on delete cascade;
-alter table public.document_deliveries add constraint document_deliveries_version_org_fk foreign key (organization_id,document_version_id) references public.document_versions(organization_id,id) on delete restrict;
-alter table public.document_acknowledgements add constraint document_ack_delivery_org_fk foreign key (organization_id,document_delivery_id) references public.document_deliveries(organization_id,id) on delete restrict;
-alter table public.import_jobs add constraint import_jobs_source_document_org_fk foreign key (organization_id,source_document_id) references public.documents(organization_id,id) on delete restrict;
 
 create index conversations_property_idx on public.conversations(property_id,status,updated_at) where property_id is not null;
 create index announcements_property_status_idx on public.announcements(property_id,status,scheduled_at);
@@ -1360,6 +1373,7 @@ create trigger owners_touch before update on public.owner_entities for each row 
 create trigger leases_touch before update on public.leases for each row execute function private.touch_updated_at();
 create trigger tenancies_touch before update on public.tenancies for each row execute function private.touch_updated_at();
 create trigger charge_schedules_touch before update on public.charge_schedules for each row execute function private.touch_updated_at();
+create trigger payment_refunds_touch before update on public.payment_refunds for each row execute function private.touch_updated_at();
 create trigger payments_touch before update on public.payments for each row execute function private.touch_updated_at();
 create trigger vendors_touch before update on public.vendors for each row execute function private.touch_updated_at();
 create trigger maintenance_touch before update on public.maintenance_requests for each row execute function private.touch_updated_at();
@@ -1465,7 +1479,6 @@ grant select on public.profiles,public.organizations,public.operating_entities,p
   public.plan_prices,public.usage_meter_definitions,public.usage_records,public.billing_invoices,
   public.billing_invoice_lines to authenticated;
 
-grant select on reporting.owner_statement_snapshots to authenticated;
 grant select on public.owner_remittance_records to authenticated;
 
 commit;
