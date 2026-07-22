@@ -20,6 +20,7 @@ const stripeWebhookSql = await readFile(resolve(root, "supabase/migrations/20260
 const providerRefundsSql = await readFile(resolve(root, "supabase/migrations/20260722154358_phase_5_provider_refunds.sql"), "utf8");
 const paymentDisputesSql = await readFile(resolve(root, "supabase/migrations/20260722161627_phase_5_payment_disputes.sql"), "utf8");
 const settlementReconciliationSql = await readFile(resolve(root, "supabase/migrations/20260722182753_phase_5_settlement_reconciliation.sql"), "utf8");
+const paymentFailureRetrySql = await readFile(resolve(root, "supabase/migrations/20260722193025_phase_5_payment_failure_retry.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -736,6 +737,7 @@ async function validateRecurringCharges() {
   await db.exec(providerRefundsSql);
   await db.exec(paymentDisputesSql);
   await db.exec(settlementReconciliationSql);
+  await db.exec(paymentFailureRetrySql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1527,6 +1529,21 @@ async function validateRecurringCharges() {
   const residentRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${payment.paymentId}'`)).rows[0].count;
   const residentProviderRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${paymentSession.paymentId}'`)).rows[0].count;
   assert(residentPayments.items.length === 6 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "refunded" && residentPayments.items.find((item) => item.paymentId === failedPreparation.paymentId)?.status === "failed" && residentPayments.items.find((item) => item.paymentId === disputedPreparation.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === returnedPreparation.paymentId)?.status === "returned" && residentPayments.items.find((item) => item.paymentId === settlementPreparation.paymentId)?.reconciliationStatus === "reconciled" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2 && residentProviderRefunds === 3, "Resident payment session, correction history, refund, return, dispute, settlement, or corrected receipt state is unavailable.");
+  const retryContext = (await db.query(`select public.get_resident_payment_retry_context('${failedPreparation.paymentId}') as result`)).rows[0].result;
+  const failedAttemptHistory = (await db.query(`select public.get_payment_attempt_history('${failedPreparation.paymentId}') as result`)).rows[0].result;
+  assert(retryContext.paymentId === failedPreparation.paymentId && retryContext.amountMinor === 10000 && retryContext.method === "card" && retryContext.failureCode === "checkout_session_expired" && retryContext.allocations.length === 1, "The resident retry context did not preserve the failed payment selection.");
+  assert(failedAttemptHistory.attempts.length === 1 && failedAttemptHistory.attempts[0].providerStatus === "expired" && failedAttemptHistory.attempts[0].failureCode === "checkout_session_expired" && !JSON.stringify(failedAttemptHistory).includes("pi_resident") && !JSON.stringify(failedAttemptHistory).includes("cs_test"), "The sanitized attempt timeline is incomplete or exposes provider object IDs.");
+  const retryPreparation = (await db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',10000,'USD','${failedSessionAllocations}'::jsonb,'card','${paymentReturnUrl}','resident-payment-session-retry-0001'
+  ) as result`)).rows[0].result;
+  assert(retryPreparation.paymentId !== failedPreparation.paymentId && retryPreparation.paymentAttemptId !== failedPreparation.paymentAttemptId, "A terminal payment retry reused the failed canonical payment or attempt.");
+  await db.exec("reset role");
+  const retryTraces = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where resource_id='${retryPreparation.paymentId}' and action_code='payment.created') as audits,
+    (select count(*)::integer from private.outbox_events where aggregate_id='${retryPreparation.paymentId}' and event_type='payment.created') as events
+  `)).rows[0];
+  assert(retryTraces.audits === 1 && retryTraces.events === 1, "The new retry attempt is missing its durable audit or outbox trace.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
@@ -1536,6 +1553,8 @@ async function validateRecurringCharges() {
   const outsiderRefunds = (await db.query("select count(*)::integer as count from public.payment_refunds")).rows[0].count;
   const outsiderSettlements = (await db.query("select count(*)::integer as count from public.settlement_batches")).rows[0].count;
   await expectDatabaseError(() => db.query(`select public.get_payment_dispute_history('${disputedPreparation.paymentId}')`), "PAYMENT_NOT_FOUND");
+  await expectDatabaseError(() => db.query(`select public.get_payment_attempt_history('${failedPreparation.paymentId}')`), "PAYMENT_NOT_FOUND");
+  await expectDatabaseError(() => db.query(`select public.get_resident_payment_retry_context('${failedPreparation.paymentId}')`), "PAYMENT_NOT_RETRYABLE");
   await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',1000,'USD','${receivedAt}','Unauthorized cash','${evidenceDocumentId}','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,null,'outsider-manual-payment')`), "PROPERTY_SCOPE_DENIED");
   await expectDatabaseError(() => db.query(`select public.reverse_or_correct_payment('${payment.paymentId}','metadata_correction','Unauthorized correction','reversed',4,null,'{"manualReason":"Forged change"}'::jsonb,'outsider-payment-correction')`), "PROPERTY_SCOPE_DENIED");
   await expectDatabaseError(() => db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}')`), "RECEIPT_NOT_FOUND");
@@ -1545,7 +1564,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 4, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

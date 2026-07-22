@@ -8,19 +8,28 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
-import type { ResidentPaymentSessionOption } from "@/lib/data/finance";
+import type { ResidentPaymentRetryContext, ResidentPaymentSessionOption } from "@/lib/data/finance";
 
 type Method = "card" | "bank";
 type SessionResponse = { checkoutUrl?: string; error?: string };
 const money = (amount: number, currency: string) => new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount / 100);
 const toMinor = (value: string) => { const number = Number(value); return Number.isFinite(number) && Number.isSafeInteger(Math.round(number * 100)) ? Math.round(number * 100) : null; };
+const toMajor = (amountMinor: number) => (amountMinor / 100).toFixed(2);
 
-export function ResidentPaymentForm({ options, disabled }: { options: ResidentPaymentSessionOption[]; disabled: boolean }) {
-  const [tenancyId, setTenancyId] = useState(options[0]?.tenancyId ?? "");
+export function ResidentPaymentForm({ options, retry, disabled }: { options: ResidentPaymentSessionOption[]; retry?: ResidentPaymentRetryContext; disabled: boolean }) {
+  const initialOption = options.find((option) => option.tenancyId === retry?.tenancyId) ?? options[0];
+  const initialAllocations = Object.fromEntries((retry?.allocations ?? []).flatMap((allocation) => {
+    const charge = initialOption?.charges.find((candidate) => candidate.chargeId === allocation.chargeId);
+    const availableMinor = Math.min(allocation.amountMinor, charge?.remainingMinor ?? 0);
+    return availableMinor > 0 ? [[allocation.chargeId, toMajor(availableMinor)]] : [];
+  }));
+  const initialAmountMinor = Object.values(initialAllocations).reduce((total, value) => total + (toMinor(value) ?? 0), 0);
+  const initialMethod = retry && initialOption?.availableMethods.includes(retry.method) ? retry.method : initialOption?.availableMethods[0] ?? "card";
+  const [tenancyId, setTenancyId] = useState(initialOption?.tenancyId ?? "");
   const selected = options.find((option) => option.tenancyId === tenancyId);
-  const [amount, setAmount] = useState("");
-  const [allocations, setAllocations] = useState<Record<string, string>>({});
-  const [method, setMethod] = useState<Method>(options[0]?.availableMethods[0] ?? "card");
+  const [amount, setAmount] = useState(initialAmountMinor > 0 ? toMajor(initialAmountMinor) : "");
+  const [allocations, setAllocations] = useState<Record<string, string>>(initialAllocations);
+  const [method, setMethod] = useState<Method>(initialMethod);
   const [authorized, setAuthorized] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [pending, setPending] = useState(false);
