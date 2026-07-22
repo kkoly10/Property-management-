@@ -30,7 +30,9 @@ export async function POST(request: Request) {
   }
 
   const refundEvent = event.type === "refund.created" || event.type === "refund.updated" || event.type === "refund.failed";
-  const result = await createAdminClient().rpc(refundEvent ? "process_stripe_refund_webhook" : "process_stripe_webhook", {
+  const disputeEvent = event.type === "charge.dispute.created" || event.type === "charge.dispute.updated" || event.type === "charge.dispute.closed";
+  const procedure = disputeEvent ? "process_stripe_dispute_webhook" : refundEvent ? "process_stripe_refund_webhook" : "process_stripe_webhook";
+  const result = await createAdminClient().rpc(procedure, {
     p_provider_event_id: event.id,
     p_provider_account_id: event.account,
     p_payload_sha256: createHash("sha256").update(rawBody).digest("hex"),
@@ -56,6 +58,9 @@ export async function POST(request: Request) {
       "ALLOCATION_TOTAL_MISMATCH",
       "INVALID_PROVIDER_REFUND_OBJECT",
       "PROVIDER_REFUND_METADATA_MISMATCH",
+      "INVALID_PROVIDER_DISPUTE_OBJECT",
+      "PROVIDER_DISPUTE_MISMATCH",
+      "DISPUTE_ALLOCATION_MISMATCH",
     ].includes(response.errorCode ?? "");
     return errorResponse(
       response.errorCode ?? "WEBHOOK_PROCESSING_FAILED",
