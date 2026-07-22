@@ -16,6 +16,7 @@ const contractCorrectionsSql = await readFile(resolve(root, "supabase/migrations
 const paymentCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260722125015_phase_4_payment_corrections.sql"), "utf8");
 const stripeOnboardingSql = await readFile(resolve(root, "supabase/migrations/20260722133026_phase_5_stripe_onboarding.sql"), "utf8");
 const residentPaymentSessionSql = await readFile(resolve(root, "supabase/migrations/20260722135623_phase_5_resident_payment_session.sql"), "utf8");
+const stripeWebhookSql = await readFile(resolve(root, "supabase/migrations/20260722150749_phase_5_stripe_webhook.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -728,6 +729,7 @@ async function validateRecurringCharges() {
   await db.exec(paymentCorrectionsSql);
   await db.exec(stripeOnboardingSql);
   await db.exec(residentPaymentSessionSql);
+  await db.exec(stripeWebhookSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -964,7 +966,7 @@ async function validateRecurringCharges() {
   const paymentSession = (await db.query(`select public.complete_resident_payment_session(
     '${resident}','${organization.organizationId}','${paymentPreparation.paymentId}','${paymentPreparation.paymentAttemptId}',
     '${activation.tenancyId}',50000,'USD','${sessionAllocations}'::jsonb,'card','${paymentReturnUrl}',
-    '${providerConnection.providerConnectionId}','acct_testFinance','cs_test_resident0001','pi_resident0001','open',
+    '${providerConnection.providerConnectionId}','acct_testFinance','cs_test_resident0001',null,'open',
     'https://checkout.stripe.com/c/pay/cs_test_resident0001',now()+interval '30 minutes','resident-payment-session-0001'
   ) as result`)).rows[0].result;
   assert(paymentSession.status === "pending" && paymentSession.checkoutUrl.includes("checkout.stripe.com") && paymentSession.paymentId === paymentPreparation.paymentId, "Provider Checkout completion did not persist the pending session.");
@@ -981,6 +983,127 @@ async function validateRecurringCharges() {
   )`), "ALLOCATION_EXCEEDS_AVAILABLE");
   const residentAttempts = (await db.query("select count(*)::integer as count from public.payment_attempts")).rows[0].count;
   assert(residentAttempts === 1, "Resident could not read their own provider payment attempt.");
+
+  const providerEventCreatedAt = (await db.query("select now()::text as created_at")).rows[0].created_at;
+  const providerMetadata = JSON.stringify({
+    organizationId: organization.organizationId,
+    paymentId: paymentSession.paymentId,
+    paymentAttemptId: paymentPreparation.paymentAttemptId,
+    paymentIntentId: "pi_resident0001",
+  });
+  await db.exec("reset role; set role service_role");
+  const processingEvent = (await db.query(`select public.process_stripe_webhook(
+    'evt_Processing001','acct_testFinance','${"1".repeat(64)}','payment_intent.processing','${providerEventCreatedAt}',false,
+    '${JSON.stringify({ ...JSON.parse(providerMetadata), providerStatus: "processing" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(processingEvent.outcome === "processed" && processingEvent.paymentStatus === "pending", "A delayed Stripe payment did not remain pending while processing.");
+  const processingReplay = (await db.query(`select public.process_stripe_webhook(
+    'evt_Processing001','acct_testFinance','${"1".repeat(64)}','payment_intent.processing','${providerEventCreatedAt}',false,
+    '${JSON.stringify({ ...JSON.parse(providerMetadata), providerStatus: "processing" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(processingReplay.outcome === "duplicate", "A Stripe event replay was not deduplicated.");
+
+  const retryableFailure = (await db.query(`select public.process_stripe_webhook(
+    'evt_AttemptFailed001','acct_testFinance','${"2".repeat(64)}','payment_intent.payment_failed','${providerEventCreatedAt}',false,
+    '${JSON.stringify({ ...JSON.parse(providerMetadata), providerStatus: "requires_payment_method", failureCode: "card_declined" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(retryableFailure.paymentStatus === "pending" && retryableFailure.attemptStatus === "open", "A retryable Checkout failure closed the canonical payment or released its receivable reservation.");
+
+  const successData = JSON.stringify({
+    ...JSON.parse(providerMetadata),
+    chargeId: "ch_resident0001",
+    amountMinor: 50000,
+    currencyCode: "USD",
+    providerStatus: "succeeded",
+  });
+  const successEvent = (await db.query(`select public.process_stripe_webhook(
+    'evt_Succeeded001','acct_testFinance','${"3".repeat(64)}','payment_intent.succeeded','${providerEventCreatedAt}',false,
+    '${successData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(successEvent.outcome === "processed" && successEvent.paymentStatus === "succeeded" && successEvent.journalTransactionId && successEvent.receiptDocumentId, "Authoritative Stripe success did not post the payment atomically.");
+  const successReplay = (await db.query(`select public.process_stripe_webhook(
+    'evt_Succeeded001','acct_testFinance','${"3".repeat(64)}','payment_intent.succeeded','${providerEventCreatedAt}',false,
+    '${successData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(successReplay.outcome === "duplicate", "A replayed Stripe success was not idempotent.");
+
+  const lateProcessing = (await db.query(`select public.process_stripe_webhook(
+    'evt_LateProcessing001','acct_testFinance','${"4".repeat(64)}','payment_intent.processing','${providerEventCreatedAt}',false,
+    '${JSON.stringify({ ...JSON.parse(providerMetadata), providerStatus: "processing" })}'::jsonb
+  ) as result`)).rows[0].result;
+  const lateFailure = (await db.query(`select public.process_stripe_webhook(
+    'evt_LateFailure001','acct_testFinance','${"5".repeat(64)}','payment_intent.payment_failed','${providerEventCreatedAt}',false,
+    '${JSON.stringify({ ...JSON.parse(providerMetadata), providerStatus: "requires_payment_method", failureCode: "late_failure" })}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(lateProcessing.outcome === "ignored" && lateFailure.outcome === "ignored", "Out-of-order Stripe events regressed a succeeded payment.");
+
+  const spoofedAccount = (await db.query(`select public.process_stripe_webhook(
+    'evt_SpoofedAccount001','acct_forged','${"6".repeat(64)}','payment_intent.succeeded','${providerEventCreatedAt}',false,
+    '${successData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(spoofedAccount.errorCode === "PROVIDER_ACCOUNT_MISMATCH", "A signed event for an unknown connected account was not rejected.");
+
+  await db.exec("reset role");
+  const providerPosting = (await db.query(`select
+    p.status,p.received_at,p.journal_transaction_id,p.receipt_document_id,p.version,
+    a.provider_status,a.provider_payment_intent_id,a.provider_charge_id,
+    c.status as charge_status,
+    (select count(*)::integer from public.payment_allocations pa where pa.payment_id=p.id and pa.reversed_at is null) as allocations,
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id=p.journal_transaction_id) as debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id=p.journal_transaction_id) as credits,
+    (select count(*)::integer from private.provider_webhook_events e where e.provider_account_id='acct_testFinance' and e.provider_event_id in ('evt_Processing001','evt_AttemptFailed001','evt_Succeeded001','evt_LateProcessing001','evt_LateFailure001')) as webhook_events,
+    (select count(*)::integer from audit.audit_events ae where ae.resource_id=p.id and ae.action_code='payment.succeeded') as success_audits,
+    (select count(*)::integer from private.outbox_events oe where oe.aggregate_id=p.id and oe.event_type='payment.succeeded') as success_events
+    from public.payments p
+    join public.payment_attempts a on a.payment_id=p.id
+    join public.charges c on c.id='${generated.chargeIds[0]}'
+    where p.id='${paymentSession.paymentId}'`)).rows[0];
+  assert(providerPosting.status === "succeeded" && providerPosting.provider_status === "succeeded" && providerPosting.provider_payment_intent_id === "pi_resident0001" && providerPosting.provider_charge_id === "ch_resident0001" && providerPosting.received_at && providerPosting.journal_transaction_id && providerPosting.receipt_document_id, "Provider success did not bind and finalize all canonical payment references.");
+  assert(providerPosting.charge_status === "partially_paid" && providerPosting.allocations === 1, "Provider success did not allocate and update the receivable.");
+  assert(providerPosting.debits === 50000 && providerPosting.credits === 50000, "Provider success journal is not balanced.");
+  assert(providerPosting.webhook_events === 5 && providerPosting.success_audits === 1 && providerPosting.success_events === 1, "Provider webhook dedupe or success trace is incomplete.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const failedSessionAllocations = JSON.stringify([{ chargeId: generated.chargeIds[0], amountMinor: 10000 }]);
+  const failedPreparation = (await db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',10000,'USD','${failedSessionAllocations}'::jsonb,'card','${paymentReturnUrl}','resident-payment-session-0002'
+  ) as result`)).rows[0].result;
+  await db.exec("reset role; set role service_role");
+  await db.query(`select public.complete_resident_payment_session(
+    '${resident}','${organization.organizationId}','${failedPreparation.paymentId}','${failedPreparation.paymentAttemptId}',
+    '${activation.tenancyId}',10000,'USD','${failedSessionAllocations}'::jsonb,'card','${paymentReturnUrl}',
+    '${providerConnection.providerConnectionId}','acct_testFinance','cs_test_resident0002','pi_resident0002','open',
+    'https://checkout.stripe.com/c/pay/cs_test_resident0002',now()+interval '30 minutes','resident-payment-session-0002'
+  )`);
+  const expiredData = JSON.stringify({
+    organizationId: organization.organizationId,
+    paymentId: failedPreparation.paymentId,
+    paymentAttemptId: failedPreparation.paymentAttemptId,
+    paymentIntentId: "pi_resident0002",
+    checkoutSessionId: "cs_test_resident0002",
+    providerStatus: "expired",
+  });
+  const expiredEvent = (await db.query(`select public.process_stripe_webhook(
+    'evt_CheckoutExpired001','acct_testFinance','${"7".repeat(64)}','checkout.session.expired','${providerEventCreatedAt}',false,
+    '${expiredData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(expiredEvent.paymentStatus === "failed", "Checkout expiry did not terminally fail and release the pending payment.");
+  const lateExpiredProcessing = (await db.query(`select public.process_stripe_webhook(
+    'evt_ExpiredLateProcessing001','acct_testFinance','${"9".repeat(64)}','payment_intent.processing','${providerEventCreatedAt}',false,
+    '${expiredData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(lateExpiredProcessing.outcome === "ignored" && lateExpiredProcessing.paymentStatus === "failed", "An out-of-order processing event resurrected an expired payment.");
+  await db.exec("reset role");
+  const expiredPosting = (await db.query(`select p.status,p.journal_transaction_id,p.receipt_document_id,a.provider_status,
+    (select count(*)::integer from public.payment_allocations pa where pa.payment_id=p.id) as allocations
+    from public.payments p join public.payment_attempts a on a.payment_id=p.id where p.id='${failedPreparation.paymentId}'`)).rows[0];
+  assert(expiredPosting.status === "failed" && expiredPosting.provider_status === "expired" && !expiredPosting.journal_transaction_id && !expiredPosting.receipt_document_id && expiredPosting.allocations === 0, "A failed provider payment created financial records.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  await expectDatabaseError(() => db.query(`select public.process_stripe_webhook(
+    'evt_Unauthorized001','acct_testFinance','${"8".repeat(64)}','payment_intent.processing','${providerEventCreatedAt}',false,'{}'::jsonb
+  )`), "permission denied");
+  await expectDatabaseError(() => db.query("select count(*) from private.provider_webhook_events"), "permission denied");
   await db.exec("reset role");
   const sessionTraces = (await db.query(`select
     (select status from public.payments where id='${paymentSession.paymentId}') as payment_status,
@@ -988,13 +1111,13 @@ async function validateRecurringCharges() {
     (select count(*)::integer from audit.audit_events where resource_id in ('${paymentSession.paymentId}','${paymentPreparation.paymentAttemptId}')) as audits,
     (select count(*)::integer from private.outbox_events where aggregate_id in ('${paymentSession.paymentId}','${paymentPreparation.paymentAttemptId}')) as events
   `)).rows[0];
-  assert(sessionTraces.payment_status === "pending" && sessionTraces.attempt_status === "open" && sessionTraces.audits === 2 && sessionTraces.events === 2, "Payment session state or audit/outbox trace is incomplete.");
+  assert(sessionTraces.payment_status === "succeeded" && sessionTraces.attempt_status === "succeeded" && sessionTraces.audits === 6 && sessionTraces.events === 7, "Payment session state or audit/outbox trace is incomplete.");
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentPayments = (await db.query("select public.get_resident_payment_history() as result")).rows[0].result;
   const residentReceipt = (await db.query(`select public.get_payment_receipt('${payment.receiptDocumentId}') as result`)).rows[0].result;
   const residentPaymentDetail = (await db.query(`select public.get_payment_detail('${payment.paymentId}') as result`)).rows[0].result;
   const residentRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${payment.paymentId}'`)).rows[0].count;
-  assert(residentPayments.items.length === 2 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "pending" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2, "Resident payment session, correction history, refund state, or corrected receipt is unavailable.");
+  assert(residentPayments.items.length === 3 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "succeeded" && residentPayments.items.find((item) => item.paymentId === failedPreparation.paymentId)?.status === "failed" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2, "Resident payment session, correction history, refund state, or corrected receipt is unavailable.");
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
