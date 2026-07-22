@@ -19,6 +19,7 @@ const residentPaymentSessionSql = await readFile(resolve(root, "supabase/migrati
 const stripeWebhookSql = await readFile(resolve(root, "supabase/migrations/20260722150749_phase_5_stripe_webhook.sql"), "utf8");
 const providerRefundsSql = await readFile(resolve(root, "supabase/migrations/20260722154358_phase_5_provider_refunds.sql"), "utf8");
 const paymentDisputesSql = await readFile(resolve(root, "supabase/migrations/20260722161627_phase_5_payment_disputes.sql"), "utf8");
+const settlementReconciliationSql = await readFile(resolve(root, "supabase/migrations/20260722182753_phase_5_settlement_reconciliation.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -734,6 +735,7 @@ async function validateRecurringCharges() {
   await db.exec(stripeWebhookSql);
   await db.exec(providerRefundsSql);
   await db.exec(paymentDisputesSql);
+  await db.exec(settlementReconciliationSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1401,6 +1403,115 @@ async function validateRecurringCharges() {
   assert(returnedDebitPosting.status === "returned" && returnedDebitPosting.active_allocations === 0 && returnedDebitPosting.debits === 25000 && returnedDebitPosting.credits === 25000 && returnedDebitPosting.return_events === 1, "Returned debit accounting or outbox trace is incomplete.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const settlementAllocations = JSON.stringify([{ chargeId: generated.chargeIds[0], amountMinor: 5000 }]);
+  const settlementPreparation = (await db.query(`select public.prepare_resident_payment_session(
+    '${activation.tenancyId}',5000,'USD','${settlementAllocations}'::jsonb,'card','${paymentReturnUrl}','resident-settlement-session-0001'
+  ) as result`)).rows[0].result;
+  await db.exec("reset role; set role service_role");
+  await db.query(`select public.complete_resident_payment_session(
+    '${resident}','${organization.organizationId}','${settlementPreparation.paymentId}','${settlementPreparation.paymentAttemptId}',
+    '${activation.tenancyId}',5000,'USD','${settlementAllocations}'::jsonb,'card','${paymentReturnUrl}',
+    '${providerConnection.providerConnectionId}','acct_testFinance','cs_test_settlement0001','pi_settlement0001','open',
+    'https://checkout.stripe.com/c/pay/cs_test_settlement0001',now()+interval '30 minutes','resident-settlement-session-0001'
+  )`);
+  const settlementPaymentCreatedAt = (await db.query("select now()::text as created_at")).rows[0].created_at;
+  const settlementPaymentData = JSON.stringify({
+    organizationId: organization.organizationId,
+    paymentId: settlementPreparation.paymentId,
+    paymentAttemptId: settlementPreparation.paymentAttemptId,
+    paymentIntentId: "pi_settlement0001",
+    chargeId: "ch_settlement0001",
+    amountMinor: 5000,
+    currencyCode: "USD",
+    providerStatus: "succeeded",
+  });
+  const settlementPayment = (await db.query(`select public.process_stripe_webhook(
+    'evt_SettlementPayment001','acct_testFinance','${"6".repeat(64)}','payment_intent.succeeded','${settlementPaymentCreatedAt}',false,
+    '${settlementPaymentData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(settlementPayment.paymentStatus === "succeeded", "The settlement fixture payment was not authoritatively confirmed.");
+
+  const settlementReceivedAt = (await db.query(`select ('${settlementPaymentCreatedAt}'::timestamptz+interval '1 second')::text as created_at`)).rows[0].created_at;
+  const settlementData = JSON.stringify({
+    providerSettlementId: "po_CrecySettlement001",
+    providerStatus: "paid",
+    amountMinor: 4825,
+    currencyCode: "USD",
+    automatic: true,
+    expectedArrivalDate: "2026-08-04",
+    items: [{
+      providerBalanceTransactionId: "txn_CrecySettlement001",
+      providerSourceId: "ch_settlement0001",
+      transactionType: "charge",
+      reportingCategory: "charge",
+      grossMinor: 5000,
+      feeMinor: 175,
+      netMinor: 4825,
+      currencyCode: "USD",
+      providerStatus: "available",
+      availableOn: "2026-08-03",
+    }],
+  });
+  const settlement = (await db.query(`select public.process_stripe_settlement_webhook(
+    'evt_SettlementPaid001','acct_testFinance','${"7".repeat(64)}','payout.paid','${settlementReceivedAt}',false,
+    '${settlementData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(settlement.outcome === "processed" && settlement.reconciliationStatus === "reconciled" && settlement.itemCount === 1 && settlement.matchedCount === 1 && settlement.journalTransactionId, "A paid Stripe payout was not imported, matched, and posted exactly once.");
+  const settlementReplay = (await db.query(`select public.process_stripe_settlement_webhook(
+    'evt_SettlementPaid001','acct_testFinance','${"7".repeat(64)}','payout.paid','${settlementReceivedAt}',false,
+    '${settlementData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(settlementReplay.outcome === "duplicate", "A replayed payout created another settlement.");
+
+  const mismatchReceivedAt = (await db.query(`select ('${settlementReceivedAt}'::timestamptz+interval '1 second')::text as created_at`)).rows[0].created_at;
+  const mismatchData = JSON.stringify({
+    providerSettlementId: "po_CrecyMismatch001",
+    providerStatus: "paid",
+    amountMinor: 4000,
+    currencyCode: "USD",
+    automatic: true,
+    expectedArrivalDate: "2026-08-05",
+    items: [{
+      providerBalanceTransactionId: "txn_CrecyMismatch001",
+      providerSourceId: "ch_unknown0001",
+      transactionType: "charge",
+      reportingCategory: "charge",
+      grossMinor: 5000,
+      feeMinor: 500,
+      netMinor: 4500,
+      currencyCode: "USD",
+      providerStatus: "available",
+      availableOn: "2026-08-04",
+    }],
+  });
+  const mismatch = (await db.query(`select public.process_stripe_settlement_webhook(
+    'evt_SettlementMismatch001','acct_testFinance','${"8".repeat(64)}','payout.paid','${mismatchReceivedAt}',false,
+    '${mismatchData}'::jsonb
+  ) as result`)).rows[0].result;
+  assert(mismatch.reconciliationStatus === "exception" && mismatch.exceptionCount === 2 && !mismatch.journalTransactionId, "A payout mismatch was silently posted or did not create its exception trail.");
+
+  await db.exec("reset role");
+  const settlementPosting = (await db.query(`select b.reconciliation_status,p.reconciliation_status as payment_reconciliation,
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id=b.journal_transaction_id) as debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id=b.journal_transaction_id) as credits,
+    (select count(*)::integer from public.reconciliation_matches m where m.settlement_batch_id=b.id) as matches,
+    (select count(*)::integer from audit.audit_events a where a.resource_type='settlement_batch' and a.resource_id=b.id and a.action_code='settlement.received') as audits,
+    (select count(*)::integer from private.outbox_events o where o.aggregate_type='settlement_batch' and o.aggregate_id=b.id and o.event_type='settlement.received') as events
+    from public.settlement_batches b join public.settlement_items i on i.settlement_batch_id=b.id
+    join public.payments p on p.id=i.payment_id where b.id='${settlement.settlementId}'`)).rows[0];
+  assert(settlementPosting.reconciliation_status === "reconciled" && settlementPosting.payment_reconciliation === "reconciled" && settlementPosting.matches === 1, "Settlement reconciliation did not link the payout item to the payment.");
+  assert(settlementPosting.debits === 5000 && settlementPosting.credits === 5000 && settlementPosting.audits === 1 && settlementPosting.events === 1, "Settlement accounting or durable trace is incomplete.");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const settlementWorkspace = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  assert(settlementWorkspace.batches.length === 2 && settlementWorkspace.exceptions.length === 2 && settlementWorkspace.batches.find((batch) => batch.settlementId === settlement.settlementId)?.matchedCount === 1, "The operator reconciliation workspace is incomplete.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const residentSettlementRows = (await db.query("select count(*)::integer as count from public.settlement_batches")).rows[0].count;
+  const residentSettlementWorkspace = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  const residentSettlementHistory = (await db.query(`select public.get_payment_settlement_history('${settlementPreparation.paymentId}') as result`)).rows[0].result;
+  assert(residentSettlementRows === 0 && residentSettlementWorkspace.batches.length === 0 && residentSettlementHistory.settlements.length === 1, "Settlement data leaked to a resident or their sanitized payment history is missing.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentDisputeHistory = (await db.query(`select public.get_payment_dispute_history('${disputedPreparation.paymentId}') as result`)).rows[0].result;
   const residentReturnHistory = (await db.query(`select public.get_payment_dispute_history('${returnedPreparation.paymentId}') as result`)).rows[0].result;
   assert(residentDisputeHistory.disputes.length === 2 && residentReturnHistory.disputes.length === 1 && residentReturnHistory.disputes[0].kind === "return", "Sanitized resident return/dispute history is incomplete.");
@@ -1415,7 +1526,7 @@ async function validateRecurringCharges() {
   const residentPaymentDetail = (await db.query(`select public.get_payment_detail('${payment.paymentId}') as result`)).rows[0].result;
   const residentRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${payment.paymentId}'`)).rows[0].count;
   const residentProviderRefunds = (await db.query(`select count(*)::integer as count from public.payment_refunds where payment_id='${paymentSession.paymentId}'`)).rows[0].count;
-  assert(residentPayments.items.length === 5 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "refunded" && residentPayments.items.find((item) => item.paymentId === failedPreparation.paymentId)?.status === "failed" && residentPayments.items.find((item) => item.paymentId === disputedPreparation.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === returnedPreparation.paymentId)?.status === "returned" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2 && residentProviderRefunds === 3, "Resident payment session, correction history, refund, return, dispute, or corrected receipt state is unavailable.");
+  assert(residentPayments.items.length === 6 && residentPayments.items.find((item) => item.paymentId === payment.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === paymentSession.paymentId)?.status === "refunded" && residentPayments.items.find((item) => item.paymentId === failedPreparation.paymentId)?.status === "failed" && residentPayments.items.find((item) => item.paymentId === disputedPreparation.paymentId)?.status === "reversed" && residentPayments.items.find((item) => item.paymentId === returnedPreparation.paymentId)?.status === "returned" && residentPayments.items.find((item) => item.paymentId === settlementPreparation.paymentId)?.reconciliationStatus === "reconciled" && residentReceipt.paymentId === payment.paymentId && residentPaymentDetail.corrections.length === 3 && !residentPaymentDetail.canCorrect && residentRefunds === 2 && residentProviderRefunds === 3, "Resident payment session, correction history, refund, return, dispute, settlement, or corrected receipt state is unavailable.");
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderSummary = (await db.query("select public.get_resident_balance_summary() as result")).rows[0].result;
@@ -1423,6 +1534,7 @@ async function validateRecurringCharges() {
   const outsiderPayments = (await db.query("select count(*)::integer as count from public.payments")).rows[0].count;
   const outsiderAttempts = (await db.query("select count(*)::integer as count from public.payment_attempts")).rows[0].count;
   const outsiderRefunds = (await db.query("select count(*)::integer as count from public.payment_refunds")).rows[0].count;
+  const outsiderSettlements = (await db.query("select count(*)::integer as count from public.settlement_batches")).rows[0].count;
   await expectDatabaseError(() => db.query(`select public.get_payment_dispute_history('${disputedPreparation.paymentId}')`), "PAYMENT_NOT_FOUND");
   await expectDatabaseError(() => db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',1000,'USD','${receivedAt}','Unauthorized cash','${evidenceDocumentId}','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,null,'outsider-manual-payment')`), "PROPERTY_SCOPE_DENIED");
   await expectDatabaseError(() => db.query(`select public.reverse_or_correct_payment('${payment.paymentId}','metadata_correction','Unauthorized correction','reversed',4,null,'{"manualReason":"Forged change"}'::jsonb,'outsider-payment-correction')`), "PROPERTY_SCOPE_DENIED");
@@ -1430,10 +1542,10 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query(`select public.prepare_resident_payment_session(
     '${activation.tenancyId}',1000,'USD','[{"chargeId":"${generated.chargeIds[0]}","amountMinor":1000}]'::jsonb,'card','${paymentReturnUrl}','outsider-payment-session-0001'
   )`), "TENANCY_SCOPE_DENIED");
-  assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0, "Resident finance data leaked to an unrelated user.");
+  assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 3, persistedRefunds: operatorRefunds, paymentDisputes: 3, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 4, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

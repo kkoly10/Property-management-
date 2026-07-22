@@ -1,6 +1,6 @@
 # Crecy Property Management Platform
 
-Crecy is a global rental operating system for property operators, residents, owners, and invited vendors. The executable MVP now includes the secure platform foundation, portfolio/import workflows, document ingestion, existing-lease activation, recurring rent generation, balanced and immutable journal posting, controlled manual-payment allocation, system receipts, Stripe-connected operator onboarding, direct connected-account resident Checkout sessions, signed and idempotent payment webhooks, connected-account refunds, returned-debit and dispute accounting, an operator payments workspace, and resident balances and payment history.
+Crecy is a global rental operating system for property operators, residents, owners, and invited vendors. The executable MVP now includes the secure platform foundation, portfolio/import workflows, document ingestion, existing-lease activation, recurring rent generation, balanced and immutable journal posting, controlled manual-payment allocation, system receipts, Stripe-connected operator onboarding, direct connected-account resident Checkout sessions, signed and idempotent payment webhooks, connected-account refunds, returned-debit and dispute accounting, provider-payout settlement ingestion and exception controls, an operator payments/reconciliation workspace, and resident balances and payment history.
 
 ## Run locally
 
@@ -27,7 +27,7 @@ npm run typecheck
 npm run build
 ```
 
-`test:db` runs the v4.1.1 authoritative schema and all application migrations in embedded Postgres. It exercises tenant, owner, relationship, and property-scope isolation; expired memberships; MFA-gated and idempotent commands; Stripe provider-connection and resident-payment isolation; payment, refund, return, and dispute webhook replay and out-of-order delivery; pending allocation/refund reservations and provider-event races; partial/full/failed refund accounting; won/lost dispute recovery; post-success bank returns; country/book consistency; plan limits; document/import controls; lease activation; balanced recurring-charge and payment journals; allocation and refund limits; evidence and receipt controls; resident projections; and audit/outbox traces. Correction evidence is recorded in [`docs/implementation/V4_1_1_CORRECTION_VALIDATION.md`](./docs/implementation/V4_1_1_CORRECTION_VALIDATION.md).
+`test:db` runs the v4.1.1 authoritative schema and all application migrations in embedded Postgres. It exercises tenant, owner, relationship, and property-scope isolation; expired memberships; MFA-gated and idempotent commands; Stripe provider-connection and resident-payment isolation; payment, refund, return, dispute, and payout webhook replay; pending allocation/refund reservations and provider-event races; partial/full/failed refund accounting; won/lost dispute recovery; post-success bank returns; exact provider-reference settlement matching; payout amount exceptions; balanced settlement journals; country/book consistency; plan limits; document/import controls; lease activation; allocation and refund limits; evidence and receipt controls; resident projections; and audit/outbox traces. Correction evidence is recorded in [`docs/implementation/V4_1_1_CORRECTION_VALIDATION.md`](./docs/implementation/V4_1_1_CORRECTION_VALIDATION.md).
 
 ## Authoritative specification
 

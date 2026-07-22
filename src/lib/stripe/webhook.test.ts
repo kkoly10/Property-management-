@@ -1,6 +1,7 @@
 import Stripe from "stripe";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { sanitizeStripeWebhookEvent, verifyStripeWebhook } from "@/lib/stripe/webhook";
+import { listStripePayoutBalanceTransactions, sanitizeStripePayout } from "@/lib/stripe/settlement";
 
 const endpointSecret = "whsec_crecy_unit_test";
 const stripe = new Stripe("sk_test_crecy_unit_test");
@@ -122,5 +123,72 @@ describe("Stripe Connect webhook verification", () => {
       reasonCode: "fraudulent",
       evidenceDueAt: "2026-07-26T17:20:00.000Z",
     });
+  });
+
+  it("sanitizes payout and balance transaction financial fields", () => {
+    const payout = {
+      id: "po_crecy_settlement_001",
+      object: "payout",
+      amount: 48_250,
+      currency: "usd",
+      status: "paid",
+      automatic: true,
+      arrival_date: 1_785_456_000,
+    } as Stripe.Payout;
+    const transaction = {
+      id: "txn_crecy_balance_001",
+      object: "balance_transaction",
+      amount: 50_000,
+      fee: 1_750,
+      net: 48_250,
+      currency: "usd",
+      status: "available",
+      available_on: 1_785_369_600,
+      type: "charge",
+      reporting_category: "charge",
+      source: "ch_crecy_charge_001",
+    } as Stripe.BalanceTransaction;
+
+    expect(sanitizeStripePayout(payout, [transaction])).toEqual({
+      providerSettlementId: "po_crecy_settlement_001",
+      providerStatus: "paid",
+      amountMinor: 48_250,
+      currencyCode: "USD",
+      automatic: true,
+      expectedArrivalDate: "2026-07-31",
+      items: [{
+        providerBalanceTransactionId: "txn_crecy_balance_001",
+        providerSourceId: "ch_crecy_charge_001",
+        transactionType: "charge",
+        reportingCategory: "charge",
+        grossMinor: 50_000,
+        feeMinor: 1_750,
+        netMinor: 48_250,
+        currencyCode: "USD",
+        providerStatus: "available",
+        availableOn: "2026-07-30",
+      }],
+    });
+  });
+
+  it("paginates payout balance transactions in connected-account scope", async () => {
+    const list = vi.fn()
+      .mockResolvedValueOnce({ data: [{ id: "txn_page_1" }], has_more: true })
+      .mockResolvedValueOnce({ data: [{ id: "txn_page_2" }], has_more: false });
+    const result = await listStripePayoutBalanceTransactions(
+      { balanceTransactions: { list } } as unknown as Pick<Stripe, "balanceTransactions">,
+      "acct_crecy_operator_001",
+      "po_crecy_settlement_001",
+    );
+
+    expect(result.map((item) => item.id)).toEqual(["txn_page_1", "txn_page_2"]);
+    expect(list).toHaveBeenNthCalledWith(1,
+      { payout: "po_crecy_settlement_001", limit: 100, starting_after: undefined },
+      { stripeAccount: "acct_crecy_operator_001" },
+    );
+    expect(list).toHaveBeenNthCalledWith(2,
+      { payout: "po_crecy_settlement_001", limit: 100, starting_after: "txn_page_1" },
+      { stripeAccount: "acct_crecy_operator_001" },
+    );
   });
 });

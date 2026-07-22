@@ -13,6 +13,16 @@ export type PaymentSummaryItem = {
   source: string; amountMinor: number; currencyCode: CurrencyCode; status: string; reconciliationStatus?: string;
   receivedAt: string | null; allocatedMinor?: number; externalReference?: string | null; receiptDocumentId: string | null;
 };
+export type SettlementSummaryItem = {
+  settlementId: string; publicReference: string; providerStatus: string; reconciliationStatus: string;
+  grossMinor: number; feeMinor: number; netMinor: number; currencyCode: CurrencyCode;
+  expectedArrivalDate: string | null; receivedAt: string | null; itemCount: number; matchedCount: number;
+};
+export type ReconciliationExceptionItem = {
+  exceptionId: string; settlementId: string; settlementReference: string; paymentId: string | null;
+  paymentReference: string | null; exceptionType: string; status: string; expectedMinor: number | null;
+  actualMinor: number | null; currencyCode: CurrencyCode; detail: string; detectedAt: string;
+};
 export type ManualPaymentCharge = { chargeId: string; description: string; dueDate: string; amountMinor: number; allocatedMinor: number; remainingMinor: number };
 export type ManualPaymentOption = {
   organizationId: string; tenancyId: string; propertyName: string; unitCode: string; householdName: string; currencyCode: CurrencyCode;
@@ -38,6 +48,7 @@ export type PaymentDetail = PaymentSummaryItem & {
   disputes: { disputeId: string; kind: string; amountMinor: number; currencyCode: CurrencyCode; reasonCode: string; status: string;
     evidenceDueAt: string | null; openedAt: string; closedAt: string | null; reversalJournalTransactionId: string | null;
     recoveryJournalTransactionId: string | null }[];
+  settlements: SettlementSummaryItem[];
   corrections: { correctionId: string; correctionType: string; reason: string; paymentStatus: string; version: number; correctiveJournalTransactionId: string | null; correctedAt: string }[];
 };
 type DataMode = "setup" | "ready" | "error";
@@ -122,7 +133,7 @@ function normalizePaymentDetail(data: unknown): PaymentDetail | null {
       correctiveJournalTransactionId: value.correctiveJournalTransactionId ? String(value.correctiveJournalTransactionId) : null,
       failureCode: value.failureCode ? String(value.failureCode) : null,
     }; }),
-    disputes: [],
+    disputes: [], settlements: [],
     corrections: objects(item, "corrections").map((raw) => { const value = raw as Record<string, unknown>; return {
       correctionId: String(value.correctionId), correctionType: String(value.correctionType), reason: String(value.reason), paymentStatus: String(value.paymentStatus),
       version: Number(value.version), correctiveJournalTransactionId: value.correctiveJournalTransactionId ? String(value.correctiveJournalTransactionId) : null,
@@ -131,22 +142,50 @@ function normalizePaymentDetail(data: unknown): PaymentDetail | null {
   };
 }
 
+function normalizeSettlementWorkspace(data: unknown) {
+  const batches = objects(data, "batches").flatMap((raw) => {
+    const item = raw as Record<string, unknown>;
+    if (!isCurrency(item.currencyCode)) return [];
+    return [{
+      settlementId: String(item.settlementId), publicReference: String(item.publicReference), providerStatus: String(item.providerStatus),
+      reconciliationStatus: String(item.reconciliationStatus), grossMinor: Number(item.grossMinor), feeMinor: Number(item.feeMinor),
+      netMinor: Number(item.netMinor), currencyCode: item.currencyCode, expectedArrivalDate: item.expectedArrivalDate ? String(item.expectedArrivalDate) : null,
+      receivedAt: item.receivedAt ? String(item.receivedAt) : null, itemCount: Number(item.itemCount ?? 1), matchedCount: Number(item.matchedCount ?? 1),
+    } satisfies SettlementSummaryItem];
+  });
+  const exceptions = objects(data, "exceptions").flatMap((raw) => {
+    const item = raw as Record<string, unknown>;
+    if (!isCurrency(item.currencyCode)) return [];
+    return [{
+      exceptionId: String(item.exceptionId), settlementId: String(item.settlementId), settlementReference: String(item.settlementReference),
+      paymentId: item.paymentId ? String(item.paymentId) : null, paymentReference: item.paymentReference ? String(item.paymentReference) : null,
+      exceptionType: String(item.exceptionType), status: String(item.status), expectedMinor: item.expectedMinor == null ? null : Number(item.expectedMinor),
+      actualMinor: item.actualMinor == null ? null : Number(item.actualMinor), currencyCode: item.currencyCode,
+      detail: String(item.detail), detectedAt: String(item.detectedAt),
+    } satisfies ReconciliationExceptionItem];
+  });
+  return { batches, exceptions };
+}
+
 const previewReceivable: ReceivableSummaryItem = { tenancyId: "20000000-0000-4000-8000-000000000002", propertyName: "Maple Court", unitCode: "101", currencyCode: "USD", balanceMinor: 142500, nextDueDate: "2026-08-01", nextDueAmountMinor: 100000, nextDueStatus: "partially_paid" };
 const previewPayment: PaymentSummaryItem = { paymentId: "50000000-0000-4000-8000-000000000005", publicReference: "PAY-8C4A2F7B91D0", propertyName: "Maple Court", unitCode: "101", householdName: "Morgan household", source: "check", amountMinor: 85000, currencyCode: "USD", status: "succeeded", reconciliationStatus: "unreconciled", receivedAt: "2026-07-20T15:45:00Z", allocatedMinor: 85000, externalReference: "CHECK-1042", receiptDocumentId: "60000000-0000-4000-8000-000000000006" };
 const previewOption: ManualPaymentOption = { organizationId: "10000000-0000-4000-8000-000000000001", tenancyId: previewReceivable.tenancyId, propertyName: "Maple Court", unitCode: "101", householdName: "Morgan household", currencyCode: "USD", evidenceThresholdMinor: 0, charges: [{ chargeId: "40000000-0000-4000-8000-000000000004", description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 185000, allocatedMinor: 85000, remainingMinor: 100000 }], evidenceDocuments: [{ documentId: "30000000-0000-4000-8000-000000000003", title: "Check 1042 scan" }] };
 const previewResidentPaymentOption: ResidentPaymentSessionOption = { organizationId: previewOption.organizationId, tenancyId: previewOption.tenancyId, organizationName: "Crecy Demo", propertyName: previewOption.propertyName, unitCode: previewOption.unitCode, currencyCode: previewOption.currencyCode, connectionStatus: "enabled", availableMethods: ["card", "bank"], charges: previewOption.charges.map((charge) => ({ chargeId: charge.chargeId, description: charge.description, dueDate: charge.dueDate, amountMinor: charge.amountMinor, remainingMinor: charge.remainingMinor })) };
 const previewPaymentDetail: PaymentDetail = { ...previewPayment, organizationId: previewOption.organizationId, version: 1, reason: "Check received at the office", journalTransactionId: "70000000-0000-4000-8000-000000000007", canCorrect: true, canRefund: false, refundableMinor: 0,
   allocations: [{ allocationId: "80000000-0000-4000-8000-000000000008", chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 85000, allocatedAt: previewPayment.receivedAt!, reversedAt: null, reversalReason: null }],
-  eligibleCharges: [{ chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 185000, availableMinor: 185000 }], refunds: [], disputes: [], corrections: [] };
+  eligibleCharges: [{ chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 185000, availableMinor: 185000 }], refunds: [], disputes: [], settlements: [], corrections: [] };
+const previewSettlement: SettlementSummaryItem = { settlementId: "90000000-0000-4000-8000-000000000009", publicReference: "SET-3F7A91C224BE", providerStatus: "paid", reconciliationStatus: "reconciled", grossMinor: 185000, feeMinor: 5665, netMinor: 179335, currencyCode: "USD", expectedArrivalDate: "2026-07-23", receivedAt: "2026-07-23T14:00:00Z", itemCount: 1, matchedCount: 1 };
+const previewException: ReconciliationExceptionItem = { exceptionId: "91000000-0000-4000-8000-000000000010", settlementId: "92000000-0000-4000-8000-000000000011", settlementReference: "SET-5DB42C991F10", paymentId: null, paymentReference: null, exceptionType: "amount_mismatch", status: "open", expectedMinor: 179335, actualMinor: 178835, currencyCode: "USD", detail: "The payout amount does not equal the net of its imported provider balance transactions.", detectedAt: "2026-07-24T14:00:00Z" };
 
-export async function getOperatorPaymentWorkspace(): Promise<{ mode: DataMode; items: ReceivableSummaryItem[]; payments: PaymentSummaryItem[]; options: ManualPaymentOption[]; requestId?: string }> {
-  if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewReceivable], payments: [previewPayment], options: [previewOption] };
+export async function getOperatorPaymentWorkspace(): Promise<{ mode: DataMode; items: ReceivableSummaryItem[]; payments: PaymentSummaryItem[]; options: ManualPaymentOption[]; settlements: SettlementSummaryItem[]; exceptions: ReconciliationExceptionItem[]; requestId?: string }> {
+  if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewReceivable], payments: [previewPayment], options: [previewOption], settlements: [previewSettlement], exceptions: [previewException] };
   try {
     const supabase = await createClient();
-    const [balances, payments, options] = await Promise.all([supabase.rpc("get_operator_receivables_summary"), supabase.rpc("get_operator_payment_summary"), supabase.rpc("get_manual_payment_options")]);
-    if (balances.error || payments.error || options.error) throw balances.error ?? payments.error ?? options.error;
-    return { mode: "ready", items: normalizeReceivables(balances.data), payments: normalizePayments(payments.data), options: normalizeOptions(options.data) };
-  } catch { return { mode: "error", items: [], payments: [], options: [], requestId: crypto.randomUUID() }; }
+    const [balances, payments, options, reconciliation] = await Promise.all([supabase.rpc("get_operator_receivables_summary"), supabase.rpc("get_operator_payment_summary"), supabase.rpc("get_manual_payment_options"), supabase.rpc("get_settlement_reconciliation_workspace")]);
+    if (balances.error || payments.error || options.error || reconciliation.error) throw balances.error ?? payments.error ?? options.error ?? reconciliation.error;
+    const settlementWorkspace = normalizeSettlementWorkspace(reconciliation.data);
+    return { mode: "ready", items: normalizeReceivables(balances.data), payments: normalizePayments(payments.data), options: normalizeOptions(options.data), settlements: settlementWorkspace.batches, exceptions: settlementWorkspace.exceptions };
+  } catch { return { mode: "error", items: [], payments: [], options: [], settlements: [], exceptions: [], requestId: crypto.randomUUID() }; }
 }
 
 export async function getOperatorReceivables() {
@@ -193,12 +232,13 @@ export async function getPaymentDetail(paymentId: string): Promise<{ mode: DataM
   if (!getPublicSupabaseConfig()) return paymentId === previewPayment.paymentId ? { mode: "setup", payment: previewPaymentDetail } : { mode: "not_found" };
   try {
     const supabase = await createClient();
-    const [detail, eligibility, disputeHistory] = await Promise.all([
+    const [detail, eligibility, disputeHistory, settlementHistory] = await Promise.all([
       supabase.rpc("get_payment_detail", { p_payment_id: paymentId }),
       supabase.rpc("get_payment_refund_eligibility", { p_payment_id: paymentId }),
       supabase.rpc("get_payment_dispute_history", { p_payment_id: paymentId }),
+      supabase.rpc("get_payment_settlement_history", { p_payment_id: paymentId }),
     ]);
-    if (detail.error || !detail.data || eligibility.error || !eligibility.data || disputeHistory.error || !disputeHistory.data) return { mode: "not_found" };
+    if (detail.error || !detail.data || eligibility.error || !eligibility.data || disputeHistory.error || !disputeHistory.data || settlementHistory.error || !settlementHistory.data) return { mode: "not_found" };
     const payment = normalizePaymentDetail(detail.data);
     if (payment) {
       const refund = eligibility.data as Record<string, unknown>;
@@ -221,6 +261,7 @@ export async function getPaymentDetail(paymentId: string): Promise<{ mode: DataM
           recoveryJournalTransactionId: value.recoveryJournalTransactionId ? String(value.recoveryJournalTransactionId) : null,
         }];
       });
+      payment.settlements = normalizeSettlementWorkspace({ batches: objects(settlementHistory.data, "settlements"), exceptions: [] }).batches;
     }
     return payment ? { mode: "ready", payment } : { mode: "not_found" };
   } catch { return { mode: "error", requestId: crypto.randomUUID() }; }
