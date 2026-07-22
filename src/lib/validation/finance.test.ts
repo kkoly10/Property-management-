@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateRecurringChargesSchema, recordManualPaymentSchema } from "@/lib/validation/finance";
+import { createResidentPaymentSessionSchema, generateRecurringChargesSchema, recordManualPaymentSchema } from "@/lib/validation/finance";
 
 describe("generateRecurringChargesSchema", () => {
   it("accepts a bounded worker run", () => {
@@ -41,5 +41,27 @@ describe("recordManualPaymentSchema", () => {
   it("rejects unsupported sources and timestamps without an offset", () => {
     expect(recordManualPaymentSchema.safeParse({ ...payment, source: "card" }).success).toBe(false);
     expect(recordManualPaymentSchema.safeParse({ ...payment, receivedAt: "2026-07-20T12:00:00" }).success).toBe(false);
+  });
+});
+
+describe("createResidentPaymentSessionSchema", () => {
+  const session = {
+    tenancyId: "20000000-0000-4000-8000-000000000002",
+    amountMinor: 50000,
+    currencyCode: "USD",
+    allocationPreference: [{ chargeId: "40000000-0000-4000-8000-000000000004", amountMinor: 50000 }],
+    methodPreference: "bank",
+    returnUrl: "https://app.crecy.example/payments/new",
+  } as const;
+
+  it("accepts an exactly allocated resident checkout", () => {
+    expect(createResidentPaymentSessionSchema.safeParse(session).success).toBe(true);
+  });
+
+  it("rejects mismatched, duplicate, unsafe, and provider-supplied details", () => {
+    expect(createResidentPaymentSessionSchema.safeParse({ ...session, amountMinor: 49999 }).success).toBe(false);
+    expect(createResidentPaymentSessionSchema.safeParse({ ...session, amountMinor: 100000, allocationPreference: [session.allocationPreference[0], session.allocationPreference[0]] }).success).toBe(false);
+    expect(createResidentPaymentSessionSchema.safeParse({ ...session, amountMinor: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
+    expect(createResidentPaymentSessionSchema.safeParse({ ...session, providerAccountId: "acct_forged" }).success).toBe(false);
   });
 });

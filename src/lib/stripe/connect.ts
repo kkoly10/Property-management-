@@ -1,6 +1,7 @@
 import "server-only";
 
 import Stripe from "stripe";
+import { buildDirectChargeCheckoutRequest, type DirectChargeCheckoutInput } from "@/lib/stripe/checkout";
 import { snapshotStripeAccount } from "@/lib/stripe/snapshot";
 
 let client: Stripe | null = null;
@@ -56,4 +57,19 @@ export async function createStandardAccountOnboardingLink(input: {
   }, { idempotencyKey: `crecy-connect-link:${input.idempotencyKey}` });
 
   return { url: link.url, expiresAt: new Date(link.expires_at * 1000).toISOString() };
+}
+
+export async function createDirectChargeCheckoutSession(input: DirectChargeCheckoutInput) {
+  const { params, options } = buildDirectChargeCheckoutRequest(input);
+  const session = await getStripeClient().checkout.sessions.create(params, options);
+
+  if (!session.url) throw new Error("Stripe did not return a hosted Checkout URL.");
+  const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null;
+  return {
+    providerCheckoutSessionId: session.id,
+    providerPaymentIntentId: paymentIntentId,
+    providerStatus: session.status ?? "open",
+    checkoutUrl: session.url,
+    expiresAt: new Date(session.expires_at * 1000).toISOString(),
+  };
 }

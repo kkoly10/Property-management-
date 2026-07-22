@@ -20,7 +20,7 @@ export function CorrectionForm({ payment, disabled }: { payment: PaymentDetail; 
   const router = useRouter();
   const [correctionType, setCorrectionType] = useState<CorrectionType>("reversal");
   const [reason, setReason] = useState("");
-  const [manualReason, setManualReason] = useState(payment.reason);
+  const [manualReason, setManualReason] = useState(payment.reason ?? "");
   const [externalReference, setExternalReference] = useState(payment.externalReference ?? "");
   const [allocations, setAllocations] = useState<Record<string, string>>(() => Object.fromEntries(payment.allocations.filter(({ reversedAt }) => !reversedAt).map(({ chargeId, amountMinor }) => [chargeId, (amountMinor / 100).toFixed(2)])));
   const [reviewing, setReviewing] = useState(false);

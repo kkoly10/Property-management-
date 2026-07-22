@@ -66,6 +66,30 @@ export const correctPaymentSchema = z.object({
   }
 });
 
+const residentPaymentAllocationSchema = z.object({
+  chargeId: z.uuid(),
+  amountMinor: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+}).strict();
+
+export const createResidentPaymentSessionSchema = z.object({
+  tenancyId: z.uuid(),
+  amountMinor: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  currencyCode: z.enum(["USD", "CAD", "MXN"]),
+  allocationPreference: z.array(residentPaymentAllocationSchema).min(1).max(100),
+  methodPreference: z.enum(["bank", "card"]).optional(),
+  returnUrl: z.url({ protocol: /^https?$/ }).max(2048),
+}).strict().superRefine((payment, context) => {
+  const chargeIds = payment.allocationPreference.map((allocation) => allocation.chargeId);
+  if (new Set(chargeIds).size !== chargeIds.length) {
+    context.addIssue({ code: "custom", path: ["allocationPreference"], message: "Allocate to each charge only once." });
+  }
+  const allocatedMinor = payment.allocationPreference.reduce((total, allocation) => total + allocation.amountMinor, 0);
+  if (!Number.isSafeInteger(allocatedMinor) || allocatedMinor !== payment.amountMinor) {
+    context.addIssue({ code: "custom", path: ["allocationPreference"], message: "Allocations must equal the payment amount." });
+  }
+});
+
 export type GenerateRecurringChargesInput = z.infer<typeof generateRecurringChargesSchema>;
 export type RecordManualPaymentInput = z.infer<typeof recordManualPaymentSchema>;
 export type CorrectPaymentInput = z.infer<typeof correctPaymentSchema>;
+export type CreateResidentPaymentSessionInput = z.infer<typeof createResidentPaymentSessionSchema>;

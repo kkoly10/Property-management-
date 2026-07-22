@@ -11,19 +11,25 @@ export type ReceivableSummaryItem = {
 export type PaymentSummaryItem = {
   paymentId: string; publicReference: string; propertyName: string; unitCode: string; householdName?: string;
   source: string; amountMinor: number; currencyCode: CurrencyCode; status: string; reconciliationStatus?: string;
-  receivedAt: string; allocatedMinor?: number; externalReference?: string | null; receiptDocumentId: string;
+  receivedAt: string | null; allocatedMinor?: number; externalReference?: string | null; receiptDocumentId: string | null;
 };
 export type ManualPaymentCharge = { chargeId: string; description: string; dueDate: string; amountMinor: number; allocatedMinor: number; remainingMinor: number };
 export type ManualPaymentOption = {
   organizationId: string; tenancyId: string; propertyName: string; unitCode: string; householdName: string; currencyCode: CurrencyCode;
   evidenceThresholdMinor: number; charges: ManualPaymentCharge[]; evidenceDocuments: { documentId: string; title: string }[];
 };
-export type PaymentReceipt = PaymentSummaryItem & {
+export type ResidentPaymentSessionOption = {
+  tenancyId: string; organizationId: string; organizationName: string; propertyName: string; unitCode: string; currencyCode: CurrencyCode;
+  connectionStatus: string; availableMethods: ("card" | "bank")[];
+  charges: { chargeId: string; description: string; dueDate: string; amountMinor: number; remainingMinor: number }[];
+};
+export type PaymentReceipt = Omit<PaymentSummaryItem, "receivedAt" | "receiptDocumentId"> & {
+  receivedAt: string; receiptDocumentId: string;
   documentId: string; organizationName: string; householdName: string; reason: string; generatedAt: string;
   allocations: { chargeId: string; description: string; dueDate: string; amountMinor: number }[];
 };
 export type PaymentDetail = PaymentSummaryItem & {
-  organizationId: string; version: number; reason: string; journalTransactionId: string; canCorrect: boolean;
+  organizationId: string; version: number; reason: string | null; journalTransactionId: string | null; canCorrect: boolean;
   allocations: { allocationId: string; chargeId: string; description: string; dueDate: string; amountMinor: number; allocatedAt: string; reversedAt: string | null; reversalReason: string | null }[];
   eligibleCharges: { chargeId: string; description: string; dueDate: string; amountMinor: number; availableMinor: number }[];
   refunds: { refundId: string; amountMinor: number; status: string; reason: string; requestedAt: string; completedAt: string | null }[];
@@ -50,9 +56,28 @@ function normalizePayments(data: unknown): PaymentSummaryItem[] {
     if (!isCurrency(item.currencyCode)) return [];
     return [{ paymentId: String(item.paymentId), publicReference: String(item.publicReference), propertyName: String(item.propertyName), unitCode: String(item.unitCode),
       householdName: item.householdName ? String(item.householdName) : undefined, source: String(item.source), amountMinor: Number(item.amountMinor), currencyCode: item.currencyCode,
-      status: String(item.status), reconciliationStatus: item.reconciliationStatus ? String(item.reconciliationStatus) : undefined, receivedAt: String(item.receivedAt),
+      status: String(item.status), reconciliationStatus: item.reconciliationStatus ? String(item.reconciliationStatus) : undefined, receivedAt: item.receivedAt ? String(item.receivedAt) : null,
       allocatedMinor: item.allocatedMinor == null ? undefined : Number(item.allocatedMinor), externalReference: item.externalReference ? String(item.externalReference) : null,
-      receiptDocumentId: String(item.receiptDocumentId) }];
+      receiptDocumentId: item.receiptDocumentId ? String(item.receiptDocumentId) : null }];
+  });
+}
+
+function normalizeResidentPaymentOptions(data: unknown): ResidentPaymentSessionOption[] {
+  return objects(data, "tenancies").flatMap((raw) => {
+    const item = raw as Record<string, unknown>;
+    if (!isCurrency(item.currencyCode)) return [];
+    const methods = Array.isArray(item.availableMethods)
+      ? item.availableMethods.filter((method): method is "card" | "bank" => method === "card" || method === "bank")
+      : [];
+    return [{
+      tenancyId: String(item.tenancyId), organizationId: String(item.organizationId), organizationName: String(item.organizationName),
+      propertyName: String(item.propertyName), unitCode: String(item.unitCode), currencyCode: item.currencyCode,
+      connectionStatus: String(item.connectionStatus), availableMethods: methods,
+      charges: objects(item, "charges").map((rawCharge) => { const charge = rawCharge as Record<string, unknown>; return {
+        chargeId: String(charge.chargeId), description: String(charge.description), dueDate: String(charge.dueDate),
+        amountMinor: Number(charge.amountMinor), remainingMinor: Number(charge.remainingMinor),
+      }; }),
+    }];
   });
 }
 
@@ -75,8 +100,8 @@ function normalizePaymentDetail(data: unknown): PaymentDetail | null {
     propertyName: String(item.propertyName), unitCode: String(item.unitCode), householdName: String(item.householdName),
     source: String(item.source), amountMinor: Number(item.amountMinor), currencyCode: item.currencyCode, status: String(item.status),
     version: Number(item.version), reconciliationStatus: String(item.reconciliationStatus), receivedAt: String(item.receivedAt),
-    reason: String(item.reason), externalReference: item.externalReference ? String(item.externalReference) : null,
-    receiptDocumentId: String(item.receiptDocumentId), journalTransactionId: String(item.journalTransactionId), canCorrect: Boolean(item.canCorrect),
+    reason: item.reason ? String(item.reason) : null, externalReference: item.externalReference ? String(item.externalReference) : null,
+    receiptDocumentId: item.receiptDocumentId ? String(item.receiptDocumentId) : null, journalTransactionId: item.journalTransactionId ? String(item.journalTransactionId) : null, canCorrect: Boolean(item.canCorrect),
     allocations: objects(item, "allocations").map((raw) => { const value = raw as Record<string, unknown>; return {
       allocationId: String(value.allocationId), chargeId: String(value.chargeId), description: String(value.description), dueDate: String(value.dueDate),
       amountMinor: Number(value.amountMinor), allocatedAt: String(value.allocatedAt), reversedAt: value.reversedAt ? String(value.reversedAt) : null,
@@ -100,8 +125,9 @@ function normalizePaymentDetail(data: unknown): PaymentDetail | null {
 const previewReceivable: ReceivableSummaryItem = { tenancyId: "20000000-0000-4000-8000-000000000002", propertyName: "Maple Court", unitCode: "101", currencyCode: "USD", balanceMinor: 142500, nextDueDate: "2026-08-01", nextDueAmountMinor: 100000, nextDueStatus: "partially_paid" };
 const previewPayment: PaymentSummaryItem = { paymentId: "50000000-0000-4000-8000-000000000005", publicReference: "PAY-8C4A2F7B91D0", propertyName: "Maple Court", unitCode: "101", householdName: "Morgan household", source: "check", amountMinor: 85000, currencyCode: "USD", status: "succeeded", reconciliationStatus: "unreconciled", receivedAt: "2026-07-20T15:45:00Z", allocatedMinor: 85000, externalReference: "CHECK-1042", receiptDocumentId: "60000000-0000-4000-8000-000000000006" };
 const previewOption: ManualPaymentOption = { organizationId: "10000000-0000-4000-8000-000000000001", tenancyId: previewReceivable.tenancyId, propertyName: "Maple Court", unitCode: "101", householdName: "Morgan household", currencyCode: "USD", evidenceThresholdMinor: 0, charges: [{ chargeId: "40000000-0000-4000-8000-000000000004", description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 185000, allocatedMinor: 85000, remainingMinor: 100000 }], evidenceDocuments: [{ documentId: "30000000-0000-4000-8000-000000000003", title: "Check 1042 scan" }] };
+const previewResidentPaymentOption: ResidentPaymentSessionOption = { organizationId: previewOption.organizationId, tenancyId: previewOption.tenancyId, organizationName: "Crecy Demo", propertyName: previewOption.propertyName, unitCode: previewOption.unitCode, currencyCode: previewOption.currencyCode, connectionStatus: "enabled", availableMethods: ["card", "bank"], charges: previewOption.charges.map((charge) => ({ chargeId: charge.chargeId, description: charge.description, dueDate: charge.dueDate, amountMinor: charge.amountMinor, remainingMinor: charge.remainingMinor })) };
 const previewPaymentDetail: PaymentDetail = { ...previewPayment, organizationId: previewOption.organizationId, version: 1, reason: "Check received at the office", journalTransactionId: "70000000-0000-4000-8000-000000000007", canCorrect: true,
-  allocations: [{ allocationId: "80000000-0000-4000-8000-000000000008", chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 85000, allocatedAt: previewPayment.receivedAt, reversedAt: null, reversalReason: null }],
+  allocations: [{ allocationId: "80000000-0000-4000-8000-000000000008", chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 85000, allocatedAt: previewPayment.receivedAt!, reversedAt: null, reversalReason: null }],
   eligibleCharges: [{ chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 185000, availableMinor: 185000 }], refunds: [], corrections: [] };
 
 export async function getOperatorPaymentWorkspace(): Promise<{ mode: DataMode; items: ReceivableSummaryItem[]; payments: PaymentSummaryItem[]; options: ManualPaymentOption[]; requestId?: string }> {
@@ -129,10 +155,20 @@ export async function getResidentBalance(): Promise<{ mode: DataMode; items: Rec
   } catch { return { mode: "error", items: [], payments: [], requestId: crypto.randomUUID() }; }
 }
 
+export async function getResidentPaymentSessionOptions(): Promise<{ mode: DataMode; options: ResidentPaymentSessionOption[]; requestId?: string }> {
+  if (!getPublicSupabaseConfig()) return { mode: "setup", options: [previewResidentPaymentOption] };
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("get_resident_payment_session_options");
+    if (error || !data) throw error ?? new Error("Payment options are unavailable.");
+    return { mode: "ready", options: normalizeResidentPaymentOptions(data) };
+  } catch { return { mode: "error", options: [], requestId: crypto.randomUUID() }; }
+}
+
 export async function getPaymentReceipt(documentId: string): Promise<{ mode: DataMode | "not_found"; receipt?: PaymentReceipt; requestId?: string }> {
   if (!getPublicSupabaseConfig()) {
     if (documentId !== previewPayment.receiptDocumentId) return { mode: "not_found" };
-    return { mode: "setup", receipt: { ...previewPayment, documentId, organizationName: "Crecy Demo", householdName: "Morgan household", reason: "Check received at the office", generatedAt: previewPayment.receivedAt, allocations: [{ chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 85000 }] } };
+    return { mode: "setup", receipt: { ...previewPayment, receivedAt: previewPayment.receivedAt!, receiptDocumentId: previewPayment.receiptDocumentId!, documentId, organizationName: "Crecy Demo", householdName: "Morgan household", reason: "Check received at the office", generatedAt: previewPayment.receivedAt!, allocations: [{ chargeId: previewOption.charges[0].chargeId, description: "Monthly rent", dueDate: "2026-08-01", amountMinor: 85000 }] } };
   }
   try {
     const supabase = await createClient();
