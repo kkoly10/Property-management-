@@ -57,14 +57,17 @@ export function WorkOrderActions({ workOrderId, organizationId, status, version,
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   const idempotencyKey = useRef<string | null>(null);
+  const evidenceInputRef = useRef<HTMLInputElement>(null);
+
+  function changed() { idempotencyKey.current = null; setError(null); }
 
   async function run(transition: Transition, extra: Record<string, unknown> = {}) {
     setPending(transition); setError(null);
-    idempotencyKey.current = crypto.randomUUID();
+    idempotencyKey.current ??= crypto.randomUUID();
     try {
       let evidenceDocumentIds: string[] | undefined;
       if (transition === "complete") {
-        const files = Array.from(document.getElementById("wo-evidence") instanceof HTMLInputElement ? (document.getElementById("wo-evidence") as HTMLInputElement).files ?? [] : []);
+        const files = Array.from(evidenceInputRef.current?.files ?? []);
         evidenceDocumentIds = await Promise.all(files.map((file) => uploadWorkOrderEvidence(file, workOrderId, organizationId)));
       }
       const response = await fetch(`/api/v1/work-orders/${workOrderId}/transitions`, {
@@ -72,7 +75,7 @@ export function WorkOrderActions({ workOrderId, organizationId, status, version,
         body: JSON.stringify({ expectedVersion: version, transition, evidenceDocumentIds, ...extra }),
       });
       const body = await response.json() as Result & { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "That update could not be completed.");
+      if (!response.ok) { idempotencyKey.current = null; throw new Error(body.error ?? "That update could not be completed."); }
       setResult(body);
       router.refresh();
     } catch (caught) {
@@ -87,13 +90,13 @@ export function WorkOrderActions({ workOrderId, organizationId, status, version,
 
   return <Card><CardHeader><CardTitle>Update status</CardTitle><CardDescription>Current status: {status.replaceAll("_", " ")}</CardDescription></CardHeader><CardContent className="space-y-4">
     {error ? <Alert variant="destructive"><AlertTitle>Not updated</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
-    {primary === "schedule" ? <div className="grid gap-3 rounded-lg border p-4"><div className="space-y-2"><Label htmlFor="wo-start">Visit start</Label><Input id="wo-start" type="datetime-local" value={scheduledStart} disabled={disabled || pending !== null} onChange={(event) => setScheduledStart(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="wo-end">Visit end</Label><Input id="wo-end" type="datetime-local" value={scheduledEnd} disabled={disabled || pending !== null} onChange={(event) => setScheduledEnd(event.target.value)} /></div></div> : null}
+    {primary === "schedule" ? <div className="grid gap-3 rounded-lg border p-4"><div className="space-y-2"><Label htmlFor="wo-start">Visit start</Label><Input id="wo-start" type="datetime-local" value={scheduledStart} disabled={disabled || pending !== null} onChange={(event) => { setScheduledStart(event.target.value); changed(); }} /></div><div className="space-y-2"><Label htmlFor="wo-end">Visit end</Label><Input id="wo-end" type="datetime-local" value={scheduledEnd} disabled={disabled || pending !== null} onChange={(event) => { setScheduledEnd(event.target.value); changed(); }} /></div></div> : null}
     {primary === "complete" ? <div className="space-y-3 rounded-lg border p-4">
-      <div className="space-y-2"><Label htmlFor="wo-summary">Completion notes</Label><Textarea id="wo-summary" required minLength={3} maxLength={4000} placeholder="Replaced the trap and tightened the supply line." value={completionSummary} disabled={disabled || pending !== null} onChange={(event) => setCompletionSummary(event.target.value)} /></div>
-      <div className="space-y-2"><Label htmlFor="wo-actual-cost">Actual cost (optional)</Label><Input id="wo-actual-cost" inputMode="decimal" placeholder="0.00" value={actualCost} disabled={disabled || pending !== null} onChange={(event) => setActualCost(event.target.value)} /></div>
-      <div className="space-y-2"><Label htmlFor="wo-evidence">Evidence photos</Label><Input id="wo-evidence" type="file" accept="image/png,image/jpeg" multiple disabled={disabled || pending !== null} className="file:mr-3 file:border-0 file:bg-transparent file:text-sm file:font-semibold" /><p className="flex items-center gap-1 text-xs text-muted-foreground"><Camera className="h-3.5 w-3.5" />Attach photos showing the completed repair.</p></div>
+      <div className="space-y-2"><Label htmlFor="wo-summary">Completion notes</Label><Textarea id="wo-summary" required minLength={3} maxLength={4000} placeholder="Replaced the trap and tightened the supply line." value={completionSummary} disabled={disabled || pending !== null} onChange={(event) => { setCompletionSummary(event.target.value); changed(); }} /></div>
+      <div className="space-y-2"><Label htmlFor="wo-actual-cost">Actual cost (optional)</Label><Input id="wo-actual-cost" inputMode="decimal" placeholder="0.00" value={actualCost} disabled={disabled || pending !== null} onChange={(event) => { setActualCost(event.target.value); changed(); }} /></div>
+      <div className="space-y-2"><Label htmlFor="wo-evidence">Evidence photos</Label><Input id="wo-evidence" ref={evidenceInputRef} type="file" accept="image/png,image/jpeg" multiple disabled={disabled || pending !== null} className="file:mr-3 file:border-0 file:bg-transparent file:text-sm file:font-semibold" onChange={changed} /><p className="flex items-center gap-1 text-xs text-muted-foreground"><Camera className="h-3.5 w-3.5" />Attach photos showing the completed repair.</p></div>
     </div> : null}
     {primary ? <Button className="w-full" size="lg" disabled={disabled || pending !== null || (primary === "schedule" && (!scheduledStart || !scheduledEnd)) || (primary === "complete" && !completionSummary.trim())} onClick={() => run(primary, primary === "schedule" ? { scheduledStart: new Date(scheduledStart).toISOString(), scheduledEnd: new Date(scheduledEnd).toISOString() } : primary === "complete" ? { completionSummary, actualCostMinor: toMinor(actualCost) ?? undefined } : {})}>{pending === primary ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}{actionLabel[primary]}</Button> : null}
-    {canCancel ? showCancel ? <div className="space-y-3 rounded-lg border border-destructive/40 p-4"><div className="space-y-2"><Label htmlFor="wo-cancel-reason">Cancellation reason</Label><Input id="wo-cancel-reason" required minLength={3} maxLength={1000} value={cancelReason} disabled={disabled || pending !== null} onChange={(event) => setCancelReason(event.target.value)} /></div><Button variant="destructive" className="w-full" disabled={disabled || pending !== null || !cancelReason.trim()} onClick={() => run("cancel", { reason: cancelReason })}>{pending === "cancel" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CircleX className="h-4 w-4" />}Confirm cancellation</Button></div> : <Button variant="ghost" className="w-full text-destructive" disabled={disabled} onClick={() => setShowCancel(true)}><RotateCcw className="h-4 w-4" />Cancel this work order</Button> : null}
+    {canCancel ? showCancel ? <div className="space-y-3 rounded-lg border border-destructive/40 p-4"><div className="space-y-2"><Label htmlFor="wo-cancel-reason">Cancellation reason</Label><Input id="wo-cancel-reason" required minLength={3} maxLength={1000} value={cancelReason} disabled={disabled || pending !== null} onChange={(event) => { setCancelReason(event.target.value); changed(); }} /></div><Button variant="destructive" className="w-full" disabled={disabled || pending !== null || !cancelReason.trim()} onClick={() => run("cancel", { reason: cancelReason })}>{pending === "cancel" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CircleX className="h-4 w-4" />}Confirm cancellation</Button></div> : <Button variant="ghost" className="w-full text-destructive" disabled={disabled} onClick={() => setShowCancel(true)}><RotateCcw className="h-4 w-4" />Cancel this work order</Button> : null}
   </CardContent></Card>;
 }

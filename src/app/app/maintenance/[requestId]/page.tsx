@@ -40,7 +40,7 @@ export default async function OperatorMaintenanceDetailPage({ params }: { params
             {item.workOrder.ownerApprovalRequired ? <Badge variant={item.workOrder.ownerApprovalStatus === "approved" ? "success" : "warning"}>Owner approval {item.workOrder.ownerApprovalStatus ?? "pending"}</Badge> : null}
           </CardContent></Card> : null}
         </div>
-        <aside>{item.workOrder ? <WorkOrderActions workOrderId={item.workOrder.workOrderId} organizationId={item.organizationId} status={item.workOrder.status} version={item.workOrder.version} disabled={detail.mode !== "ready"} /> : <AssignVendorForm maintenanceRequestId={item.maintenanceRequestId} organizationId={item.organizationId} vendors={directory.vendors} disabled={detail.mode !== "ready"} />}</aside>
+        <aside>{item.workOrder ? <WorkOrderActions key={`${item.workOrder.workOrderId}:${item.workOrder.version}`} workOrderId={item.workOrder.workOrderId} organizationId={item.organizationId} status={item.workOrder.status} version={item.workOrder.version} disabled={detail.mode !== "ready"} /> : <AssignVendorForm maintenanceRequestId={item.maintenanceRequestId} organizationId={item.organizationId} vendors={directory.vendors} disabled={detail.mode !== "ready"} />}</aside>
       </div>
     </>}
   </div>;

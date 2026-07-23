@@ -697,7 +697,7 @@ create policy work_orders_scoped_read on public.work_orders for select to authen
 
 revoke all on public.vendors,public.work_orders from public,anon,authenticated;
 grant select on public.vendors,public.work_orders to authenticated;
-revoke all on private.work_order_evidence from public,anon,authenticated;
+revoke all on private.work_order_evidence from public,anon,authenticated,service_role;
 revoke all on function public.create_vendor(uuid,text,text,text,text) from public,anon;
 revoke all on function public.create_and_assign_work_order(uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,text,boolean,text,text) from public,anon;
 revoke all on function public.transition_work_order(uuid,integer,text,text,timestamptz,timestamptz,bigint,text,uuid[],text) from public,anon;

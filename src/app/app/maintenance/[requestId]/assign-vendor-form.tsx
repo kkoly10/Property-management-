@@ -30,7 +30,7 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled) return;
+    if (disabled || !vendorId) return;
     const estimatedCostMinor = toMinor(estimatedCost);
     if (estimatedCost.trim() && estimatedCostMinor === null) { setError("Enter a valid estimated cost."); return; }
     setPending(true); setError(null);
@@ -39,8 +39,8 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
       const response = await fetch("/api/v1/work-orders", {
         method: "POST", headers: { "content-type": "application/json", "idempotency-key": idempotencyKey.current },
         body: JSON.stringify({
-          organizationId, maintenanceRequestId, vendorId: vendorId || undefined, scope,
-          estimatedCostMinor: estimatedCostMinor ?? undefined, currencyCode: estimatedCostMinor ? currencyCode : undefined,
+          organizationId, maintenanceRequestId, vendorId, scope,
+          estimatedCostMinor: estimatedCostMinor ?? undefined, currencyCode: estimatedCostMinor !== null ? currencyCode : undefined,
           ownerApprovalRequired, officialPriority: priority,
         }),
       });
@@ -60,7 +60,7 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
   return <form onSubmit={submit} className="space-y-5">
     <Card><CardHeader><CardTitle>Triage and assign</CardTitle><CardDescription>Set the official priority and, if ready, assign a vendor to open a work order.</CardDescription></CardHeader><CardContent className="space-y-4">
       <div className="space-y-2"><Label htmlFor="wo-priority">Official priority</Label><NativeSelect id="wo-priority" value={priority} disabled={disabled || pending} onChange={(event) => setPriority(event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="emergency">Emergency</option></NativeSelect></div>
-      <div className="space-y-2"><Label htmlFor="wo-vendor">Vendor</Label>{vendors.length ? <NativeSelect id="wo-vendor" value={vendorId} disabled={disabled || pending} onChange={(event) => setVendorId(event.target.value)}><option value="">Assign later</option>{vendors.map((vendor) => <option key={vendor.vendorId} value={vendor.vendorId}>{vendor.displayName}</option>)}</NativeSelect> : <p className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground"><UserPlus className="mr-1 inline h-4 w-4" />No vendors yet. An organization owner or admin can add one from settings.</p>}</div>
+      <div className="space-y-2"><Label htmlFor="wo-vendor">Vendor</Label>{vendors.length ? <NativeSelect id="wo-vendor" required value={vendorId} disabled={disabled || pending} onChange={(event) => setVendorId(event.target.value)}>{vendors.map((vendor) => <option key={vendor.vendorId} value={vendor.vendorId}>{vendor.displayName}</option>)}</NativeSelect> : <p className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground"><UserPlus className="mr-1 inline h-4 w-4" />No vendors yet. An organization owner or admin must add one before a work order can be created.</p>}</div>
       <div className="space-y-2"><Label htmlFor="wo-scope">Scope of work</Label><Textarea id="wo-scope" required minLength={3} maxLength={2000} placeholder="Diagnose and repair the kitchen sink leak." value={scope} disabled={disabled || pending} onChange={(event) => setScope(event.target.value)} /></div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2"><Label htmlFor="wo-cost">Estimated cost (optional)</Label><Input id="wo-cost" inputMode="decimal" placeholder="0.00" value={estimatedCost} disabled={disabled || pending} onChange={(event) => setEstimatedCost(event.target.value)} /></div>
@@ -68,7 +68,7 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
       </div>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={ownerApprovalRequired} disabled={disabled || pending} onChange={(event) => setOwnerApprovalRequired(event.target.checked)} />Require owner approval before this can be marked complete</label>
       {error ? <Alert variant="destructive"><AlertTitle>Work order not created</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
-      <Button className="w-full" size="lg" disabled={disabled || pending || !scope.trim()}>{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}{pending ? "Creating…" : "Create work order"}</Button>
+      <Button className="w-full" size="lg" disabled={disabled || pending || !scope.trim() || !vendorId}>{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}{pending ? "Creating…" : "Create work order"}</Button>
     </CardContent></Card>
   </form>;
 }
