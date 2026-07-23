@@ -22,6 +22,7 @@ const paymentDisputesSql = await readFile(resolve(root, "supabase/migrations/202
 const settlementReconciliationSql = await readFile(resolve(root, "supabase/migrations/20260722182753_phase_5_settlement_reconciliation.sql"), "utf8");
 const paymentFailureRetrySql = await readFile(resolve(root, "supabase/migrations/20260722193025_phase_5_payment_failure_retry.sql"), "utf8");
 const maintenanceIntakeSql = await readFile(resolve(root, "supabase/migrations/20260722201220_phase_6_maintenance_intake.sql"), "utf8");
+const workOrdersSql = await readFile(resolve(root, "supabase/migrations/20260723090000_phase_6_work_orders.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -740,6 +741,7 @@ async function validateRecurringCharges() {
   await db.exec(settlementReconciliationSql);
   await db.exec(paymentFailureRetrySql);
   await db.exec(maintenanceIntakeSql);
+  await db.exec(workOrdersSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -985,6 +987,113 @@ async function validateRecurringCharges() {
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const operatorMaintenance = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
   assert(operatorMaintenance.summary.open === 1 && operatorMaintenance.summary.untriaged === 1 && operatorMaintenance.items[0].officialPriority === "medium", "Operator maintenance intake queue is incomplete.");
+
+  await db.exec(`reset role; update public.organizations set settings=settings || '{"work_order_owner_approval_threshold_minor":"100000"}'::jsonb where id='${organization.organizationId}'; set role authenticated; set request.jwt.claim.sub='${admin}';`);
+  const vendor = (await db.query(`select public.create_vendor(
+    '${organization.organizationId}','Ready Fix Plumbing','dispatch@readyfix.example','+14045551234','vendor-create-0001'
+  ) as result`)).rows[0].result;
+  assert(vendor.vendorId && vendor.status === "active", "Vendor creation did not return a canonical active vendor.");
+  const vendorReplay = (await db.query(`select public.create_vendor(
+    '${organization.organizationId}','Ready Fix Plumbing','dispatch@readyfix.example','+14045551234','vendor-create-0001'
+  ) as result`)).rows[0].result;
+  assert(vendorReplay.vendorId === vendor.vendorId, "Vendor creation replay did not return the canonical vendor.");
+
+  const scopedCoordinator = "c7000000-0000-4000-8000-000000000007";
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('${scopedCoordinator}');
+    insert into public.organization_memberships(id,organization_id,user_id,role_code,status)
+    values ('c8000000-0000-4000-8000-000000000008','${organization.organizationId}','${scopedCoordinator}','maintenance_coordinator','active');
+    insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    values ('${organization.organizationId}','c8000000-0000-4000-8000-000000000008','${property.propertyId}');
+    set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}';
+  `);
+  await expectDatabaseError(() => db.query(`select public.create_vendor('${organization.organizationId}','Rogue Vendor',null,null,'vendor-scoped-0001')`), "ORGANIZATION_SCOPE_DENIED");
+  const scopedDirectory = (await db.query("select public.get_operator_vendor_directory() as result")).rows[0].result;
+  assert(scopedDirectory.length === 0, "A property-scoped coordinator unexpectedly saw the unscoped vendor directory.");
+
+  const workOrder = (await db.query(`select public.create_and_assign_work_order(
+    '${organization.organizationId}','${maintenance.maintenanceRequestId}','${vendor.vendorId}','Diagnose and repair the kitchen sink leak.',
+    null,null,45000,'USD',false,'high','work-order-create-0001'
+  ) as result`)).rows[0].result;
+  assert(workOrder.workOrderId && workOrder.status === "assigned" && workOrder.ownerApprovalStatus === null, "Property-scoped coordinator could not create and assign a work order within scope.");
+  const workOrderReplay = (await db.query(`select public.create_and_assign_work_order(
+    '${organization.organizationId}','${maintenance.maintenanceRequestId}','${vendor.vendorId}','Diagnose and repair the kitchen sink leak.',
+    null,null,45000,'USD',false,'high','work-order-create-0001'
+  ) as result`)).rows[0].result;
+  assert(workOrderReplay.workOrderId === workOrder.workOrderId, "Work order creation replay did not return the canonical work order.");
+  await expectDatabaseError(() => db.query(`select public.create_and_assign_work_order(
+    '${organization.organizationId}','${maintenance.maintenanceRequestId}',null,'Duplicate attempt.',null,null,null,null,false,null,'work-order-duplicate-0001'
+  )`), "WORK_ORDER_ALREADY_EXISTS");
+  const operatorAfterTriage = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  assert(operatorAfterTriage.items[0].officialPriority === "high" && operatorAfterTriage.items[0].workOrder.workOrderId === workOrder.workOrderId && operatorAfterTriage.items[0].workOrder.vendorName === "Ready Fix Plumbing", "Operator workspace did not project the assigned work order.");
+  const scopedVendorRead = (await db.query("select count(*)::integer as count from public.vendors")).rows[0].count;
+  assert(scopedVendorRead === 1, "Property-scoped coordinator could not read the vendor already tied to their own work order.");
+
+  const accepted = (await db.query(`select public.transition_work_order('${workOrder.workOrderId}',1,'accept',null,null,null,null,null,null,'work-order-accept-0001') as result`)).rows[0].result;
+  assert(accepted.status === "accepted" && accepted.version === 2, "Accept transition did not advance the work order.");
+  await expectDatabaseError(() => db.query(`select public.transition_work_order('${workOrder.workOrderId}',1,'accept',null,null,null,null,null,null,'work-order-accept-stale-0001')`), "WORK_ORDER_VERSION_CONFLICT");
+  await expectDatabaseError(() => db.query(`select public.transition_work_order('${workOrder.workOrderId}',2,'start',null,null,null,null,null,null,'work-order-skip-0001')`), "INVALID_TRANSITION");
+  const scheduledStart = "2026-07-27T13:00:00-04:00";
+  const scheduledEnd = "2026-07-27T15:00:00-04:00";
+  const scheduled = (await db.query(`select public.transition_work_order('${workOrder.workOrderId}',2,'schedule',null,'${scheduledStart}','${scheduledEnd}',null,null,null,'work-order-schedule-0001') as result`)).rows[0].result;
+  assert(scheduled.status === "scheduled" && scheduled.version === 3, "Schedule transition did not advance the work order.");
+  const started = (await db.query(`select public.transition_work_order('${workOrder.workOrderId}',3,'start',null,null,null,null,null,null,'work-order-start-0001') as result`)).rows[0].result;
+  assert(started.status === "in_progress" && started.version === 4, "Start transition did not advance the work order.");
+
+  await expectDatabaseError(() => db.query(`select public.transition_work_order('${workOrder.workOrderId}',4,'complete',null,null,null,42500,'Replaced the trap and tightened the supply line.',array[]::uuid[],'work-order-complete-no-evidence-0001')`), "COMPLETION_EVIDENCE_REQUIRED");
+  const evidenceGrant = (await db.query(`select public.create_document_upload_grant(
+    '${organization.organizationId}','work_order','${workOrder.workOrderId}','work_order_evidence','Completed repair','after.jpg','image/jpeg',100,'work-order-evidence-grant-0001'
+  ) as result`)).rows[0].result;
+  assert(evidenceGrant.storagePath.includes(`/work_order/${workOrder.workOrderId}/`), "Work order evidence did not receive a work-order-scoped upload grant.");
+  await db.exec("reset role; set role service_role");
+  const evidenceDocument = (await db.query(`select public.finalize_document('${scopedCoordinator}','${evidenceGrant.grantId}','${"e".repeat(64)}','work-order-evidence-finalize-0001') as result`)).rows[0].result;
+  await db.exec(`reset role; update public.document_versions set upload_status='clean' where document_id='${evidenceDocument.documentId}'`);
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}'`);
+  const completed = (await db.query(`select public.transition_work_order('${workOrder.workOrderId}',4,'complete',null,null,null,42500,'Replaced the trap and tightened the supply line.',array['${evidenceDocument.documentId}'::uuid],'work-order-complete-0001') as result`)).rows[0].result;
+  assert(completed.status === "completed" && completed.version === 5, "Complete transition did not finalize the work order.");
+  const closed = (await db.query(`select public.transition_work_order('${workOrder.workOrderId}',5,'close',null,null,null,null,null,null,'work-order-close-0001') as result`)).rows[0].result;
+  assert(closed.status === "closed" && closed.version === 6, "Close transition did not finalize the work order.");
+  const closedRequest = (await db.query(`select status,closed_at from public.maintenance_requests where id='${maintenance.maintenanceRequestId}'`)).rows[0];
+  assert(closedRequest.status === "closed" && closedRequest.closed_at !== null, "Closing the work order did not sync the parent maintenance request.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const secondMaintenance = (await db.query(`select public.submit_maintenance_request(
+    '${activation.tenancyId}','hvac','Furnace is not heating','The furnace stopped producing heat overnight.',null,null,'[]'::jsonb,array[]::uuid[],'maintenance-request-0002'
+  ) as result`)).rows[0].result;
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}'`);
+  const highCostWorkOrder = (await db.query(`select public.create_and_assign_work_order(
+    '${organization.organizationId}','${secondMaintenance.maintenanceRequestId}','${vendor.vendorId}','Diagnose and repair the furnace.',
+    null,null,150000,'USD',false,null,'work-order-highcost-0001'
+  ) as result`)).rows[0].result;
+  assert(highCostWorkOrder.status === "assigned" && highCostWorkOrder.ownerApprovalStatus === "pending", "A high-estimate work order did not require owner approval by default.");
+  await db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',1,'accept',null,null,null,null,null,null,'work-order-highcost-accept-0001')`);
+  await db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',2,'schedule',null,'${scheduledStart}','${scheduledEnd}',null,null,null,'work-order-highcost-schedule-0001')`);
+  await db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',3,'start',null,null,null,null,null,null,'work-order-highcost-start-0001')`);
+  const pendingApproval = (await db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',4,'complete',null,null,null,150000,'Replaced the igniter; awaiting owner sign-off on cost.',array['${evidenceDocument.documentId}'::uuid],'work-order-highcost-complete-0001') as result`)).rows[0].result;
+  assert(pendingApproval.status === "awaiting_approval" && pendingApproval.version === 5, "A high-cost work order bypassed the owner-approval gate.");
+  await expectDatabaseError(() => db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',5,'close',null,null,null,null,null,null,'work-order-highcost-close-0001')`), "INVALID_TRANSITION");
+  const canceled = (await db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',5,'cancel','Furnace replaced under warranty instead.',null,null,null,null,null,'work-order-highcost-cancel-0001') as result`)).rows[0].result;
+  assert(canceled.status === "canceled" && canceled.version === 6, "Cancel transition from awaiting_approval did not succeed.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const adminVendorDirectory = (await db.query("select public.get_operator_vendor_directory() as result")).rows[0].result;
+  assert(adminVendorDirectory.length === 1 && adminVendorDirectory[0].vendorId === vendor.vendorId, "Org-wide admin did not see the vendor directory.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const outsiderWorkOrders = (await db.query("select count(*)::integer as count from public.work_orders")).rows[0].count;
+  const outsiderVendors = (await db.query("select count(*)::integer as count from public.vendors")).rows[0].count;
+  assert(outsiderWorkOrders === 0 && outsiderVendors === 0, "Work order or vendor data leaked to an unrelated user.");
+  await expectDatabaseError(() => db.query(`select public.transition_work_order('${workOrder.workOrderId}',6,'cancel','Unauthorized cancel.',null,null,null,null,null,'outsider-work-order-cancel-0001')`), "PROPERTY_SCOPE_DENIED");
+
+  await db.exec("reset role");
+  const workOrderTraces = (await db.query(`select
+    (select count(*)::integer from private.outbox_events where event_type='work_order.created') as created,
+    (select count(*)::integer from private.outbox_events where event_type='work_order.assigned') as assigned,
+    (select count(*)::integer from private.outbox_events where event_type='owner_approval.requested') as approvals,
+    (select count(*)::integer from private.outbox_events where event_type='work_order.status_changed') as statuschanges,
+    (select count(*)::integer from private.outbox_events where event_type='work_order.completed') as completions
+  `)).rows[0];
+  assert(workOrderTraces.created === 2 && workOrderTraces.assigned === 2 && workOrderTraces.approvals === 1 && workOrderTraces.statuschanges === 10 && workOrderTraces.completions === 1, "Work order audit/outbox trace is incomplete.");
   await db.exec("reset role");
   await db.exec(`update public.provider_connections set
     status='enabled',capabilities='{"card_payments":"active","us_bank_account_ach_payments":"active"}'::jsonb,
@@ -1607,7 +1716,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
