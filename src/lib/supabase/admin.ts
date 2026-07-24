@@ -8,6 +8,6 @@ export function createAdminClient() {
   if (!secretKey || secretKey.includes("replace_me")) throw new Error("SUPABASE_SECRET_KEY is not configured.");
 
   return createSupabaseClient(url, secretKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
   });
 }

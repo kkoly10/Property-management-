@@ -34,6 +34,8 @@ const conversationMessagingIndexesSql = await readFile(resolve(root, "supabase/m
 const announcementsSql = await readFile(resolve(root, "supabase/migrations/20260724105606_phase_8_announcements.sql"), "utf8");
 const announcementIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724105656_phase_8_announcement_fk_indexes.sql"), "utf8");
 const privacyRequestsSql = await readFile(resolve(root, "supabase/migrations/20260724123342_phase_8_privacy_requests.sql"), "utf8");
+const staffAccessSql = await readFile(resolve(root, "supabase/migrations/20260724134409_phase_8_staff_access.sql"), "utf8");
+const staffAccessIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724134515_phase_8_staff_access_indexes.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -52,6 +54,9 @@ async function prepareSupabasePrelude(db) {
     create schema auth;
     create table auth.users (
       id uuid primary key,
+      email text,
+      email_confirmed_at timestamptz,
+      created_at timestamptz not null default now(),
       raw_user_meta_data jsonb not null default '{}'::jsonb
     );
     create or replace function auth.uid()
@@ -763,6 +768,8 @@ async function validateRecurringCharges() {
   await db.exec(announcementsSql);
   await db.exec(announcementIndexesSql);
   await db.exec(privacyRequestsSql);
+  await db.exec(staffAccessSql);
+  await db.exec(staffAccessIndexesSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1494,6 +1501,211 @@ async function validateRecurringCharges() {
       && privacyTraces.verified_events === 2
       && privacyTraces.canceled_events === 2,
     "Privacy request persistence, jobs, audit, or event traces are incomplete.",
+  );
+
+  const invitedLeasingAgent = "ca000000-0000-4000-8000-000000000001";
+  const invitedAdmin = "ca000000-0000-4000-8000-000000000002";
+  const invitedAuditorA = "ca000000-0000-4000-8000-000000000003";
+  const invitedAuditorB = "ca000000-0000-4000-8000-000000000004";
+  const invitedAuditorC = "ca000000-0000-4000-8000-000000000005";
+  const invitedOverLimit = "ca000000-0000-4000-8000-000000000006";
+  await db.exec(`reset role;
+    update auth.users set email='admin@finance-atlas.example' where id='${admin}';
+    insert into auth.users(id,email) values
+      ('${invitedLeasingAgent}','leasing@finance-atlas.example'),
+      ('${invitedAdmin}','ops-admin@finance-atlas.example'),
+      ('${invitedAuditorA}','audit-a@finance-atlas.example'),
+      ('${invitedAuditorB}','audit-b@finance-atlas.example'),
+      ('${invitedAuditorC}','audit-c@finance-atlas.example'),
+      ('${invitedOverLimit}','audit-over-limit@finance-atlas.example');
+    set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal1';
+  `);
+  await expectDatabaseError(() => db.query(`select public.invite_staff_member(
+    '${organization.organizationId}','${invitedAdmin}','ops-admin@finance-atlas.example','org_admin',
+    '{}'::uuid[],'2026-07-24T12:00:00Z',null,true,'en-US','${"b".repeat(64)}','bbbbbbbbbb',
+    'Operational administrator access.','staff-invite-admin-aal1-0001'
+  )`), "MFA_STEP_UP_REQUIRED");
+  const workspaceBeforeStaff = (await db.query(`select public.get_staff_management_workspace(
+    '${organization.organizationId}'
+  ) as result`)).rows[0].result;
+  assert(
+    workspaceBeforeStaff.organization.organizationId === organization.organizationId
+      && workspaceBeforeStaff.staffSeatCount === 1
+      && workspaceBeforeStaff.staffSeatLimit === 5
+      && workspaceBeforeStaff.members.length === 2,
+    "The staff workspace did not exclude an expired membership from seat usage or return its sanitized roster.",
+  );
+
+  await db.exec("set request.jwt.claim.aal='aal2'");
+  const leasingInvite = (await db.query(`select public.invite_staff_member(
+    '${organization.organizationId}','${invitedLeasingAgent}','leasing@finance-atlas.example','leasing_agent',
+    array['${property.propertyId}'::uuid],'2026-07-24T12:00:00Z',null,false,'en-US','${"a".repeat(64)}','aaaaaaaaaa',
+    null,'staff-invite-leasing-0001'
+  ) as result`)).rows[0].result;
+  const leasingInviteReplay = (await db.query(`select public.invite_staff_member(
+    '${organization.organizationId}','${invitedLeasingAgent}','leasing@finance-atlas.example','leasing_agent',
+    array['${property.propertyId}'::uuid],'2026-07-24T12:00:00Z',null,false,'en-US','${"a".repeat(64)}','aaaaaaaaaa',
+    null,'staff-invite-leasing-0001'
+  ) as result`)).rows[0].result;
+  assert(
+    leasingInvite.membershipId === leasingInviteReplay.membershipId
+      && leasingInvite.status === "invited"
+      && leasingInviteReplay.idempotentReplay
+      && leasingInvite.propertyIds.length === 1,
+    "Staff invitation was not property-scoped and idempotent.",
+  );
+  await expectDatabaseError(() => db.query(`select public.invite_staff_member(
+    '${organization.organizationId}','${invitedLeasingAgent}','leasing@finance-atlas.example','leasing_agent',
+    '{}'::uuid[],'2026-07-24T12:00:00Z',null,false,'en-US','${"a".repeat(64)}','aaaaaaaaaa',
+    null,'staff-invite-leasing-conflict-0001'
+  )`), "PROPERTY_SCOPE_REQUIRED");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedLeasingAgent}'; set request.jwt.claim.aal='aal1'`);
+  const acceptedStaff = (await db.query(`select public.accept_staff_invitation(
+    '${"a".repeat(64)}'
+  ) as result`)).rows[0].result;
+  const acceptedStaffReplay = (await db.query(`select public.accept_staff_invitation(
+    '${"a".repeat(64)}'
+  ) as result`)).rows[0].result;
+  const staffRecipientWorkspace = (await db.query("select public.get_staff_management_workspace() as result")).rows[0].result;
+  assert(
+    acceptedStaff.status === "active"
+      && acceptedStaff.version === 2
+      && acceptedStaffReplay.version === 2
+      && staffRecipientWorkspace.organization === null,
+    "Staff acceptance was not recipient-bound and idempotent, or exposed the admin workspace.",
+  );
+  await expectDatabaseError(() => db.query("select count(*) from public.invitations"), "permission denied");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.accept_staff_invitation('${"a".repeat(64)}')`), "INVITATION_RECIPIENT_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.invite_staff_member(
+    '${organization.organizationId}','${invitedAdmin}','ops-admin@finance-atlas.example','org_admin',
+    '{}'::uuid[],'2026-07-24T12:00:00Z',null,true,'en-US','${"b".repeat(64)}','bbbbbbbbbb',
+    'Forged access.','staff-invite-outsider-0001'
+  )`), "ORGANIZATION_SCOPE_DENIED");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal1'`);
+  await expectDatabaseError(() => db.query(`select public.update_staff_membership(
+    '${leasingInvite.membershipId}','property_manager','suspended',now(),null,false,2,
+    'Temporary access review.','staff-update-leasing-aal1-0001'
+  )`), "MFA_STEP_UP_REQUIRED");
+  await db.exec("set request.jwt.claim.aal='aal2'");
+  const changedStaff = (await db.query(`select public.update_staff_membership(
+    '${leasingInvite.membershipId}','property_manager','active',now(),null,false,2,
+    'Expanded operating responsibility.','staff-update-leasing-0001'
+  ) as result`)).rows[0].result;
+  await expectDatabaseError(() => db.query(`select public.update_staff_membership(
+    '${leasingInvite.membershipId}','property_manager','active',now(),null,false,2,
+    'Stale update.','staff-update-leasing-stale-0001'
+  )`), "MEMBERSHIP_VERSION_CONFLICT");
+  const unscopedStaff = (await db.query(`select public.replace_staff_property_scopes(
+    '${leasingInvite.membershipId}','{}'::uuid[],3,
+    'Portfolio-wide property management.','staff-scope-leasing-0001'
+  ) as result`)).rows[0].result;
+  const revokedStaff = (await db.query(`select public.revoke_staff_membership(
+    '${leasingInvite.membershipId}',4,'Employment access ended.','staff-revoke-leasing-0001'
+  ) as result`)).rows[0].result;
+  const revokedStaffReplay = (await db.query(`select public.revoke_staff_membership(
+    '${leasingInvite.membershipId}',4,'Employment access ended.','staff-revoke-leasing-0001'
+  ) as result`)).rows[0].result;
+  assert(
+    changedStaff.version === 3
+      && unscopedStaff.propertyIds.length === 0
+      && unscopedStaff.version === 4
+      && revokedStaff.status === "revoked"
+      && revokedStaff.version === 5
+      && revokedStaffReplay.version === 5,
+    "Staff role, scope, revocation, versioning, or replay behavior is incomplete.",
+  );
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedLeasingAgent}'; set request.jwt.claim.aal='aal2'`);
+  const revokedPropertyVisibility = (await db.query("select count(*)::integer as count from public.properties")).rows[0].count;
+  assert(revokedPropertyVisibility === 0, "Revoked staff access was not removed immediately.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  const inviteSeat = async (userId, email, tokenCharacter, idempotencyKey) =>
+    (await db.query(`select public.invite_staff_member(
+      '${organization.organizationId}','${userId}','${email}','read_only_auditor',
+      '{}'::uuid[],'2026-07-24T12:00:00Z',null,false,'en-US','${tokenCharacter.repeat(64)}','${tokenCharacter.repeat(10)}',
+      null,'${idempotencyKey}'
+    ) as result`)).rows[0].result;
+  const invitedSeats = [
+    await inviteSeat(invitedAdmin, "ops-admin@finance-atlas.example", "b", "staff-seat-00000001"),
+    await inviteSeat(invitedAuditorA, "audit-a@finance-atlas.example", "c", "staff-seat-00000002"),
+    await inviteSeat(invitedAuditorB, "audit-b@finance-atlas.example", "d", "staff-seat-00000003"),
+    await inviteSeat(invitedAuditorC, "audit-c@finance-atlas.example", "e", "staff-seat-00000004"),
+  ];
+  await expectDatabaseError(() => inviteSeat(
+    invitedOverLimit,
+    "audit-over-limit@finance-atlas.example",
+    "f",
+    "staff-seat-over-limit-0001",
+  ), "PLAN_LIMIT_EXCEEDED");
+  const staffWorkspace = (await db.query(`select public.get_staff_management_workspace(
+    '${organization.organizationId}'
+  ) as result`)).rows[0].result;
+  assert(
+    invitedSeats.length === 4
+      && staffWorkspace.staffSeatCount === 5
+      && staffWorkspace.members.length === 7
+      && staffWorkspace.invitations.length === 5
+      && staffWorkspace.roles.length === 7
+      && staffWorkspace.properties.length === 1,
+    "Staff seat enforcement or the sanitized team workspace is incomplete.",
+  );
+
+  await db.exec("reset role; set role service_role");
+  const resolvedStaffUser = (await db.query(`select public.resolve_auth_user_by_email(
+    'OPS-ADMIN@finance-atlas.example'
+  ) as user_id`)).rows[0].user_id;
+  const queuedStaffInvitation = (await db.query(`select public.get_staff_invitation_delivery_status(
+    '${leasingInvite.invitationId}'
+  ) as status`)).rows[0].status;
+  const markedStaffInvitation = (await db.query(`select public.mark_staff_invitation_email_sent(
+    '${leasingInvite.invitationId}'
+  ) as marked`)).rows[0].marked;
+  const sentStaffInvitation = (await db.query(`select public.get_staff_invitation_delivery_status(
+    '${leasingInvite.invitationId}'
+  ) as status`)).rows[0].status;
+  assert(
+    resolvedStaffUser === invitedAdmin
+      && queuedStaffInvitation === "queued"
+      && markedStaffInvitation
+      && sentStaffInvitation === "sent",
+    "The service-only staff identity or invitation-delivery helpers are incomplete.",
+  );
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.resolve_auth_user_by_email(
+    'ops-admin@finance-atlas.example'
+  )`), "permission denied");
+  await expectDatabaseError(() => db.query(`select public.get_staff_invitation_delivery_status(
+    '${leasingInvite.invitationId}'
+  )`), "permission denied");
+  await db.exec("reset role");
+  const staffTraces = (await db.query(`select
+    (select count(*)::integer from public.invitations where invitation_type='organization_member') as invitations,
+    (select count(*)::integer from private.notification_jobs where template_code='staff_invitation') as notification_jobs,
+    (select count(*)::integer from audit.audit_events where action_code='membership.invited') as invited_audits,
+    (select count(*)::integer from audit.audit_events where action_code='membership.activated') as activated_audits,
+    (select count(*)::integer from audit.audit_events where action_code='membership.changed') as changed_audits,
+    (select count(*)::integer from audit.audit_events where action_code='membership.scopes_changed') as scope_audits,
+    (select count(*)::integer from audit.audit_events where action_code='membership.revoked') as revoked_audits,
+    (select count(*)::integer from private.outbox_events where event_type='membership.invited') as invited_events,
+    (select count(*)::integer from private.outbox_events where event_type='membership.activated') as activated_events,
+    (select count(*)::integer from private.outbox_events where event_type='membership.revoked') as revoked_events
+  `)).rows[0];
+  assert(
+    staffTraces.invitations === 5
+      && staffTraces.notification_jobs === 5
+      && staffTraces.invited_audits === 5
+      && staffTraces.activated_audits === 1
+      && staffTraces.changed_audits === 1
+      && staffTraces.scope_audits === 1
+      && staffTraces.revoked_audits === 1
+      && staffTraces.invited_events === 5
+      && staffTraces.activated_events === 1
+      && staffTraces.revoked_events === 1,
+    "Staff invitation, access change, notification, audit, or event traces are incomplete.",
   );
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
@@ -2546,7 +2758,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

@@ -528,7 +528,7 @@ Request includes `correctionType:'return'|'reversal'|'allocation_correction'|'me
 
 Routes: `POST /api/v1/staff/invitations`, `PATCH /api/v1/staff/{membershipId}`, `POST /api/v1/staff/{membershipId}/revoke`, `PUT /api/v1/staff/{membershipId}/property-scopes`.
 
-Permission: `organization.manage`; role/scope changes use expected version, active date validation, audit, invitation token hashes, and immediate revocation semantics.
+Permission: `organization.manage`; role/scope changes use expected version, active date validation, audit, invitation token hashes, plan staff-seat limits, and immediate revocation semantics. Organization-owner assignment requires an active organization owner. Owner, administrator, and accountant assignment requires AAL2 plus an audit reason. Property-scoped roles require at least one in-organization property. Supporting invitation acceptance is recipient-bound, activates only the persisted membership, and is idempotent. Events: `membership.invited`, `membership.activated`, `membership.changed`, `membership.scopes_changed`, `membership.revoked`, and `notification.requested`.
 
 ### 4.21 RecordOwnerRemittance
 
@@ -629,6 +629,11 @@ Every collection query uses cursor pagination, explicit maximum page size 100, s
 | `privacy_request.submitted` | privacyRequestId, requestType, controllerRole, dueAt |
 | `privacy_request.verified` | privacyRequestId, controllerRole, status |
 | `privacy_request.canceled` | privacyRequestId, status |
+| `membership.invited` | membershipId, invitationId, roleCode, propertyIds |
+| `membership.activated` | membershipId, invitationId, roleCode |
+| `membership.changed` | membershipId, roleCode, status, version |
+| `membership.scopes_changed` | membershipId, propertyIds, version |
+| `membership.revoked` | membershipId, revokedUserId, version |
 
 ## 7. Payment state transition table
 
