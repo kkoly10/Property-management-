@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getOperatorVendorDirectory, getOperatorWorkOrderDetail } from "@/lib/data/maintenance";
+import { getOperatorOwnerApprovalWorkspace } from "@/lib/data/owner-approvals";
 import { AssignVendorForm } from "./assign-vendor-form";
 import { WorkOrderActions } from "./work-order-actions";
 
@@ -15,9 +16,10 @@ const money = (amountMinor: number, currencyCode: string) => new Intl.NumberForm
 
 export default async function OperatorMaintenanceDetailPage({ params }: { params: Promise<{ requestId: string }> }) {
   const { requestId } = await params;
-  const [detail, directory] = await Promise.all([getOperatorWorkOrderDetail(requestId), getOperatorVendorDirectory()]);
+  const [detail, directory, approvalWorkspace] = await Promise.all([getOperatorWorkOrderDetail(requestId), getOperatorVendorDirectory(), getOperatorOwnerApprovalWorkspace()]);
   if (detail.mode === "ready" && !detail.item) notFound();
   const item = detail.item;
+  const approvals = item?.workOrder ? approvalWorkspace.items.filter((approval) => approval.workOrderId === item.workOrder?.workOrderId) : [];
 
   return <div className="mx-auto max-w-5xl space-y-6">
     <Button asChild variant="ghost" size="sm"><Link href="/app/maintenance"><ArrowLeft className="h-4 w-4" />Maintenance</Link></Button>
@@ -39,6 +41,7 @@ export default async function OperatorMaintenanceDetailPage({ params }: { params
             {item.workOrder.canceledReason ? <p><span className="text-muted-foreground">Canceled:</span> {item.workOrder.canceledReason}</p> : null}
             {item.workOrder.ownerApprovalRequired ? <Badge variant={item.workOrder.ownerApprovalStatus === "approved" ? "success" : "warning"}>Owner approval {item.workOrder.ownerApprovalStatus ?? "pending"}</Badge> : null}
           </CardContent></Card> : null}
+          {approvals.length ? <Card><CardHeader className="border-b"><CardTitle>Owner approvals</CardTitle><CardDescription>Each request is isolated to its exact owner entity.</CardDescription></CardHeader><CardContent className="divide-y p-0">{approvals.map((approval) => <div key={approval.approvalRequestId} className="flex flex-col gap-2 p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium">{approval.ownerName}</p><p className="mt-1 text-xs text-muted-foreground">Requested {new Date(approval.requestedAt).toLocaleString()}{approval.decidedAt ? ` · Decided ${new Date(approval.decidedAt).toLocaleString()}` : ""}</p>{approval.reason ? <p className="mt-2 text-sm text-muted-foreground">{approval.reason}</p> : null}</div><Badge variant={approval.status === "approved" ? "success" : approval.status === "rejected" ? "neutral" : "warning"}>{label(approval.status)}</Badge></div>)}</CardContent></Card> : null}
         </div>
         <aside>{item.workOrder ? <WorkOrderActions key={`${item.workOrder.workOrderId}:${item.workOrder.version}`} workOrderId={item.workOrder.workOrderId} organizationId={item.organizationId} status={item.workOrder.status} version={item.workOrder.version} disabled={detail.mode !== "ready"} /> : <AssignVendorForm maintenanceRequestId={item.maintenanceRequestId} organizationId={item.organizationId} vendors={directory.vendors} disabled={detail.mode !== "ready"} />}</aside>
       </div>

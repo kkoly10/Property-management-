@@ -34,6 +34,7 @@ export async function POST(request: Request) {
     if (code.includes("WORK_ORDER_ALREADY_EXISTS")) return errorResponse("This request already has an active work order.", 409);
     if (code.includes("VENDOR_NOT_FOUND")) return errorResponse("The selected vendor is unavailable.", 422);
     if (code.includes("WORK_ORDER_CURRENCY_MISMATCH")) return errorResponse("The estimated cost currency must match the property's accounting book.", 422);
+    if (code.includes("OWNER_APPROVER_NOT_CONFIGURED")) return errorResponse("Add an active owner relationship for this property before requiring owner approval.", 422);
     if (code.includes("IDEMPOTENCY_CONFLICT")) return errorResponse("This retry no longer matches the original work order.", 409);
     return errorResponse("The work order could not be created.", 422);
   }

@@ -15,7 +15,7 @@
 
 ## Deferred scope
 
-- Owner approve/reject of high-cost work orders. No owner login or portal exists yet (Phase 7). A work order that requires owner approval reaches `awaiting_approval` and **stays blocked** there — it deliberately cannot be completed by an operator self-approving. This preserves the "owner approval threshold cannot be bypassed" rule rather than faking it.
+- Owner approve/reject was deferred from this Phase 6 slice and is implemented by the Phase 7 owner-approval vertical documented in `PHASE_7_PROGRESS_REPORT.md`.
 - Vendor self-service/login (Crecy Vendor). Per the pilot MVP scope, vendors are operator-managed contact records only; the RLS policy's vendor-user-relationship branch is wired for forward compatibility but nothing in this slice creates a `vendor_contact` relationship or vendor session.
 - Inspections, quotes, scheduling conflicts/calendars, and maintenance cost posting to the ledger (the delivery plan's Phase 6 exit criterion "maintenance cost posts through approved journal template" is not yet implemented — `actual_cost_minor` is recorded on the work order but not journaled).
 - Reassigning a vendor on an existing (`draft`) unassigned work order; today assignment only happens at creation.
@@ -43,10 +43,10 @@
 
 ## Verification evidence
 
-The embedded Postgres harness (`validateRecurringCharges` in `scripts/validate-schema.mjs`, which runs the full migration chain through this file) covers: vendor creation and replay, organization-wide vs. property-scoped vendor authorization, work-order creation and replay, duplicate-active-work-order rejection, the full accept→schedule→start→complete→close transition chain with version increments, stale-version rejection, invalid-transition rejection, completion-evidence enforcement (including the real `create_document_upload_grant`/`finalize_document` path for a `work_order` parent), the owner-approval threshold blocking completion and holding a work order at `awaiting_approval`, cancellation from that blocked state, cross-organization isolation, and the audit/outbox trace counts.
+The embedded Postgres harness (`validateRecurringCharges` in `scripts/validate-schema.mjs`, which runs the full migration chain through this file) covers: vendor creation and replay, organization-wide vs. property-scoped vendor authorization, work-order creation and replay, duplicate-active-work-order rejection, the full accept→schedule→start→complete→close transition chain with version increments, stale-version rejection, invalid-transition rejection, completion-evidence enforcement (including the real `create_document_upload_grant`/`finalize_document` path for a `work_order` parent), the owner-approval threshold holding a work order at `awaiting_approval`, cross-organization isolation, and the audit/outbox trace counts. Phase 7 extends this same harness through the owner decision and final close.
 
 Run `npm run check` for ESLint, TypeScript, Vitest, embedded Postgres, and the production build — all pass. The operator maintenance list and request-detail pages were smoke-tested in setup-preview mode (no Supabase project configured in this environment) and render without errors.
 
 ## Forward-fix policy and known risks
 
-Migrations are forward-only. The main remaining risks are the owner-approval dead-end until Phase 7 exists, no maintenance-cost ledger posting yet, and no vendor reassignment path for an unassigned work order.
+Migrations are forward-only. The remaining Phase 6 risks are no maintenance-cost ledger posting yet and no vendor reassignment path for an unassigned work order.
