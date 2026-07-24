@@ -19,8 +19,31 @@ export type OwnerStatementSummary = {
   expenseMinor: number;
   managementFeeMinor: number;
   netOwnerPositionMinor: number;
+  remittedMinor: number;
+  ownerPayableMinor: number;
   finalizedAt: string;
   sha256Hex: string;
+};
+
+export type OwnerRemittance = {
+  remittanceId: string;
+  publicReference: string;
+  statementSnapshotId: string | null;
+  ownerEntityId?: string;
+  propertyId?: string;
+  propertyName?: string;
+  amountMinor: number;
+  currencyCode: string;
+  paidOn: string;
+  externalReference: string | null;
+  recordedAt: string;
+  evidenceDocumentId: string;
+};
+
+export type OwnerRemittanceEvidence = {
+  documentId: string;
+  title: string;
+  originalFilename: string;
 };
 
 export type OperatorOwnerStatementContext = {
@@ -33,12 +56,18 @@ export type OperatorOwnerStatementContext = {
   currencyCode: string;
   effectiveFrom: string;
   effectiveTo: string | null;
+  ownerPayableMinor: number;
+  evidenceDocuments: OwnerRemittanceEvidence[];
+  remittances: OwnerRemittance[];
   latestStatement: {
     statementSnapshotId: string;
+    statementSeriesId: string;
     periodStart: string;
     periodEnd: string;
     versionNumber: number;
     netOwnerPositionMinor: number;
+    remittedMinor: number;
+    availableToRemitMinor: number;
     finalizedAt: string;
   } | null;
 };
@@ -59,6 +88,8 @@ export type OwnerStatementDetail = {
   correctionReason: string | null;
   finalizedAt: string;
   sha256Hex: string;
+  ownerPayableMinor: number;
+  remittances: OwnerRemittance[];
   snapshot: {
     ownerName: string;
     propertyName: string;
@@ -90,6 +121,8 @@ const previewSummary: OwnerStatementSummary = {
   expenseMinor: 126500,
   managementFeeMinor: 74000,
   netOwnerPositionMinor: 724500,
+  remittedMinor: 250000,
+  ownerPayableMinor: 474500,
   finalizedAt: "2026-07-05T15:30:00Z",
   sha256Hex: "a".repeat(64),
 };
@@ -104,12 +137,32 @@ const previewContext: OperatorOwnerStatementContext = {
   currencyCode: "USD",
   effectiveFrom: "2026-01-01",
   effectiveTo: null,
+  ownerPayableMinor: previewSummary.ownerPayableMinor,
+  evidenceDocuments: [{
+    documentId: "e3000000-0000-4000-8000-000000000001",
+    title: "June ACH confirmation",
+    originalFilename: "june-ach-confirmation.pdf",
+  }],
+  remittances: [{
+    remittanceId: "e4000000-0000-4000-8000-000000000001",
+    publicReference: "REM-EXAMPLE00001",
+    statementSnapshotId: previewSummary.statementSnapshotId,
+    amountMinor: previewSummary.remittedMinor,
+    currencyCode: "USD",
+    paidOn: "2026-07-08",
+    externalReference: "ACH-0626-0148",
+    recordedAt: "2026-07-08T14:10:00Z",
+    evidenceDocumentId: "e3000000-0000-4000-8000-000000000001",
+  }],
   latestStatement: {
     statementSnapshotId: previewSummary.statementSnapshotId,
+    statementSeriesId: previewSummary.statementSeriesId,
     periodStart: previewSummary.periodStart,
     periodEnd: previewSummary.periodEnd,
     versionNumber: previewSummary.versionNumber,
     netOwnerPositionMinor: previewSummary.netOwnerPositionMinor,
+    remittedMinor: previewSummary.remittedMinor,
+    availableToRemitMinor: previewSummary.ownerPayableMinor,
     finalizedAt: previewSummary.finalizedAt,
   },
 };
@@ -122,6 +175,8 @@ const previewDetail: OwnerStatementDetail = {
   correctionReason: null,
   finalizedAt: previewSummary.finalizedAt,
   sha256Hex: previewSummary.sha256Hex,
+  ownerPayableMinor: previewSummary.ownerPayableMinor,
+  remittances: previewContext.remittances,
   snapshot: {
     ownerName: previewSummary.ownerName,
     propertyName: previewSummary.propertyName,
@@ -145,6 +200,24 @@ const previewDetail: OwnerStatementDetail = {
 const stringValue = (value: unknown) => String(value ?? "");
 const nullableString = (value: unknown) => value ? String(value) : null;
 
+function normalizeRemittance(raw: unknown): OwnerRemittance {
+  const item = raw as Record<string, unknown>;
+  return {
+    remittanceId: stringValue(item.remittanceId),
+    publicReference: stringValue(item.publicReference),
+    statementSnapshotId: nullableString(item.statementSnapshotId),
+    ownerEntityId: item.ownerEntityId ? stringValue(item.ownerEntityId) : undefined,
+    propertyId: item.propertyId ? stringValue(item.propertyId) : undefined,
+    propertyName: item.propertyName ? stringValue(item.propertyName) : undefined,
+    amountMinor: Number(item.amountMinor),
+    currencyCode: stringValue(item.currencyCode),
+    paidOn: stringValue(item.paidOn),
+    externalReference: nullableString(item.externalReference),
+    recordedAt: stringValue(item.recordedAt),
+    evidenceDocumentId: stringValue(item.evidenceDocumentId),
+  };
+}
+
 function normalizeSummary(raw: unknown): OwnerStatementSummary {
   const item = raw as Record<string, unknown>;
   return {
@@ -162,6 +235,8 @@ function normalizeSummary(raw: unknown): OwnerStatementSummary {
     expenseMinor: Number(item.expenseMinor),
     managementFeeMinor: Number(item.managementFeeMinor),
     netOwnerPositionMinor: Number(item.netOwnerPositionMinor),
+    remittedMinor: Number(item.remittedMinor),
+    ownerPayableMinor: Number(item.ownerPayableMinor),
     finalizedAt: stringValue(item.finalizedAt),
     sha256Hex: stringValue(item.sha256Hex),
   };
@@ -170,6 +245,8 @@ function normalizeSummary(raw: unknown): OwnerStatementSummary {
 function normalizeContext(raw: unknown): OperatorOwnerStatementContext {
   const item = raw as Record<string, unknown>;
   const latest = item.latestStatement as Record<string, unknown> | null;
+  const evidenceDocuments = Array.isArray(item.evidenceDocuments) ? item.evidenceDocuments : [];
+  const remittances = Array.isArray(item.remittances) ? item.remittances : [];
   return {
     organizationId: stringValue(item.organizationId),
     ownerEntityId: stringValue(item.ownerEntityId),
@@ -180,12 +257,25 @@ function normalizeContext(raw: unknown): OperatorOwnerStatementContext {
     currencyCode: stringValue(item.currencyCode),
     effectiveFrom: stringValue(item.effectiveFrom),
     effectiveTo: nullableString(item.effectiveTo),
+    ownerPayableMinor: Number(item.ownerPayableMinor),
+    evidenceDocuments: evidenceDocuments.map((rawDocument) => {
+      const document = rawDocument as Record<string, unknown>;
+      return {
+        documentId: stringValue(document.documentId),
+        title: stringValue(document.title),
+        originalFilename: stringValue(document.originalFilename),
+      };
+    }),
+    remittances: remittances.map(normalizeRemittance),
     latestStatement: latest ? {
       statementSnapshotId: stringValue(latest.statementSnapshotId),
+      statementSeriesId: stringValue(latest.statementSeriesId),
       periodStart: stringValue(latest.periodStart),
       periodEnd: stringValue(latest.periodEnd),
       versionNumber: Number(latest.versionNumber),
       netOwnerPositionMinor: Number(latest.netOwnerPositionMinor),
+      remittedMinor: Number(latest.remittedMinor),
+      availableToRemitMinor: Number(latest.availableToRemitMinor),
       finalizedAt: stringValue(latest.finalizedAt),
     } : null,
   };
@@ -195,6 +285,7 @@ function normalizeDetail(raw: unknown): OwnerStatementDetail {
   const item = raw as Record<string, unknown>;
   const snapshot = item.snapshot as Record<string, unknown>;
   const lines = Array.isArray(snapshot.lines) ? snapshot.lines : [];
+  const remittances = Array.isArray(item.remittances) ? item.remittances : [];
   return {
     statementSnapshotId: stringValue(item.statementSnapshotId),
     statementSeriesId: stringValue(item.statementSeriesId),
@@ -203,6 +294,8 @@ function normalizeDetail(raw: unknown): OwnerStatementDetail {
     correctionReason: nullableString(item.correctionReason),
     finalizedAt: stringValue(item.finalizedAt),
     sha256Hex: stringValue(item.sha256Hex),
+    ownerPayableMinor: Number(item.ownerPayableMinor),
+    remittances: remittances.map(normalizeRemittance),
     snapshot: {
       ownerName: stringValue(snapshot.ownerName),
       propertyName: stringValue(snapshot.propertyName),
@@ -229,16 +322,21 @@ function normalizeDetail(raw: unknown): OwnerStatementDetail {
   };
 }
 
-export async function getOwnerStatementWorkspace(): Promise<{ mode: DataMode; items: OwnerStatementSummary[]; requestId?: string }> {
-  if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewSummary] };
+export async function getOwnerStatementWorkspace(): Promise<{ mode: DataMode; items: OwnerStatementSummary[]; remittances: OwnerRemittance[]; requestId?: string }> {
+  if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewSummary], remittances: previewContext.remittances };
   try {
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("get_owner_statement_workspace");
     if (error || !data) throw error ?? new Error("Owner statements are unavailable.");
     const items = (data as Record<string, unknown>).items;
-    return { mode: "ready", items: Array.isArray(items) ? items.map(normalizeSummary) : [] };
+    const remittances = (data as Record<string, unknown>).remittances;
+    return {
+      mode: "ready",
+      items: Array.isArray(items) ? items.map(normalizeSummary) : [],
+      remittances: Array.isArray(remittances) ? remittances.map(normalizeRemittance) : [],
+    };
   } catch {
-    return { mode: "error", items: [], requestId: crypto.randomUUID() };
+    return { mode: "error", items: [], remittances: [], requestId: crypto.randomUUID() };
   }
 }
 

@@ -25,6 +25,10 @@ const maintenanceIntakeSql = await readFile(resolve(root, "supabase/migrations/2
 const workOrdersSql = await readFile(resolve(root, "supabase/migrations/20260723090000_phase_6_work_orders.sql"), "utf8");
 const ownerApprovalsSql = await readFile(resolve(root, "supabase/migrations/20260724005718_phase_7_owner_approvals.sql"), "utf8");
 const ownerStatementsSql = await readFile(resolve(root, "supabase/migrations/20260724022357_phase_7_owner_statements.sql"), "utf8");
+const ownerRemittancesSql = await readFile(resolve(root, "supabase/migrations/20260724032417_phase_7_owner_remittances.sql"), "utf8");
+const ownerRemittanceIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724034738_phase_7_owner_remittance_indexes.sql"), "utf8");
+const ownerRemittanceConstraintsSql = await readFile(resolve(root, "supabase/migrations/20260724034902_phase_7_owner_remittance_constraints.sql"), "utf8");
+const ownerRemittanceProjectionSql = await readFile(resolve(root, "supabase/migrations/20260724035033_phase_7_owner_remittance_projection_only.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -185,10 +189,9 @@ async function validateAuthority() {
   await expectDatabaseError(() => db.query(`insert into public.owner_remittance_records(organization_id,owner_entity_id,property_id,amount_minor,currency_code,recorded_at,recorded_by) values ('${org}','d6000000-0000-4000-8000-000000000003','${propertyA}',1,'USD',now(),'${admin}')`), "foreign key constraint");
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
-  const ownerRows = await db.query(`select
-    (select count(*)::integer from reporting.owner_statement_snapshots) as statements,
-    (select count(*)::integer from public.owner_remittance_records) as remittances`);
-  assert(ownerRows.rows[0].statements === 1 && ownerRows.rows[0].remittances === 1, "RLS-027 failed: a co-owner crossed the exact owner-entity boundary.");
+  const ownerStatementRows = (await db.query("select count(*)::integer as count from reporting.owner_statement_snapshots")).rows[0].count;
+  assert(ownerStatementRows === 1, "RLS-027 failed: a co-owner crossed the exact owner-entity statement boundary.");
+  await expectDatabaseError(() => db.query("select count(*) from public.owner_remittance_records"), "permission denied");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentRows = await db.query(`select
@@ -208,7 +211,7 @@ async function validateAuthority() {
   assert(scopedRows.rows[0].documents === 1 && scopedRows.rows[0].imports === 1 && scopedRows.rows[0].properties === 1, "RLS-030 failed: property-scoped import or document data leaked.");
 
   await db.close();
-  return { tables: tableResult.rows[0].count, policies: policyResult.rows[0].count, coOwnerRows: ownerRows.rows[0].statements, residentWorkOrders: residentRows.rows[0].projected_work_orders, deliveredAnnouncements: residentRows.rows[0].announcements, scopedImports: scopedRows.rows[0].imports };
+  return { tables: tableResult.rows[0].count, policies: policyResult.rows[0].count, coOwnerRows: ownerStatementRows, residentWorkOrders: residentRows.rows[0].projected_work_orders, deliveredAnnouncements: residentRows.rows[0].announcements, scopedImports: scopedRows.rows[0].imports };
 }
 
 async function validateFoundation() {
@@ -746,6 +749,10 @@ async function validateRecurringCharges() {
   await db.exec(workOrdersSql);
   await db.exec(ownerApprovalsSql);
   await db.exec(ownerStatementsSql);
+  await db.exec(ownerRemittancesSql);
+  await db.exec(ownerRemittanceIndexesSql);
+  await db.exec(ownerRemittanceConstraintsSql);
+  await db.exec(ownerRemittanceProjectionSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1276,20 +1283,102 @@ async function validateRecurringCharges() {
   ) as result`)).rows[0].result;
   assert(correctedOwnerAStatement.versionNumber === 2 && correctedOwnerAStatement.statementSeriesId === ownerAStatement.statementSeriesId && correctedOwnerAStatement.netOwnerPositionMinor === 90698, "Owner statement correction did not create the next immutable version.");
 
+  const remittanceEvidenceDocumentId = "fa000000-0000-4000-8000-000000000001";
+  const remittanceEvidenceVersionId = "fa000000-0000-4000-8000-000000000002";
+  await db.exec(`reset role;
+    insert into public.documents(
+      id,organization_id,property_id,document_type,title,source,status,
+      operator_supplied_unverified,created_by
+    ) values (
+      '${remittanceEvidenceDocumentId}','${organization.organizationId}','${property.propertyId}',
+      'owner_remittance_evidence','Owner A ACH confirmation','operator_supplied','active',false,'${admin}'
+    );
+    insert into public.document_versions(
+      id,organization_id,document_id,version_number,storage_bucket,storage_path,
+      mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status
+    ) values (
+      '${remittanceEvidenceVersionId}','${organization.organizationId}','${remittanceEvidenceDocumentId}',1,
+      'private-documents','${organization.organizationId}/${remittanceEvidenceDocumentId}/ach-confirmation.pdf',
+      'application/pdf',1200,'${"e".repeat(64)}','ach-confirmation.pdf','${admin}','clean'
+    );
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+  const remittance = (await db.query(`select public.record_owner_remittance(
+    '${organization.organizationId}','${ownerEntityA}','${property.propertyId}',
+    '${correctedOwnerAStatement.statementSnapshotId}',50000,'USD',current_date,
+    'ACH-OWNER-A-0001','${remittanceEvidenceDocumentId}','owner-remittance-a-0001'
+  ) as result`)).rows[0].result;
+  const remittanceReplay = (await db.query(`select public.record_owner_remittance(
+    '${organization.organizationId}','${ownerEntityA}','${property.propertyId}',
+    '${correctedOwnerAStatement.statementSnapshotId}',50000,'USD',current_date,
+    'ACH-OWNER-A-0001','${remittanceEvidenceDocumentId}','owner-remittance-a-0001'
+  ) as result`)).rows[0].result;
+  assert(remittance.remittanceId === remittanceReplay.remittanceId && remittance.availableOwnerPayableMinor === 40698, "Owner remittance replay did not return the canonical result or payable balance.");
+  await expectDatabaseError(() => db.query(`select public.record_owner_remittance(
+    '${organization.organizationId}','${ownerEntityA}','${property.propertyId}',
+    '${correctedOwnerAStatement.statementSnapshotId}',40000,'USD',current_date,
+    'ACH-OWNER-A-0001','${remittanceEvidenceDocumentId}','owner-remittance-a-0001'
+  )`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(() => db.query(`select public.record_owner_remittance(
+    '${organization.organizationId}','${ownerEntityA}','${property.propertyId}',
+    '${correctedOwnerAStatement.statementSnapshotId}',50000,'USD',current_date,
+    'ACH-OWNER-A-0002','${remittanceEvidenceDocumentId}','owner-remittance-overpay-0001'
+  )`), "STATEMENT_REMITTANCE_EXCEEDS_AVAILABLE");
+  await expectDatabaseError(() => db.query(`select public.record_owner_remittance(
+    '${organization.organizationId}','${ownerEntityA}','${property.propertyId}',
+    '${correctedOwnerAStatement.statementSnapshotId}',1000,'CAD',current_date,
+    'ACH-OWNER-A-CAD','${remittanceEvidenceDocumentId}','owner-remittance-currency-0001'
+  )`), "CURRENCY_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.record_owner_remittance(
+    '${organization.organizationId}','${ownerEntityA}','${property.propertyId}',
+    '${correctedOwnerAStatement.statementSnapshotId}',1000,'USD',current_date,
+    'ACH-OWNER-A-0001','${remittanceEvidenceDocumentId}','owner-remittance-duplicate-ref-0001'
+  )`), "DUPLICATE_EXTERNAL_REFERENCE");
+  await expectDatabaseError(() => db.query(`select public.record_owner_remittance(
+    '${organization.organizationId}','${ownerEntityA}','${property.propertyId}',
+    '${correctedOwnerAStatement.statementSnapshotId}',1000,'USD',current_date,
+    'ACH-OWNER-A-NO-EVIDENCE',null,'owner-remittance-no-evidence-0001'
+  )`), "REMITTANCE_EVIDENCE_REQUIRED");
+
+  await db.exec("reset role");
+  const ownerAccounting = (await db.query(`select
+    (select count(*)::integer from public.journal_transactions
+      where source_type='owner_statement_snapshot') as accrual_transactions,
+    (select count(*)::integer from public.journal_transactions
+      where source_type='owner_remittance_record') as remittance_transactions,
+    (select sum(je.credit_minor-je.debit_minor)::integer
+      from public.journal_entries je
+      join public.ledger_accounts la on la.id=je.ledger_account_id
+      where la.accounting_book_id='${entity.accountingBookId}'
+        and la.account_code='2100'
+        and je.owner_entity_id='${ownerEntityA}'
+        and je.property_id='${property.propertyId}') as owner_a_payable,
+    (select sum(je.debit_minor)::integer from public.journal_entries je
+      where je.journal_transaction_id='${remittance.journalTransactionId}') as remittance_debits,
+    (select sum(je.credit_minor)::integer from public.journal_entries je
+      where je.journal_transaction_id='${remittance.journalTransactionId}') as remittance_credits
+  `)).rows[0];
+  assert(ownerAccounting.accrual_transactions === 3 && ownerAccounting.remittance_transactions === 1, "Statement accrual or remittance journals were not posted exactly once.");
+  assert(ownerAccounting.owner_a_payable === 40698 && ownerAccounting.remittance_debits === 50000 && ownerAccounting.remittance_credits === 50000, "Owner payable did not reconcile to the balanced remittance journal.");
+
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
   const ownerAStatementRows = (await db.query("select count(*)::integer as count from reporting.owner_statement_snapshots")).rows[0].count;
+  await expectDatabaseError(() => db.query("select count(*) from public.owner_remittance_records"), "permission denied");
   const ownerAStatements = (await db.query("select public.get_owner_statement_workspace() as result")).rows[0].result;
   const ownerAStatementDetail = (await db.query(`select public.get_owner_statement_detail('${correctedOwnerAStatement.statementSnapshotId}') as result`)).rows[0].result;
-  assert(ownerAStatementRows === 2 && ownerAStatements.items.length === 2 && ownerAStatementDetail.versionNumber === 2 && ownerAStatementDetail.snapshot.lines.length === 3, "Owner A could not read their exact sanitized statement history.");
+  assert(ownerAStatementRows === 2 && ownerAStatements.items.length === 2 && ownerAStatements.remittances.length === 1 && ownerAStatementDetail.versionNumber === 2 && ownerAStatementDetail.snapshot.lines.length === 3 && ownerAStatementDetail.remittances.length === 1 && ownerAStatementDetail.ownerPayableMinor === 40698, "Owner A could not read their exact sanitized statement and remittance history.");
   await expectDatabaseError(() => db.query(`select public.get_owner_statement_detail('${ownerBStatement.statementSnapshotId}')`), "OWNER_STATEMENT_NOT_FOUND");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerB}'`);
   const ownerBStatementRows = (await db.query("select count(*)::integer as count from reporting.owner_statement_snapshots")).rows[0].count;
-  assert(ownerBStatementRows === 1, "Co-owner B crossed the exact owner-entity statement boundary.");
+  await expectDatabaseError(() => db.query("select count(*) from public.owner_remittance_records"), "permission denied");
+  const ownerBStatementWorkspace = (await db.query("select public.get_owner_statement_workspace() as result")).rows[0].result;
+  assert(ownerBStatementRows === 1 && ownerBStatementWorkspace.remittances.length === 0, "Co-owner B crossed the exact owner-entity statement or remittance DTO boundary.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const operatorStatements = (await db.query("select public.get_operator_owner_statement_workspace() as result")).rows[0].result;
-  assert(operatorStatements.owners.length === 2 && operatorStatements.owners.find((item) => item.ownerEntityId === ownerEntityA)?.latestStatement.versionNumber === 2, "The operator statement workspace omitted the latest correction.");
+  const operatorOwnerA = operatorStatements.owners.find((item) => item.ownerEntityId === ownerEntityA);
+  assert(operatorStatements.owners.length === 2 && operatorOwnerA?.latestStatement.versionNumber === 2 && operatorOwnerA.latestStatement.availableToRemitMinor === 40698 && operatorOwnerA.ownerPayableMinor === 40698 && operatorOwnerA.remittances.length === 1 && operatorOwnerA.evidenceDocuments.length === 1, "The operator statement workspace omitted the latest correction, payable, evidence, or remittance.");
 
   await db.exec(`reset role;
     update public.organization_subscriptions set plan_code='starter' where organization_id='${organization.organizationId}';
@@ -1299,9 +1388,15 @@ async function validateRecurringCharges() {
     '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
     '2026-08-01','2026-08-31'
   )`), "OWNER_STATEMENT_PLAN_UNAVAILABLE");
+  await expectDatabaseError(() => db.query(`select public.record_owner_remittance(
+    '${organization.organizationId}','${ownerEntityA}','${property.propertyId}',
+    '${correctedOwnerAStatement.statementSnapshotId}',1000,'USD',current_date,
+    'ACH-OWNER-A-PLAN','${remittanceEvidenceDocumentId}','owner-remittance-plan-0001'
+  )`), "OWNER_REMITTANCE_PLAN_UNAVAILABLE");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
   const unentitledOwnerStatements = (await db.query("select count(*)::integer as count from reporting.owner_statement_snapshots")).rows[0].count;
-  assert(unentitledOwnerStatements === 0, "A plan without the owner portal entitlement exposed statement snapshots.");
+  const unentitledOwnerWorkspace = (await db.query("select public.get_owner_statement_workspace() as result")).rows[0].result;
+  assert(unentitledOwnerStatements === 0 && unentitledOwnerWorkspace.remittances.length === 0, "A plan without the owner portal entitlement exposed statement or remittance data.");
   await db.exec(`reset role;
     update public.organization_subscriptions set plan_code='growth' where organization_id='${organization.organizationId}';
   `);
@@ -1313,6 +1408,18 @@ async function validateRecurringCharges() {
   const outsiderStatementWorkspace = (await db.query("select public.get_owner_statement_workspace() as result")).rows[0].result;
   assert(outsiderWorkOrders === 0 && outsiderVendors === 0 && outsiderStatements === 0 && outsiderStatementWorkspace.items.length === 0, "Work order, vendor, or owner statement data leaked to an unrelated user.");
   await expectDatabaseError(() => db.query(`select public.transition_work_order('${workOrder.workOrderId}',6,'cancel','Unauthorized cancel.',null,null,null,null,null,'outsider-work-order-cancel-0001')`), "PROPERTY_SCOPE_DENIED");
+  await expectDatabaseError(() => db.query(`select public.record_owner_remittance(
+    '${organization.organizationId}','${ownerEntityA}','${property.propertyId}',
+    '${correctedOwnerAStatement.statementSnapshotId}',1000,'USD',current_date,
+    'ACH-OWNER-A-OUTSIDER','${remittanceEvidenceDocumentId}','owner-remittance-outsider-0001'
+  )`), "OWNER_REMITTANCE_SCOPE_DENIED");
+  await expectDatabaseError(() => db.query(`insert into public.owner_remittance_records(
+    organization_id,accounting_book_id,owner_entity_id,property_id,journal_transaction_id,
+    evidence_document_id,public_reference,amount_minor,currency_code,paid_on,recorded_by
+  ) values (
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '${remittance.journalTransactionId}','${remittanceEvidenceDocumentId}','REM-FORGED',1,'USD',current_date,'${outsider}'
+  )`), "permission denied");
 
   await db.exec("reset role");
   const workOrderTraces = (await db.query(`select
@@ -1325,12 +1432,17 @@ async function validateRecurringCharges() {
       (select count(*)::integer from public.owner_approval_decisions) as approvaldecisions,
       (select count(*)::integer from private.outbox_events where event_type='owner_statement.finalized') as statementevents,
       (select count(*)::integer from private.outbox_events where event_type='notification.requested' and aggregate_type='owner_statement_snapshot') as statementnotifications,
-      (select count(*)::integer from audit.audit_events where action_code='owner_statement.finalized') as statementaudits
+      (select count(*)::integer from audit.audit_events where action_code='owner_statement.finalized') as statementaudits,
+      (select count(*)::integer from private.outbox_events where event_type='owner_remittance.recorded') as remittanceevents,
+      (select count(*)::integer from private.outbox_events where event_type='notification.requested' and aggregate_type='owner_remittance_record') as remittancenotifications,
+      (select count(*)::integer from audit.audit_events where action_code='owner_remittance.recorded') as remittanceaudits
   `)).rows[0];
   assert(workOrderTraces.created === 2 && workOrderTraces.assigned === 2 && workOrderTraces.approvals === 1 && workOrderTraces.approvalresponses === 2 && workOrderTraces.statuschanges === 11 && workOrderTraces.completions === 2 && workOrderTraces.approvaldecisions === 2, "Work order audit/outbox trace is incomplete.");
   assert(workOrderTraces.statementevents === 3 && workOrderTraces.statementnotifications === 3 && workOrderTraces.statementaudits === 3, "Owner statement audit, domain-event, or notification trace is incomplete.");
+  assert(workOrderTraces.remittanceevents === 1 && workOrderTraces.remittancenotifications === 1 && workOrderTraces.remittanceaudits === 1, "Owner remittance audit, domain-event, or notification trace is incomplete.");
   await expectDatabaseError(() => db.query(`update public.owner_approval_decisions set reason='Changed' where approval_request_id='${approvalA.id}'`), "OWNER_APPROVAL_DECISION_APPEND_ONLY");
   await expectDatabaseError(() => db.query(`update reporting.owner_statement_snapshots set income_minor=1 where id='${ownerAStatement.statementSnapshotId}'`), "OWNER_STATEMENT_APPEND_ONLY");
+  await expectDatabaseError(() => db.query(`update public.owner_remittance_records set amount_minor=1 where id='${remittance.remittanceId}'`), "APPEND_ONLY_RECORD");
   await db.exec("reset role");
   await db.exec(`update public.provider_connections set
     status='enabled',capabilities='{"card_payments":"active","us_bank_account_ach_payments":"active"}'::jsonb,
@@ -1953,7 +2065,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
