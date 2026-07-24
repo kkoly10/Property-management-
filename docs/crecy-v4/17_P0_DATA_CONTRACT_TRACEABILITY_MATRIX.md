@@ -19,7 +19,7 @@
 | Messaging | conversations, participants, messages, notifications | SendConversationMessage | participant/property scope | participant isolation tests |
 | Announcements | announcements/deliveries | PublishAnnouncement | resident.manage + property scope; recipients via delivery rows | selected-tenancy delivery isolation/CASL split |
 | Billing | plan/price/usage/invoice/subscription tables | ChangeSubscription | org admin + step-up | localized price/limit tests |
-| Privacy | privacy requests/jobs | SubmitPrivacyRequest | self/admin routing | identity, hold, export/delete tests |
+| Privacy | privacy requests/jobs | SubmitPrivacyRequest/VerifyPrivacyRequest/CancelPrivacyRequest + sanitized workspace query | exact requester; active related organization; organization.manage for routed review/cancel | privacy_request.submitted/verified/canceled; identity step-up, job blocking, requester/admin isolation, expired-membership, export/delete, replay/version tests |
 
 ## Completion rule
 

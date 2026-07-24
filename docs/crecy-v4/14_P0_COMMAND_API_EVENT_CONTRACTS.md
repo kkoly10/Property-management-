@@ -627,6 +627,8 @@ Every collection query uses cursor pagination, explicit maximum page size 100, s
 | `owner_approval.responded` | approvalRequestId, ownerId, decision |
 | `subscription.change_requested` | organizationId, fromPlan, toPlan, effectiveMode |
 | `privacy_request.submitted` | privacyRequestId, requestType, controllerRole, dueAt |
+| `privacy_request.verified` | privacyRequestId, controllerRole, status |
+| `privacy_request.canceled` | privacyRequestId, status |
 
 ## 7. Payment state transition table
 
