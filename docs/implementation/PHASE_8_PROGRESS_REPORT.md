@@ -1,6 +1,6 @@
 # Phase 8 Progress Report - Communications, Privacy, and Staff Access
 
-**Status:** relationship messaging, explicit-delivery announcements, privacy request scaffolding, and staff access management implemented
+**Status:** relationship messaging, explicit-delivery announcements, privacy request scaffolding, staff access management, and notification preferences implemented
 **Date:** 2026-07-24
 
 ## Implemented scope
@@ -44,6 +44,12 @@
 - Staff invitation emails use Supabase Auth from a trusted server. The application invitation token is deterministic per idempotency key, stored only as a SHA-256 hash, and never persisted in plaintext.
 - Staff commands create notification jobs and emit `membership.invited`, `membership.activated`, `membership.changed`, `membership.scopes_changed`, and `membership.revoked` with corresponding audit records.
 - Base invitations, memberships, and property-scope rows remain non-writable from the browser; all mutations go through authorization-checking command functions.
+- Canonical user-bound `notification_preferences` now persists transactional email, SMS, WhatsApp, and push choices for payments, maintenance, messages, documents, and announcements.
+- The previously specified but unmaterialized private `notification_deliveries` table is now present in the forward chain with its job/time index, closing the delivery-diagnostics persistence gap.
+- `/more/preferences` also persists locale, reduced-motion, high-contrast, and text-scale choices with optimistic versioning and idempotent replay.
+- SMS and WhatsApp cannot be enabled without a profile phone. Marketing email and SMS remain visibly off and cannot be enabled through the transactional-preference command.
+- The preferences workspace returns a masked 30-day delivery summary and a bounded recent chronology without recipient addresses, provider message identifiers, provider payloads, or notification payloads.
+- Preference rows are readable only by their exact authenticated owner through RLS and cannot be written directly from the browser.
 
 ## Verification evidence
 
@@ -67,6 +73,8 @@ Announcement coverage includes selected-tenancy validation, exact resident and o
 Privacy coverage includes requester versus organization-admin visibility, same-organization relationship isolation, unrelated-user and expired-membership denial, direct table-access denial, MFA step-up, identity-gated jobs, platform and operator routing, jurisdiction validation, replay/conflict handling, optimistic versions, administrator cancellation, and audit/outbox/job trace counts. Vitest covers request types, jurisdiction normalization, cancellation limits, and command versions.
 
 Staff-access coverage includes organization-admin versus outsider authorization, sensitive-role MFA, recipient-bound acceptance, property-required roles, active-date seat accounting, Growth seat exhaustion, stale versions, role and scope changes, protected self-membership, immediate revocation, service-only email resolution/delivery marking, direct-table denial, idempotent replay, and audit/outbox/notification trace counts. Vitest covers email/date normalization, allowed roles and statuses, property-scope reasons, revocation reasons, and activation-token shape.
+
+Notification-preference coverage includes exact-user reads, other-user isolation, denied direct writes, optimistic versions, idempotent replay/conflict behavior, malformed channel matrices, phone-gated SMS/WhatsApp, marketing-off invariants, masked delivery diagnostics, and one audit/outbox trace per unique update. Vitest covers the complete channel/category matrix, supported locales, accessibility choices, and command versions.
 
 Run `npm run check` for ESLint, TypeScript, Vitest, the full database authorization suite, and the production build.
 

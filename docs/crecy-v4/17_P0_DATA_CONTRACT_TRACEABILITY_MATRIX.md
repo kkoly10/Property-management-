@@ -18,6 +18,7 @@
 | Owner remittance | remittance records | RecordOwnerRemittance | exact owner_entity_id for portal; owner.manage + finance.manage for operator | co-owner isolation, idempotency/currency tests |
 | Messaging | conversations, participants, messages, notifications | SendConversationMessage | participant/property scope | participant isolation tests |
 | Announcements | announcements/deliveries | PublishAnnouncement | resident.manage + property scope; recipients via delivery rows | selected-tenancy delivery isolation/CASL split |
+| Notification preferences | profiles, notification_preferences, notification jobs/deliveries | UpdateNotificationPreferences + sanitized delivery workspace | exact authenticated user only; phone required for SMS/WhatsApp; marketing consent remains separate | preferences.updated; self/other-user RLS, direct-write, version, replay, malformed matrix, and masked-diagnostic tests |
 | Billing | plan/price/usage/invoice/subscription tables | ChangeSubscription | org admin + step-up | localized price/limit tests |
 | Privacy | privacy requests/jobs | SubmitPrivacyRequest/VerifyPrivacyRequest/CancelPrivacyRequest + sanitized workspace query | exact requester; active related organization; organization.manage for routed review/cancel | privacy_request.submitted/verified/canceled; identity step-up, job blocking, requester/admin isolation, expired-membership, export/delete, replay/version tests |
 

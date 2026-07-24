@@ -36,6 +36,7 @@ const announcementIndexesSql = await readFile(resolve(root, "supabase/migrations
 const privacyRequestsSql = await readFile(resolve(root, "supabase/migrations/20260724123342_phase_8_privacy_requests.sql"), "utf8");
 const staffAccessSql = await readFile(resolve(root, "supabase/migrations/20260724134409_phase_8_staff_access.sql"), "utf8");
 const staffAccessIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724134515_phase_8_staff_access_indexes.sql"), "utf8");
+const notificationPreferencesSql = await readFile(resolve(root, "supabase/migrations/20260724141225_phase_8_notification_preferences.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -108,15 +109,15 @@ async function expectDatabaseError(action, expectedMessage) {
 
 async function validateAuthority() {
   assert(!/grant[^;]+reporting\.(owner_lease_summaries|owner_maintenance_summaries|vendor_work_order_assignments|resident_work_order_statuses)/i.test(authoritySql), "File 12 grants a view that is created only by file 13.");
-  assert(rlsMarkdown.includes("| RLS-030 |"), "The mandatory v4.1.1 RLS matrix does not reach RLS-030.");
+  assert(rlsMarkdown.includes("| RLS-031 |"), "The mandatory v4.1.1 RLS matrix does not reach RLS-031.");
   const db = createDatabase();
   await prepareSupabasePrelude(db);
   await db.exec(authoritySql);
   await db.exec(rlsSql);
   const tableResult = await db.query(`select count(*)::integer as count from information_schema.tables where table_schema in ('public','private','audit','reporting')`);
   const policyResult = await db.query(`select count(*)::integer as count from pg_policies where schemaname in ('public','reporting')`);
-  assert(tableResult.rows[0].count === 73, "Authority schema table count changed unexpectedly.");
-  assert(policyResult.rows[0].count === 58, "Authority RLS policy count changed unexpectedly.");
+  assert(tableResult.rows[0].count === 74, "Authority schema table count changed unexpectedly.");
+  assert(policyResult.rows[0].count === 59, "Authority RLS policy count changed unexpectedly.");
 
   const admin = "d0000000-0000-4000-8000-000000000001";
   const ownerA = "d0000000-0000-4000-8000-000000000002";
@@ -770,6 +771,7 @@ async function validateRecurringCharges() {
   await db.exec(privacyRequestsSql);
   await db.exec(staffAccessSql);
   await db.exec(staffAccessIndexesSql);
+  await db.exec(notificationPreferencesSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1706,6 +1708,133 @@ async function validateRecurringCharges() {
       && staffTraces.activated_events === 1
       && staffTraces.revoked_events === 1,
     "Staff invitation, access change, notification, audit, or event traces are incomplete.",
+  );
+
+  const defaultPreferenceChannels = {
+    email: { payments: true, maintenance: true, messages: true, documents: true, announcements: true },
+    sms: { payments: false, maintenance: false, messages: false, documents: false, announcements: false },
+    whatsapp: { payments: false, maintenance: false, messages: false, documents: false, announcements: false },
+    push: { payments: false, maintenance: false, messages: false, documents: false, announcements: false },
+  };
+  const phonePreferenceChannels = structuredClone(defaultPreferenceChannels);
+  phonePreferenceChannels.sms.maintenance = true;
+  phonePreferenceChannels.whatsapp.messages = true;
+  phonePreferenceChannels.push.announcements = true;
+  const diagnosticNotificationJob = "cb000000-0000-4000-8000-000000000001";
+  await db.exec(`reset role;
+    insert into private.notification_jobs(
+      id,organization_id,template_code,locale,channel,recipient_user_id,recipient_address,
+      payload,status,attempts,idempotency_key,created_at
+    ) values (
+      '${diagnosticNotificationJob}','${organization.organizationId}','payment_receipt_ready','en-US','email','${admin}',
+      'admin-secret@finance-atlas.example','{"paymentId":"secret-payment-id"}'::jsonb,'sent',1,
+      'diagnostic-notification-0001',now()
+    );
+    insert into private.notification_deliveries(
+      notification_job_id,provider_code,provider_message_id,status,provider_payload
+    ) values (
+      '${diagnosticNotificationJob}','mail-provider','provider-secret-123','delivered',
+      '{"raw":"provider-secret-payload"}'::jsonb
+    );
+    set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2';
+  `);
+  const defaultPreferences = (await db.query("select public.get_notification_preferences_workspace() as result")).rows[0].result;
+  assert(
+    defaultPreferences.profile.version === 1
+      && defaultPreferences.channels.email.payments
+      && !defaultPreferences.channels.sms.payments
+      && !defaultPreferences.marketing.email
+      && !defaultPreferences.marketing.sms,
+    "Notification preference defaults or the marketing-off invariant are incorrect.",
+  );
+  await expectDatabaseError(() => db.query(`insert into public.notification_preferences(
+    user_id,category,channel,enabled
+  ) values ('${admin}','payments','sms',true)`), "permission denied");
+  await expectDatabaseError(() => db.query(`select public.update_notification_preferences(
+    'en-US',false,false,'standard','${JSON.stringify(phonePreferenceChannels)}'::jsonb,1,
+    'preferences-phone-required-0001'
+  )`), "PHONE_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.update_notification_preferences(
+    'en-US',false,false,'standard','{"email":{"payments":true}}'::jsonb,1,
+    'preferences-invalid-matrix-0001'
+  )`), "INVALID_CHANNEL_PREFERENCES");
+
+  const updatedPreferences = (await db.query(`select public.update_notification_preferences(
+    'es-MX',true,true,'large','${JSON.stringify(defaultPreferenceChannels)}'::jsonb,1,
+    'preferences-update-00000001'
+  ) as result`)).rows[0].result;
+  const replayedPreferences = (await db.query(`select public.update_notification_preferences(
+    'es-MX',true,true,'large','${JSON.stringify(defaultPreferenceChannels)}'::jsonb,1,
+    'preferences-update-00000001'
+  ) as result`)).rows[0].result;
+  assert(
+    updatedPreferences.version === 2
+      && !updatedPreferences.idempotentReplay
+      && replayedPreferences.version === 2
+      && replayedPreferences.idempotentReplay,
+    "Notification preference update replay did not return the canonical response.",
+  );
+  await expectDatabaseError(() => db.query(`select public.update_notification_preferences(
+    'fr-CA',true,true,'large','${JSON.stringify(defaultPreferenceChannels)}'::jsonb,1,
+    'preferences-update-00000001'
+  )`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(() => db.query(`select public.update_notification_preferences(
+    'fr-CA',true,true,'large','${JSON.stringify(defaultPreferenceChannels)}'::jsonb,1,
+    'preferences-stale-version-0001'
+  )`), "PREFERENCES_VERSION_CONFLICT");
+  const ownPreferenceRows = (await db.query("select count(*)::integer as count from public.notification_preferences")).rows[0].count;
+  assert(ownPreferenceRows === 20, "The complete notification preference matrix was not persisted.");
+
+  await db.exec(`reset role;
+    update public.profiles set primary_phone_e164='+18045550199' where user_id='${admin}';
+    set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2';
+  `);
+  const phonePreferences = (await db.query(`select public.update_notification_preferences(
+    'fr-CA',true,false,'large','${JSON.stringify(phonePreferenceChannels)}'::jsonb,2,
+    'preferences-update-00000002'
+  ) as result`)).rows[0].result;
+  const preferenceWorkspace = (await db.query("select public.get_notification_preferences_workspace() as result")).rows[0].result;
+  const diagnosticItem = preferenceWorkspace.recentDeliveries.find((item) => item.notificationJobId === diagnosticNotificationJob);
+  const serializedPreferenceWorkspace = JSON.stringify(preferenceWorkspace);
+  assert(
+    phonePreferences.version === 3
+      && preferenceWorkspace.profile.hasPhone
+      && preferenceWorkspace.profile.locale === "fr-CA"
+      && preferenceWorkspace.channels.sms.maintenance
+      && preferenceWorkspace.channels.whatsapp.messages
+      && diagnosticItem?.latestDeliveryStatus === "delivered"
+      && !serializedPreferenceWorkspace.includes("admin-secret@finance-atlas.example")
+      && !serializedPreferenceWorkspace.includes("provider-secret-123")
+      && !serializedPreferenceWorkspace.includes("secret-payment-id")
+      && !serializedPreferenceWorkspace.includes("provider-secret-payload"),
+    "Notification preferences, phone-gated channels, or masked delivery diagnostics are incomplete.",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'; set request.jwt.claim.aal='aal2'`);
+  const outsiderPreferenceRows = (await db.query("select count(*)::integer as count from public.notification_preferences")).rows[0].count;
+  const outsiderPreferenceWorkspace = (await db.query("select public.get_notification_preferences_workspace() as result")).rows[0].result;
+  assert(
+    outsiderPreferenceRows === 0
+      && outsiderPreferenceWorkspace.profile.version === 1
+      && outsiderPreferenceWorkspace.recentDeliveries.length === 0,
+    "Another user's preference rows or delivery diagnostics leaked through RLS.",
+  );
+  await expectDatabaseError(() => db.query(`update public.notification_preferences
+    set enabled=true where user_id='${admin}'`), "permission denied");
+  await db.exec("reset role");
+  const preferenceTraces = (await db.query(`select
+    (select count(*)::integer from audit.audit_events
+      where actor_user_id='${admin}' and action_code='notification_preferences.updated') as audits,
+    (select count(*)::integer from private.outbox_events
+      where aggregate_id='${admin}' and event_type='notification_preferences.updated') as events,
+    (select count(*)::integer from private.idempotency_records
+      where actor_scope='user:${admin}' and route='UpdateNotificationPreferences' and state='completed') as idempotency_records
+  `)).rows[0];
+  assert(
+    preferenceTraces.audits === 2
+      && preferenceTraces.events === 2
+      && preferenceTraces.idempotency_records === 2,
+    "Notification preference audit, outbox, or idempotency traces were duplicated or omitted.",
   );
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
@@ -2758,7 +2887,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
