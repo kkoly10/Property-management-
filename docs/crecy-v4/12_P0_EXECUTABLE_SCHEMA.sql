@@ -1479,6 +1479,6 @@ grant select on public.profiles,public.organizations,public.operating_entities,p
   public.plan_prices,public.usage_meter_definitions,public.usage_records,public.billing_invoices,
   public.billing_invoice_lines to authenticated;
 
-grant select on public.owner_remittance_records to authenticated;
+revoke all on public.owner_remittance_records from public,anon,authenticated;
 
 commit;
