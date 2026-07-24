@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAndAssignWorkOrderSchema, createVendorSchema, submitMaintenanceRequestSchema, transitionWorkOrderSchema } from "./maintenance";
+import { createAndAssignWorkOrderSchema, createVendorSchema, ownerApprovalDecisionSchema, submitMaintenanceRequestSchema, transitionWorkOrderSchema } from "./maintenance";
 
 const valid = {
   tenancyId: "20000000-0000-4000-8000-000000000002",
@@ -73,5 +73,17 @@ describe("work order validation", () => {
 
   it("requires both ends of a schedule transition's visit window", () => {
     expect(transitionWorkOrderSchema.safeParse({ expectedVersion: 2, transition: "schedule", scheduledStart: "2026-07-27T13:00:00-04:00" }).success).toBe(false);
+  });
+});
+
+describe("owner approval validation", () => {
+  it("accepts approval without a comment and rejection with a reason", () => {
+    expect(ownerApprovalDecisionSchema.safeParse({ decision: "approved", expectedVersion: 1 }).success).toBe(true);
+    expect(ownerApprovalDecisionSchema.safeParse({ decision: "rejected", reason: "The estimate needs more detail.", expectedVersion: 1 }).success).toBe(true);
+  });
+
+  it("requires a rejection reason and positive expected version", () => {
+    expect(ownerApprovalDecisionSchema.safeParse({ decision: "rejected", expectedVersion: 1 }).success).toBe(false);
+    expect(ownerApprovalDecisionSchema.safeParse({ decision: "approved", expectedVersion: 0 }).success).toBe(false);
   });
 });

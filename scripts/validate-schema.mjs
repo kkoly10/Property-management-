@@ -23,6 +23,7 @@ const settlementReconciliationSql = await readFile(resolve(root, "supabase/migra
 const paymentFailureRetrySql = await readFile(resolve(root, "supabase/migrations/20260722193025_phase_5_payment_failure_retry.sql"), "utf8");
 const maintenanceIntakeSql = await readFile(resolve(root, "supabase/migrations/20260722201220_phase_6_maintenance_intake.sql"), "utf8");
 const workOrdersSql = await readFile(resolve(root, "supabase/migrations/20260723090000_phase_6_work_orders.sql"), "utf8");
+const ownerApprovalsSql = await readFile(resolve(root, "supabase/migrations/20260724005718_phase_7_owner_approvals.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -742,11 +743,14 @@ async function validateRecurringCharges() {
   await db.exec(paymentFailureRetrySql);
   await db.exec(maintenanceIntakeSql);
   await db.exec(workOrdersSql);
+  await db.exec(ownerApprovalsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
   const outsider = "c3000000-0000-4000-8000-000000000003";
-  await db.exec(`insert into auth.users(id) values ('${admin}'),('${resident}'),('${outsider}')`);
+  const ownerA = "c4000000-0000-4000-8000-000000000004";
+  const ownerB = "c5000000-0000-4000-8000-000000000005";
+  await db.exec(`insert into auth.users(id) values ('${admin}'),('${resident}'),('${outsider}'),('${ownerA}'),('${ownerB}')`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const organization = (await db.query(`select public.create_organization('Finance Atlas','finance-atlas','property_manager','US','en-US','America/New_York','2026-07-20','finance-org-0001') as result`)).rows[0].result;
   const entity = (await db.query(`select public.create_operating_entity_and_book('${organization.organizationId}','Finance Atlas LLC','Finance Atlas','US','company','USD','Operating book','finance-book-0001') as result`)).rows[0].result;
@@ -988,7 +992,21 @@ async function validateRecurringCharges() {
   const operatorMaintenance = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
   assert(operatorMaintenance.summary.open === 1 && operatorMaintenance.summary.untriaged === 1 && operatorMaintenance.items[0].officialPriority === "medium", "Operator maintenance intake queue is incomplete.");
 
-  await db.exec(`reset role; update public.organizations set settings=settings || '{"work_order_owner_approval_threshold_minor":"100000"}'::jsonb where id='${organization.organizationId}'; set role authenticated; set request.jwt.claim.sub='${admin}';`);
+  const ownerEntityA = "cb000000-0000-4000-8000-000000000011";
+  const ownerEntityB = "cc000000-0000-4000-8000-000000000012";
+  await db.exec(`reset role;
+    update public.organizations set settings=settings || '{"work_order_owner_approval_threshold_minor":"100000"}'::jsonb where id='${organization.organizationId}';
+    insert into public.owner_entities(id,organization_id,display_name,entity_type) values
+      ('${ownerEntityA}','${organization.organizationId}','Finance Atlas Owner A','company'),
+      ('${ownerEntityB}','${organization.organizationId}','Finance Atlas Owner B','company');
+    insert into public.ownership_interests(id,organization_id,property_id,owner_entity_id,ownership_fraction,effective_from) values
+      ('cd000000-0000-4000-8000-000000000013','${organization.organizationId}','${property.propertyId}','${ownerEntityA}',0.5,'2026-01-01'),
+      ('ce000000-0000-4000-8000-000000000014','${organization.organizationId}','${property.propertyId}','${ownerEntityB}',0.5,'2026-01-01');
+    insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values
+      ('${ownerA}','${organization.organizationId}','owner_entity','${ownerEntityA}','active'),
+      ('${ownerB}','${organization.organizationId}','owner_entity','${ownerEntityB}','active');
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
   const vendor = (await db.query(`select public.create_vendor(
     '${organization.organizationId}','Ready Fix Plumbing','dispatch@readyfix.example','+14045551234','vendor-create-0001'
   ) as result`)).rows[0].result;
@@ -1072,12 +1090,42 @@ async function validateRecurringCharges() {
   const pendingApproval = (await db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',4,'complete',null,null,null,150000,'Replaced the igniter; awaiting owner sign-off on cost.',array['${evidenceDocument.documentId}'::uuid],'work-order-highcost-complete-0001') as result`)).rows[0].result;
   assert(pendingApproval.status === "awaiting_approval" && pendingApproval.version === 5, "A high-cost work order bypassed the owner-approval gate.");
   await expectDatabaseError(() => db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',5,'close',null,null,null,null,null,null,'work-order-highcost-close-0001')`), "INVALID_TRANSITION");
-  const canceled = (await db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',5,'cancel','Furnace replaced under warranty instead.',null,null,null,null,null,'work-order-highcost-cancel-0001') as result`)).rows[0].result;
-  assert(canceled.status === "canceled" && canceled.version === 6, "Cancel transition from awaiting_approval did not succeed.");
+
+  await db.exec("reset role");
+  const approvalRows = (await db.query(`select id,owner_entity_id from public.owner_approval_requests where work_order_id='${highCostWorkOrder.workOrderId}' order by owner_entity_id`)).rows;
+  assert(approvalRows.length === 2, "The work order did not create one approval request for each active owner interest.");
+  const approvalA = approvalRows.find((row) => row.owner_entity_id === ownerEntityA);
+  const approvalB = approvalRows.find((row) => row.owner_entity_id === ownerEntityB);
+  assert(approvalA && approvalB, "Owner approval requests were not tied to the expected owner entities.");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${ownerA}'; set request.jwt.claim.aal='aal1'`);
+  const ownerAWorkspace = (await db.query("select public.get_owner_approval_workspace() as result")).rows[0].result;
+  assert(ownerAWorkspace.items.length === 1 && ownerAWorkspace.items[0].approvalRequestId === approvalA.id && ownerAWorkspace.items[0].ownerEntityId === ownerEntityA, "Co-owner A could not read their exact sanitized approval projection.");
+  await expectDatabaseError(() => db.query(`select public.respond_to_owner_approval('${approvalA.id}','approved',null,1,'owner-a-approval-0001')`), "MFA_STEP_UP_REQUIRED");
+  await db.exec("set request.jwt.claim.aal='aal2'");
+  const ownerADecision = (await db.query(`select public.respond_to_owner_approval('${approvalA.id}','approved',null,1,'owner-a-approval-0001') as result`)).rows[0].result;
+  assert(ownerADecision.approvalRequestStatus === "approved" && ownerADecision.workOrderApprovalStatus === "pending" && ownerADecision.workOrderStatus === "awaiting_approval", "The first co-owner decision incorrectly completed the work order.");
+  const ownerAReplay = (await db.query(`select public.respond_to_owner_approval('${approvalA.id}','approved',null,1,'owner-a-approval-0001') as result`)).rows[0].result;
+  assert(ownerAReplay.approvalRequestVersion === ownerADecision.approvalRequestVersion, "Owner approval replay did not return the canonical result.");
+  await expectDatabaseError(() => db.query(`select public.respond_to_owner_approval('${approvalA.id}','rejected','Changed decision.',1,'owner-a-approval-0001')`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(() => db.query(`select public.respond_to_owner_approval('${approvalA.id}','approved',null,1,'owner-a-stale-0002')`), "VERSION_CONFLICT");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerB}'; set request.jwt.claim.aal='aal2'`);
+  const ownerBWorkspace = (await db.query("select public.get_owner_approval_workspace() as result")).rows[0].result;
+  assert(ownerBWorkspace.items.length === 1 && ownerBWorkspace.items[0].approvalRequestId === approvalB.id && ownerBWorkspace.items[0].ownerEntityId === ownerEntityB, "Co-owner B crossed the exact owner-entity projection boundary.");
+  await expectDatabaseError(() => db.query(`select public.respond_to_owner_approval('${approvalA.id}','approved',null,2,'owner-b-cross-owner-0001')`), "OWNER_APPROVAL_SCOPE_DENIED");
+  const ownerBDecision = (await db.query(`select public.respond_to_owner_approval('${approvalB.id}','approved','Estimate and completion evidence reviewed.',1,'owner-b-approval-0001') as result`)).rows[0].result;
+  assert(ownerBDecision.workOrderApprovalStatus === "approved" && ownerBDecision.workOrderStatus === "completed" && ownerBDecision.workOrderVersion === 6, "Final co-owner approval did not release the awaiting work order.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}'`);
+  const approvedClosed = (await db.query(`select public.transition_work_order('${highCostWorkOrder.workOrderId}',6,'close',null,null,null,null,null,null,'work-order-highcost-close-approved-0001') as result`)).rows[0].result;
+  assert(approvedClosed.status === "closed" && approvedClosed.version === 7, "The fully approved work order could not be closed.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const adminVendorDirectory = (await db.query("select public.get_operator_vendor_directory() as result")).rows[0].result;
   assert(adminVendorDirectory.length === 1 && adminVendorDirectory[0].vendorId === vendor.vendorId, "Org-wide admin did not see the vendor directory.");
+  const operatorApprovals = (await db.query("select public.get_operator_owner_approval_workspace() as result")).rows[0].result;
+  assert(operatorApprovals.items.length === 2 && operatorApprovals.items.every((item) => item.status === "approved"), "The operator approval projection omitted an owner decision.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderWorkOrders = (await db.query("select count(*)::integer as count from public.work_orders")).rows[0].count;
@@ -1090,10 +1138,13 @@ async function validateRecurringCharges() {
     (select count(*)::integer from private.outbox_events where event_type='work_order.created') as created,
     (select count(*)::integer from private.outbox_events where event_type='work_order.assigned') as assigned,
     (select count(*)::integer from private.outbox_events where event_type='owner_approval.requested') as approvals,
+    (select count(*)::integer from private.outbox_events where event_type='owner_approval.responded') as approvalresponses,
     (select count(*)::integer from private.outbox_events where event_type='work_order.status_changed') as statuschanges,
-    (select count(*)::integer from private.outbox_events where event_type='work_order.completed') as completions
+    (select count(*)::integer from private.outbox_events where event_type='work_order.completed') as completions,
+    (select count(*)::integer from public.owner_approval_decisions) as approvaldecisions
   `)).rows[0];
-  assert(workOrderTraces.created === 2 && workOrderTraces.assigned === 2 && workOrderTraces.approvals === 1 && workOrderTraces.statuschanges === 10 && workOrderTraces.completions === 1, "Work order audit/outbox trace is incomplete.");
+  assert(workOrderTraces.created === 2 && workOrderTraces.assigned === 2 && workOrderTraces.approvals === 1 && workOrderTraces.approvalresponses === 2 && workOrderTraces.statuschanges === 11 && workOrderTraces.completions === 2 && workOrderTraces.approvaldecisions === 2, "Work order audit/outbox trace is incomplete.");
+  await expectDatabaseError(() => db.query(`update public.owner_approval_decisions set reason='Changed' where approval_request_id='${approvalA.id}'`), "OWNER_APPROVAL_DECISION_APPEND_ONLY");
   await db.exec("reset role");
   await db.exec(`update public.provider_connections set
     status='enabled',capabilities='{"card_payments":"active","us_bank_account_ach_payments":"active"}'::jsonb,

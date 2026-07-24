@@ -69,6 +69,17 @@ export const transitionWorkOrderSchema = z.object({
   }
 });
 
+export const ownerApprovalDecisionSchema = z.object({
+  decision: z.enum(["approved", "rejected"]),
+  reason: z.string().trim().min(3).max(1000).optional(),
+  expectedVersion: z.number().int().positive(),
+}).superRefine((approval, context) => {
+  if (approval.decision === "rejected" && !approval.reason) {
+    context.addIssue({ code: "custom", path: ["reason"], message: "Explain why this request is being rejected." });
+  }
+});
+
 export type CreateVendorInput = z.infer<typeof createVendorSchema>;
 export type CreateAndAssignWorkOrderInput = z.infer<typeof createAndAssignWorkOrderSchema>;
 export type TransitionWorkOrderInput = z.infer<typeof transitionWorkOrderSchema>;
+export type OwnerApprovalDecisionInput = z.infer<typeof ownerApprovalDecisionSchema>;
