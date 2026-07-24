@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { ArrowRight, Building2, CircleAlert, Clock3, FileCheck2, MessageSquareText, ReceiptText, ShieldCheck } from "lucide-react";
+import { ArrowRight, Building2, CircleAlert, Clock3, FileCheck2, Megaphone, MessageSquareText, ReceiptText, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Wordmark } from "@/components/brand/wordmark";
+import { getRecipientAnnouncementWorkspace } from "@/lib/data/announcements";
 import { getOwnerApprovalWorkspace } from "@/lib/data/owner-approvals";
 import { getOwnerStatementWorkspace } from "@/lib/data/owner-statements";
 
@@ -13,7 +14,7 @@ const label = (value: string) => value.replaceAll("_", " ");
 const money = (amountMinor: number, currency: string) => new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amountMinor / 100);
 
 export default async function OwnerHomePage() {
-  const [approvals, statements] = await Promise.all([getOwnerApprovalWorkspace(), getOwnerStatementWorkspace()]);
+  const [approvals, statements, announcements] = await Promise.all([getOwnerApprovalWorkspace(), getOwnerStatementWorkspace(), getRecipientAnnouncementWorkspace()]);
   const pending = approvals.items.filter((item) => item.status === "pending").length;
   return <div className="min-h-screen bg-[#f6f8fb] pb-12">
     <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark /><Badge variant="info">Crecy Owner</Badge></div></header>
@@ -21,6 +22,7 @@ export default async function OwnerHomePage() {
       <div><p className="text-sm text-muted-foreground">Owner workspace</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Property performance</h1><p className="mt-2 text-sm text-muted-foreground">Finalized statements and requests assigned to your exact owner entity.</p></div>
       {approvals.mode === "setup" || statements.mode === "setup" ? <Alert variant="info"><ShieldCheck className="h-5 w-5" /><AlertTitle>Owner portal preview</AlertTitle><AlertDescription>This sample is read-only until Supabase and an owner relationship are connected.</AlertDescription></Alert> : null}
       {approvals.mode === "error" || statements.mode === "error" ? <Alert variant="destructive"><CircleAlert className="h-5 w-5" /><AlertTitle>Owner workspace unavailable</AlertTitle><AlertDescription>Refresh and try again. Request {approvals.requestId ?? statements.requestId}.</AlertDescription></Alert> : null}
+      {announcements.mode === "error" ? <Alert variant="destructive"><CircleAlert className="h-5 w-5" /><AlertTitle>Announcements unavailable</AlertTitle><AlertDescription>Refresh and try again. Request {announcements.requestId}.</AlertDescription></Alert> : announcements.items.length ? <section className="space-y-3" aria-labelledby="owner-announcements-title"><div className="flex items-center gap-2"><Megaphone className="h-5 w-5 text-primary" /><h2 id="owner-announcements-title" className="text-xl font-semibold">Announcements</h2></div><div className="grid gap-3">{announcements.items.slice(0, 3).map((item) => <Card key={item.deliveryId}><CardContent className="p-5"><div className="flex flex-wrap items-center gap-2"><Badge variant="info">{item.propertyName ?? "Management"}</Badge><span className="text-xs text-muted-foreground">{new Date(item.publishedAt).toLocaleDateString()}</span></div><h3 className="mt-3 font-semibold">{item.title}</h3><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{item.bodyText}</p></CardContent></Card>)}</div></section> : null}
       <Card><CardContent className="flex items-center justify-between gap-4 p-5"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary text-secondary-foreground"><MessageSquareText className="h-5 w-5" /></span><div><p className="font-semibold">Messages</p><p className="mt-1 text-sm text-muted-foreground">Contact the property team for your owner entity.</p></div></div><Button asChild size="sm" variant="outline"><Link href="/owner/messages">Open inbox <ArrowRight className="h-4 w-4" /></Link></Button></CardContent></Card>
       <section className="space-y-3" aria-labelledby="statements-title">
         <div><h2 id="statements-title" className="text-xl font-semibold">Finalized statements</h2><p className="mt-1 text-sm text-muted-foreground">Immutable ledger snapshots supplied by your operator.</p></div>
