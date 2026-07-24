@@ -254,6 +254,7 @@ Every P0 route must implement:
 - **Routes:** `/messages`, `/more/preferences`
 - **Data:** transactional conversation, notification choices, locale, accessibility preferences, privacy request link.
 - **Marketing:** separate consent, off by default without lawful basis.
+- **Persistence:** `profiles` plus user-bound `notification_preferences`; delivery diagnostics expose status and timestamps but never recipient addresses, provider identifiers, or payloads.
 
 ## 5. Owner P0 screens
 

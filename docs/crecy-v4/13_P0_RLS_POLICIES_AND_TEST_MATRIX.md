@@ -299,6 +299,7 @@ alter table public.conversation_participants enable row level security;
 alter table public.messages enable row level security;
 alter table public.announcements enable row level security;
 alter table public.announcement_deliveries enable row level security;
+alter table public.notification_preferences enable row level security;
 alter table public.document_deliveries enable row level security;
 alter table public.document_acknowledgements enable row level security;
 alter table public.privacy_requests enable row level security;
@@ -526,6 +527,9 @@ create policy announcement_deliveries_self_read on public.announcement_deliverie
   recipient_user_id=(select auth.uid())
   or (select private.can_manage_announcement(announcement_id))
 );
+create policy notification_preferences_self_read on public.notification_preferences for select to authenticated using (
+  user_id=(select auth.uid())
+);
 create policy document_deliveries_self_or_manager_read on public.document_deliveries for select to authenticated using (
   recipient_user_id=(select auth.uid())
   or (select private.can_manage_document_version(document_version_id))
@@ -663,6 +667,7 @@ Uploads use a server-created upload grant containing organization, parent resour
 | RLS-028 | Resident | Query base `work_orders` then the resident status projection | base rows 0; sanitized related status row only |
 | RLS-029 | Resident | Read a same-property announcement without an explicit delivery | 0 rows; explicitly delivered announcement only |
 | RLS-030 | Property-scoped member | Read another property’s non-portfolio import or document | 0 rows; assigned-property rows only |
+| RLS-031 | Authenticated user | Read or mutate another user’s notification preferences | 0 rows for reads; direct writes denied |
 
 ## 6. Financial/database invariant tests
 

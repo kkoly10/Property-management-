@@ -36,6 +36,10 @@ create table public.profiles (
   primary_phone_e164 text,
   locale text not null default 'en-US',
   time_zone text,
+  reduce_motion boolean not null default false,
+  high_contrast boolean not null default false,
+  text_scale text not null default 'standard' check (text_scale in ('standard','large')),
+  preferences_version integer not null default 1 check (preferences_version > 0),
   status text not null default 'active' check (status in ('active','locked','merged','deleted')),
   merged_into_user_id uuid references auth.users(id) on delete restrict,
   created_at timestamptz not null default now(),
@@ -957,6 +961,16 @@ create table public.announcement_deliveries (
   unique(announcement_id,recipient_user_id,recipient_relationship_type,recipient_relationship_id)
 );
 
+create table public.notification_preferences (
+  user_id uuid not null references auth.users(id) on delete restrict,
+  category text not null check (category in ('payments','maintenance','messages','documents','announcements')),
+  channel text not null check (channel in ('email','sms','whatsapp','push')),
+  enabled boolean not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id,category,channel)
+);
+
 create table private.notification_jobs (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid references public.organizations(id) on delete restrict,
@@ -1474,6 +1488,7 @@ grant select on public.profiles,public.organizations,public.operating_entities,p
   public.work_orders,public.import_jobs,public.consent_records,public.plan_catalog,
   public.plan_entitlements,public.organization_subscriptions,public.invitations,public.conversations,
   public.conversation_participants,public.messages,public.announcements,public.announcement_deliveries,
+  public.notification_preferences,
   public.document_deliveries,public.document_acknowledgements,public.privacy_requests,
   public.owner_approval_requests,public.owner_approval_decisions,public.localized_price_books,
   public.plan_prices,public.usage_meter_definitions,public.usage_records,public.billing_invoices,

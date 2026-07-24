@@ -570,6 +570,12 @@ Request type is access, correction, deletion, export, restriction, objection, wi
 
 Request: `{ decision:'approved'|'rejected'; reason?:string; expectedVersion:number }`. Actor must be related to the requested owner entity and property. One decision is accepted; concurrent/replayed decisions return prior result or `VERSION_CONFLICT`.
 
+### 4.28 UpdateNotificationPreferences
+
+`PUT /api/v1/notification-preferences`
+
+Request includes locale, reduced-motion/high-contrast/text-scale accessibility choices, the complete transactional channel/category matrix, expected preference version, and an idempotency key. The command is bound to `auth.uid()` and cannot target another user. SMS or WhatsApp activation requires a profile phone. Marketing email/SMS remain off and cannot be enabled by this command because a preference is not consent. The command updates `profiles` and `notification_preferences` atomically, writes an audit record, and emits `notification_preferences.updated`.
+
 ## 5. Query contracts
 
 Queries are separate from commands and must be permission-scoped. P0 query routes:
@@ -589,6 +595,7 @@ GET /api/v1/resident/payments
 GET /api/v1/resident/maintenance
 GET /api/v1/owner/home
 GET /api/v1/owner/statements/{id}
+GET /api/v1/notification-preferences
 ```
 
 Every collection query uses cursor pagination, explicit maximum page size 100, stable sort, organization/property scope, and server-selected fields. Never expose arbitrary table select/filter passthrough as a public API.
@@ -634,6 +641,7 @@ Every collection query uses cursor pagination, explicit maximum page size 100, s
 | `membership.changed` | membershipId, roleCode, status, version |
 | `membership.scopes_changed` | membershipId, propertyIds, version |
 | `membership.revoked` | membershipId, revokedUserId, version |
+| `notification_preferences.updated` | userId, locale, preferencesVersion |
 
 ## 7. Payment state transition table
 
