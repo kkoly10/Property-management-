@@ -24,6 +24,7 @@ const paymentFailureRetrySql = await readFile(resolve(root, "supabase/migrations
 const maintenanceIntakeSql = await readFile(resolve(root, "supabase/migrations/20260722201220_phase_6_maintenance_intake.sql"), "utf8");
 const workOrdersSql = await readFile(resolve(root, "supabase/migrations/20260723090000_phase_6_work_orders.sql"), "utf8");
 const ownerApprovalsSql = await readFile(resolve(root, "supabase/migrations/20260724005718_phase_7_owner_approvals.sql"), "utf8");
+const ownerStatementsSql = await readFile(resolve(root, "supabase/migrations/20260724022357_phase_7_owner_statements.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -744,6 +745,7 @@ async function validateRecurringCharges() {
   await db.exec(maintenanceIntakeSql);
   await db.exec(workOrdersSql);
   await db.exec(ownerApprovalsSql);
+  await db.exec(ownerStatementsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1127,10 +1129,189 @@ async function validateRecurringCharges() {
   const operatorApprovals = (await db.query("select public.get_operator_owner_approval_workspace() as result")).rows[0].result;
   assert(operatorApprovals.items.length === 2 && operatorApprovals.items.every((item) => item.status === "approved"), "The operator approval projection omitted an owner decision.");
 
+  await db.exec(`reset role;
+    insert into public.ledger_accounts(organization_id,accounting_book_id,account_code,account_name,account_class,normal_balance) values
+      ('${organization.organizationId}','${entity.accountingBookId}','1000','Operating cash clearing','asset','debit'),
+      ('${organization.organizationId}','${entity.accountingBookId}','4100','Management fee income','revenue','credit'),
+      ('${organization.organizationId}','${entity.accountingBookId}','5000','Maintenance expense','expense','debit')
+    on conflict (accounting_book_id,account_code) do nothing;
+
+    with accounts as (
+      select
+        (array_agg(id) filter (where account_code='1000'))[1] as cash_id,
+        (array_agg(id) filter (where account_code='4100'))[1] as management_fee_id,
+        (array_agg(id) filter (where account_code='5000'))[1] as maintenance_id
+      from public.ledger_accounts
+      where accounting_book_id='${entity.accountingBookId}'
+    ), expense_transaction as (
+      insert into public.journal_transactions(
+        organization_id,operating_entity_id,accounting_book_id,transaction_type,effective_date,
+        source_type,idempotency_key,currency_code,created_by
+      ) values (
+        '${organization.organizationId}','${entity.operatingEntityId}','${entity.accountingBookId}',
+        'maintenance_cost','2026-08-15','work_order','statement-expense-0001','USD','${admin}'
+      ) returning id
+    )
+    insert into public.journal_entries(
+      journal_transaction_id,organization_id,accounting_book_id,ledger_account_id,
+      debit_minor,credit_minor,property_id,memo
+    )
+    select et.id,'${organization.organizationId}'::uuid,'${entity.accountingBookId}'::uuid,a.maintenance_id,2501,0,'${property.propertyId}'::uuid,'Maintenance expense'
+    from expense_transaction et cross join accounts a
+    union all
+    select et.id,'${organization.organizationId}'::uuid,'${entity.accountingBookId}'::uuid,a.cash_id,0,2501,'${property.propertyId}'::uuid,'Maintenance payment'
+    from expense_transaction et cross join accounts a;
+
+    with accounts as (
+      select
+        (array_agg(id) filter (where account_code='1000'))[1] as cash_id,
+        (array_agg(id) filter (where account_code='4100'))[1] as management_fee_id
+      from public.ledger_accounts
+      where accounting_book_id='${entity.accountingBookId}'
+    ), fee_transaction as (
+      insert into public.journal_transactions(
+        organization_id,operating_entity_id,accounting_book_id,transaction_type,effective_date,
+        source_type,idempotency_key,currency_code,created_by
+      ) values (
+        '${organization.organizationId}','${entity.operatingEntityId}','${entity.accountingBookId}',
+        'management_fee','2026-08-31','management_agreement','statement-fee-0001','USD','${admin}'
+      ) returning id
+    )
+    insert into public.journal_entries(
+      journal_transaction_id,organization_id,accounting_book_id,ledger_account_id,
+      debit_minor,credit_minor,property_id,memo
+    )
+    select ft.id,'${organization.organizationId}'::uuid,'${entity.accountingBookId}'::uuid,a.cash_id,1001,0,'${property.propertyId}'::uuid,'Management fee receivable'
+    from fee_transaction ft cross join accounts a
+    union all
+    select ft.id,'${organization.organizationId}'::uuid,'${entity.accountingBookId}'::uuid,a.management_fee_id,0,1001,'${property.propertyId}'::uuid,'Management fee income'
+    from fee_transaction ft cross join accounts a;
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+  await db.exec(`reset role;
+    update public.ownership_interests set ownership_fraction=0.4 where owner_entity_id='${ownerEntityB}';
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+  await expectDatabaseError(() => db.query(`select public.get_owner_statement_draft(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31'
+  )`), "OWNERSHIP_ALLOCATION_INCOMPLETE");
+  await db.exec(`reset role;
+    update public.ownership_interests set ownership_fraction=0.5 where owner_entity_id='${ownerEntityB}';
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+  const ownerADraft = (await db.query(`select public.get_owner_statement_draft(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31'
+  ) as result`)).rows[0].result;
+  const ownerBDraft = (await db.query(`select public.get_owner_statement_draft(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityB}','${property.propertyId}',
+    '2026-08-01','2026-08-31'
+  ) as result`)).rows[0].result;
+  assert(ownerADraft.incomeMinor === 92500 && ownerADraft.expenseMinor === 1251 && ownerADraft.managementFeeMinor === 501 && ownerADraft.netOwnerPositionMinor === 90748, "Owner A statement allocation did not use deterministic largest-remainder rounding.");
+  assert(ownerBDraft.incomeMinor === 92500 && ownerBDraft.expenseMinor === 1250 && ownerBDraft.managementFeeMinor === 500 && ownerBDraft.netOwnerPositionMinor === 90750, "Owner B statement allocation did not reconcile to the property ledger.");
+  assert(ownerADraft.sourceEntryCount === 3 && ownerADraft.sourceTransactionCount === 3 && ownerADraft.lines.length === 3, "The statement draft did not use only posted revenue and expense ledger lines.");
+
+  await expectDatabaseError(() => db.query(`select public.finalize_owner_statement(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31','${"0".repeat(64)}','owner-statement-a-stale-0001',null
+  )`), "OWNER_STATEMENT_CALCULATION_CHANGED");
+  const ownerAStatement = (await db.query(`select public.finalize_owner_statement(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31','${ownerADraft.sha256Hex}','owner-statement-a-0001',null
+  ) as result`)).rows[0].result;
+  const ownerAStatementReplay = (await db.query(`select public.finalize_owner_statement(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31','${ownerADraft.sha256Hex}','owner-statement-a-0001',null
+  ) as result`)).rows[0].result;
+  assert(ownerAStatement.versionNumber === 1 && ownerAStatement.netOwnerPositionMinor === 90748 && ownerAStatementReplay.statementSnapshotId === ownerAStatement.statementSnapshotId, "Owner statement finalization or idempotent replay failed.");
+  await expectDatabaseError(() => db.query(`select public.finalize_owner_statement(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31','${ownerADraft.sha256Hex}','owner-statement-a-duplicate-0001',null
+  )`), "OWNER_STATEMENT_ALREADY_FINALIZED");
+  const ownerBStatement = (await db.query(`select public.finalize_owner_statement(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityB}','${property.propertyId}',
+    '2026-08-01','2026-08-31','${ownerBDraft.sha256Hex}','owner-statement-b-0001',null
+  ) as result`)).rows[0].result;
+  assert(ownerAStatement.netOwnerPositionMinor+ownerBStatement.netOwnerPositionMinor === 181498, "Co-owner statements do not reconcile to property income less expenses and fees.");
+
+  await db.exec(`reset role;
+    with accounts as (
+      select
+        (array_agg(id) filter (where account_code='1000'))[1] as cash_id,
+        (array_agg(id) filter (where account_code='5000'))[1] as maintenance_id
+      from public.ledger_accounts
+      where accounting_book_id='${entity.accountingBookId}'
+    ), correction_transaction as (
+      insert into public.journal_transactions(
+        organization_id,operating_entity_id,accounting_book_id,transaction_type,effective_date,
+        source_type,idempotency_key,currency_code,created_by
+      ) values (
+        '${organization.organizationId}','${entity.operatingEntityId}','${entity.accountingBookId}',
+        'maintenance_cost_correction','2026-08-20','work_order','statement-expense-correction-0001','USD','${admin}'
+      ) returning id
+    )
+    insert into public.journal_entries(
+      journal_transaction_id,organization_id,accounting_book_id,ledger_account_id,
+      debit_minor,credit_minor,property_id,memo
+    )
+    select ct.id,'${organization.organizationId}'::uuid,'${entity.accountingBookId}'::uuid,a.maintenance_id,99,0,'${property.propertyId}'::uuid,'Late maintenance expense'
+    from correction_transaction ct cross join accounts a
+    union all
+    select ct.id,'${organization.organizationId}'::uuid,'${entity.accountingBookId}'::uuid,a.cash_id,0,99,'${property.propertyId}'::uuid,'Late maintenance payment'
+    from correction_transaction ct cross join accounts a;
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+  const correctedOwnerADraft = (await db.query(`select public.get_owner_statement_draft(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31'
+  ) as result`)).rows[0].result;
+  await expectDatabaseError(() => db.query(`select public.finalize_owner_statement(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31','${correctedOwnerADraft.sha256Hex}','owner-statement-a-correction-no-reason',null
+  )`), "OWNER_STATEMENT_CORRECTION_REASON_REQUIRED");
+  const correctedOwnerAStatement = (await db.query(`select public.finalize_owner_statement(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31','${correctedOwnerADraft.sha256Hex}','owner-statement-a-correction-0001','Late maintenance invoice posted'
+  ) as result`)).rows[0].result;
+  assert(correctedOwnerAStatement.versionNumber === 2 && correctedOwnerAStatement.statementSeriesId === ownerAStatement.statementSeriesId && correctedOwnerAStatement.netOwnerPositionMinor === 90698, "Owner statement correction did not create the next immutable version.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
+  const ownerAStatementRows = (await db.query("select count(*)::integer as count from reporting.owner_statement_snapshots")).rows[0].count;
+  const ownerAStatements = (await db.query("select public.get_owner_statement_workspace() as result")).rows[0].result;
+  const ownerAStatementDetail = (await db.query(`select public.get_owner_statement_detail('${correctedOwnerAStatement.statementSnapshotId}') as result`)).rows[0].result;
+  assert(ownerAStatementRows === 2 && ownerAStatements.items.length === 2 && ownerAStatementDetail.versionNumber === 2 && ownerAStatementDetail.snapshot.lines.length === 3, "Owner A could not read their exact sanitized statement history.");
+  await expectDatabaseError(() => db.query(`select public.get_owner_statement_detail('${ownerBStatement.statementSnapshotId}')`), "OWNER_STATEMENT_NOT_FOUND");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerB}'`);
+  const ownerBStatementRows = (await db.query("select count(*)::integer as count from reporting.owner_statement_snapshots")).rows[0].count;
+  assert(ownerBStatementRows === 1, "Co-owner B crossed the exact owner-entity statement boundary.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const operatorStatements = (await db.query("select public.get_operator_owner_statement_workspace() as result")).rows[0].result;
+  assert(operatorStatements.owners.length === 2 && operatorStatements.owners.find((item) => item.ownerEntityId === ownerEntityA)?.latestStatement.versionNumber === 2, "The operator statement workspace omitted the latest correction.");
+
+  await db.exec(`reset role;
+    update public.organization_subscriptions set plan_code='starter' where organization_id='${organization.organizationId}';
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+  await expectDatabaseError(() => db.query(`select public.get_owner_statement_draft(
+    '${organization.organizationId}','${entity.accountingBookId}','${ownerEntityA}','${property.propertyId}',
+    '2026-08-01','2026-08-31'
+  )`), "OWNER_STATEMENT_PLAN_UNAVAILABLE");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
+  const unentitledOwnerStatements = (await db.query("select count(*)::integer as count from reporting.owner_statement_snapshots")).rows[0].count;
+  assert(unentitledOwnerStatements === 0, "A plan without the owner portal entitlement exposed statement snapshots.");
+  await db.exec(`reset role;
+    update public.organization_subscriptions set plan_code='growth' where organization_id='${organization.organizationId}';
+  `);
+
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   const outsiderWorkOrders = (await db.query("select count(*)::integer as count from public.work_orders")).rows[0].count;
   const outsiderVendors = (await db.query("select count(*)::integer as count from public.vendors")).rows[0].count;
-  assert(outsiderWorkOrders === 0 && outsiderVendors === 0, "Work order or vendor data leaked to an unrelated user.");
+  const outsiderStatements = (await db.query("select count(*)::integer as count from reporting.owner_statement_snapshots")).rows[0].count;
+  const outsiderStatementWorkspace = (await db.query("select public.get_owner_statement_workspace() as result")).rows[0].result;
+  assert(outsiderWorkOrders === 0 && outsiderVendors === 0 && outsiderStatements === 0 && outsiderStatementWorkspace.items.length === 0, "Work order, vendor, or owner statement data leaked to an unrelated user.");
   await expectDatabaseError(() => db.query(`select public.transition_work_order('${workOrder.workOrderId}',6,'cancel','Unauthorized cancel.',null,null,null,null,null,'outsider-work-order-cancel-0001')`), "PROPERTY_SCOPE_DENIED");
 
   await db.exec("reset role");
@@ -1140,11 +1321,16 @@ async function validateRecurringCharges() {
     (select count(*)::integer from private.outbox_events where event_type='owner_approval.requested') as approvals,
     (select count(*)::integer from private.outbox_events where event_type='owner_approval.responded') as approvalresponses,
     (select count(*)::integer from private.outbox_events where event_type='work_order.status_changed') as statuschanges,
-    (select count(*)::integer from private.outbox_events where event_type='work_order.completed') as completions,
-    (select count(*)::integer from public.owner_approval_decisions) as approvaldecisions
+      (select count(*)::integer from private.outbox_events where event_type='work_order.completed') as completions,
+      (select count(*)::integer from public.owner_approval_decisions) as approvaldecisions,
+      (select count(*)::integer from private.outbox_events where event_type='owner_statement.finalized') as statementevents,
+      (select count(*)::integer from private.outbox_events where event_type='notification.requested' and aggregate_type='owner_statement_snapshot') as statementnotifications,
+      (select count(*)::integer from audit.audit_events where action_code='owner_statement.finalized') as statementaudits
   `)).rows[0];
   assert(workOrderTraces.created === 2 && workOrderTraces.assigned === 2 && workOrderTraces.approvals === 1 && workOrderTraces.approvalresponses === 2 && workOrderTraces.statuschanges === 11 && workOrderTraces.completions === 2 && workOrderTraces.approvaldecisions === 2, "Work order audit/outbox trace is incomplete.");
+  assert(workOrderTraces.statementevents === 3 && workOrderTraces.statementnotifications === 3 && workOrderTraces.statementaudits === 3, "Owner statement audit, domain-event, or notification trace is incomplete.");
   await expectDatabaseError(() => db.query(`update public.owner_approval_decisions set reason='Changed' where approval_request_id='${approvalA.id}'`), "OWNER_APPROVAL_DECISION_APPEND_ONLY");
+  await expectDatabaseError(() => db.query(`update reporting.owner_statement_snapshots set income_minor=1 where id='${ownerAStatement.statementSnapshotId}'`), "OWNER_STATEMENT_APPEND_ONLY");
   await db.exec("reset role");
   await db.exec(`update public.provider_connections set
     status='enabled',capabilities='{"card_payments":"active","us_bank_account_ach_payments":"active"}'::jsonb,
