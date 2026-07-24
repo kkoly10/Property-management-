@@ -5,7 +5,7 @@
 | Capability | Primary tables | Command/query | Authorization | Required event/tests |
 |---|---|---|---|---|
 | Organization + trial | organizations, memberships, subscriptions, localized price books, private.idempotency_records(actor_scope) | CreateOrganization | authenticated/new org | organization.created; NULL-org replay returns same organization |
-| Staff access | invitations, memberships, property scopes | ManageStaffMembership | organization.manage | membership invited/changed/revoked; expired membership RLS |
+| Staff access | invitations, memberships, property scopes, plan entitlements, notification jobs | ManageStaffMembership + recipient-bound acceptance + sanitized team workspace | active organization.manage; exact property IDs; starts_at/ends_at; AAL2 for elevation/scope/revocation | membership invited/activated/changed/scopes_changed/revoked; seat limits, recipient mismatch, expired/revoked RLS, replay/version tests |
 | Property/unit | operating entities, books, properties, units | CreateProperty/CreateUnit | property.manage + scope | property/unit created; cross-org FK attacks |
 | Lease/tenancy | people, households, leases, tenancies, schedules | ActivateExistingLease | lease.manage + property scope | tenancy activated; overlapping unit denied |
 | Recurring rent | charge schedules, charges, journal transactions/entries | GenerateRecurringCharges | worker | charge.posted; duplicate run no-op |

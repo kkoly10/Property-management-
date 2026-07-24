@@ -1,6 +1,6 @@
-# Phase 8 Progress Report - Communications and Privacy
+# Phase 8 Progress Report - Communications, Privacy, and Staff Access
 
-**Status:** relationship messaging, explicit-delivery announcements, and privacy request scaffolding implemented
+**Status:** relationship messaging, explicit-delivery announcements, privacy request scaffolding, and staff access management implemented
 **Date:** 2026-07-24
 
 ## Implemented scope
@@ -33,6 +33,17 @@
 - Request, verification, and cancellation actions are audited and emit `privacy_request.submitted`, `privacy_request.verified`, and `privacy_request.canceled` events without storing free-form request content in event payloads.
 - Authenticated clients cannot select the privacy request or job tables directly. `/settings/privacy` consumes a bounded, server-selected workspace DTO with only status and job-count summaries.
 - The privacy center is linked from operator, resident, and exact-owner surfaces and clearly states that deletion remains subject to legal holds, financial/legal retention, and operator instructions.
+- Canonical `invitations` persistence now supports organization-member invitations with a 72-hour hashed token, prefix-only operational metadata, and exact organization/membership foreign keys.
+- `ManageStaffMembership` is implemented through the four specified invitation, membership update, revocation, and property-scope routes, plus recipient-bound invitation acceptance.
+- `/settings/team` consumes a sanitized server DTO for the current organization, staff roster, role catalog, available properties, invitation status, and staff-seat usage.
+- Staff invitations enforce the active subscription's `core.staff` limit: Free 1, Starter 2, Growth 5, and Pro unlimited fair use.
+- Property-scoped roles require an explicit in-organization property set. Organization-wide-capable roles may instead use an explicit subset or no scopes.
+- Organization-owner assignment requires an active owner. Owner, administrator, and accountant assignment requires AAL2 and an audit reason. Scope replacement and revocation always require AAL2 and a reason.
+- Membership updates use optimistic versions. Revocation changes the membership status transactionally and removes authorization immediately without deleting the audit-visible record.
+- Invitation acceptance is bound to the exact persisted auth user, is replay-safe, and activates only a membership inside its `starts_at`/`ends_at` window.
+- Staff invitation emails use Supabase Auth from a trusted server. The application invitation token is deterministic per idempotency key, stored only as a SHA-256 hash, and never persisted in plaintext.
+- Staff commands create notification jobs and emit `membership.invited`, `membership.activated`, `membership.changed`, `membership.scopes_changed`, and `membership.revoked` with corresponding audit records.
+- Base invitations, memberships, and property-scope rows remain non-writable from the browser; all mutations go through authorization-checking command functions.
 
 ## Verification evidence
 
@@ -55,11 +66,13 @@ Announcement coverage includes selected-tenancy validation, exact resident and o
 
 Privacy coverage includes requester versus organization-admin visibility, same-organization relationship isolation, unrelated-user and expired-membership denial, direct table-access denial, MFA step-up, identity-gated jobs, platform and operator routing, jurisdiction validation, replay/conflict handling, optimistic versions, administrator cancellation, and audit/outbox/job trace counts. Vitest covers request types, jurisdiction normalization, cancellation limits, and command versions.
 
+Staff-access coverage includes organization-admin versus outsider authorization, sensitive-role MFA, recipient-bound acceptance, property-required roles, active-date seat accounting, Growth seat exhaustion, stale versions, role and scope changes, protected self-membership, immediate revocation, service-only email resolution/delivery marking, direct-table denial, idempotent replay, and audit/outbox/notification trace counts. Vitest covers email/date normalization, allowed roles and statuses, property-scope reasons, revocation reasons, and activation-token shape.
+
 Run `npm run check` for ESLint, TypeScript, Vitest, the full database authorization suite, and the production build.
 
 ## Deferred Phase 8 scope
 
-- External email, SMS, WhatsApp, and push delivery workers. This slice persists in-app notification jobs only.
+- General notification workers for messaging and announcements (SMS, WhatsApp, push, and non-auth email). Staff activation email is sent through Supabase Auth; the durable notification job records its delivery state.
 - Attachments, typing indicators, reactions, message edits, and resident-created conversation threads; these are outside the P0 command contract.
 - Privacy discovery/export/deletion workers and legal-hold adjudication. P0 now persists safely blocked/queued jobs and exposes their status without claiming work has completed.
 - Paid SaaS subscription changes remain deferred until a platform Stripe key and real provider price IDs are configured. The repository does not invent provider identifiers or activate unbilled paid entitlements.
