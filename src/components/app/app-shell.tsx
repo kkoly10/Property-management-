@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ChevronDown, FileLock2, LayoutGrid, Settings, ShieldCheck, UsersRound } from "lucide-react";
 import { PrimaryNavigation } from "@/components/app/primary-navigation";
+import { GlobalSearch } from "@/components/app/global-search";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,10 +27,10 @@ export function AppShell({ organizationName, children }: { organizationName: str
         </div>
       </aside>
       <div className="min-w-0">
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-card/95 px-5 backdrop-blur lg:px-8">
-          <div className="lg:hidden"><Wordmark /></div>
-          <div className="hidden text-sm text-muted-foreground lg:block">Command center</div>
-          <div className="flex items-center gap-3"><Badge variant="success">Growth trial</Badge><Button variant="outline" size="sm">Help</Button></div>
+        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b bg-card/95 px-4 backdrop-blur sm:gap-5 lg:px-8">
+          <div className="shrink-0 lg:hidden"><Wordmark /></div>
+          <div className="min-w-0 flex-1"><GlobalSearch /></div>
+          <div className="hidden shrink-0 items-center gap-3 md:flex"><Badge variant="success">Growth trial</Badge><Button variant="outline" size="sm">Help</Button></div>
         </header>
         <main className="p-5 lg:p-8">{children}</main>
       </div>

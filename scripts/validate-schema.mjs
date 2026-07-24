@@ -38,6 +38,7 @@ const staffAccessSql = await readFile(resolve(root, "supabase/migrations/2026072
 const staffAccessIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724134515_phase_8_staff_access_indexes.sql"), "utf8");
 const notificationPreferencesSql = await readFile(resolve(root, "supabase/migrations/20260724141225_phase_8_notification_preferences.sql"), "utf8");
 const operatorCommandCenterSql = await readFile(resolve(root, "supabase/migrations/20260724145515_phase_8_operator_command_center.sql"), "utf8");
+const operatorGlobalSearchSql = await readFile(resolve(root, "supabase/migrations/20260724235523_phase_8_operator_global_search.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -774,6 +775,7 @@ async function validateRecurringCharges() {
   await db.exec(staffAccessIndexesSql);
   await db.exec(notificationPreferencesSql);
   await db.exec(operatorCommandCenterSql);
+  await db.exec(operatorGlobalSearchSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -2994,14 +2996,124 @@ async function validateRecurringCharges() {
     "INVALID_DATE_RANGE",
   );
 
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const propertySearch = (await db.query(
+    "select public.get_operator_global_search('Map',24) as result",
+  )).rows[0].result;
+  const unitSearch = (await db.query(
+    "select public.get_operator_global_search('101',24) as result",
+  )).rows[0].result;
+  const residentSearch = (await db.query(
+    "select public.get_operator_global_search('Avery',24) as result",
+  )).rows[0].result;
+  const leaseSearch = (await db.query(
+    "select public.get_operator_global_search('FIN-',24) as result",
+  )).rows[0].result;
+  const paymentSearch = (await db.query(
+    `select public.get_operator_global_search('${payment.publicReference}',24) as result`,
+  )).rows[0].result;
+  const maintenanceSearch = (await db.query(
+    `select public.get_operator_global_search('${maintenance.publicReference}',24) as result`,
+  )).rows[0].result;
+  const workOrderSearch = (await db.query(
+    `select public.get_operator_global_search('${workOrder.publicReference}',24) as result`,
+  )).rows[0].result;
+  const documentSearch = (await db.query(
+    "select public.get_operator_global_search('Unit 101',24) as result",
+  )).rows[0].result;
+  const ownerSearch = (await db.query(
+    "select public.get_operator_global_search('Finance Atlas Owner',24) as result",
+  )).rows[0].result;
+  const emailSearch = (await db.query(
+    "select public.get_operator_global_search('avery@example.com',24) as result",
+  )).rows[0].result;
+  const limitedSearch = (await db.query(
+    "select public.get_operator_global_search('Finance',1) as result",
+  )).rows[0].result;
+  const searchPayload = JSON.stringify({
+    propertySearch,
+    unitSearch,
+    residentSearch,
+    leaseSearch,
+    paymentSearch,
+    maintenanceSearch,
+    workOrderSearch,
+    documentSearch,
+    ownerSearch,
+  });
+  assert(
+    propertySearch.items.some((item) => item.kind === "property" && item.resourceId === property.propertyId)
+      && unitSearch.items.some((item) => item.kind === "unit" && item.resourceId === unit.unitId)
+      && residentSearch.items.some((item) => item.kind === "resident" && item.resourceId === activation.tenancyId)
+      && leaseSearch.items.some((item) => item.kind === "lease" && item.resourceId === activation.leaseId)
+      && paymentSearch.items.some((item) => item.kind === "payment" && item.resourceId === payment.paymentId)
+      && maintenanceSearch.items.some((item) => item.kind === "maintenance_request" && item.resourceId === maintenance.maintenanceRequestId)
+      && workOrderSearch.items.some((item) => item.kind === "work_order" && item.resourceId === workOrder.workOrderId)
+      && documentSearch.items.some((item) => item.kind === "document" && item.resourceId === documentId)
+      && ownerSearch.items.filter((item) => item.kind === "owner_entity").length === 2
+      && emailSearch.items.length === 0
+      && limitedSearch.items.length === 1,
+    "Operator global search omitted an authorized resource, searched resident contact data, or exceeded its requested bound.",
+  );
+  assert(
+    !searchPayload.includes("avery@example.com")
+      && !searchPayload.includes("Water is dripping")
+      && !searchPayload.includes("Call before entering")
+      && !searchPayload.includes("Check received at the office")
+      && !searchPayload.includes("acct_testFinance"),
+    "Operator global search exposed resident contact data, maintenance access/detail, payment reasons, or provider identifiers.",
+  );
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_global_search('x',24)"),
+    "SEARCH_QUERY_TOO_SHORT",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_global_search('${"x".repeat(81)}',24)`),
+    "SEARCH_QUERY_TOO_LONG",
+  );
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_global_search('Map',51)"),
+    "SEARCH_LIMIT_OUT_OF_BOUNDS",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}'`);
+  const scopedMaintenanceSearch = (await db.query(
+    `select public.get_operator_global_search('${maintenance.publicReference}',24) as result`,
+  )).rows[0].result;
+  const scopedPaymentSearch = (await db.query(
+    `select public.get_operator_global_search('${payment.publicReference}',24) as result`,
+  )).rows[0].result;
+  const scopedOtherPropertySearch = (await db.query(
+    "select public.get_operator_global_search('Harbour',24) as result",
+  )).rows[0].result;
+  assert(
+    scopedMaintenanceSearch.items.some((item) => item.kind === "maintenance_request")
+      && scopedPaymentSearch.items.length === 0
+      && scopedOtherPropertySearch.items.length === 0,
+    "Property-scoped global search crossed a property or domain permission boundary.",
+  );
+
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${expiredDashboardUser}'`);
   await expectDatabaseError(
     () => db.query(`select public.get_operator_command_center('${organization.organizationId}',null,null,current_date-29,current_date)`),
     "OPERATOR_ORGANIZATION_DENIED",
   );
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_global_search('Map',24)"),
+    "OPERATOR_ORGANIZATION_DENIED",
+  );
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   await expectDatabaseError(
     () => db.query(`select public.get_operator_command_center('${organization.organizationId}',null,null,current_date-29,current_date)`),
+    "OPERATOR_ORGANIZATION_DENIED",
+  );
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_global_search('Map',24)"),
+    "OPERATOR_ORGANIZATION_DENIED",
+  );
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_global_search('Map',24)"),
     "OPERATOR_ORGANIZATION_DENIED",
   );
 
