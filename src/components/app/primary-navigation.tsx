@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, CircleGauge, CreditCard, FileSignature, FileText, Landmark, MessageSquareText, Upload, Users, Wrench } from "lucide-react";
+import { Building2, CircleGauge, CreditCard, FileSignature, FileText, Landmark, Megaphone, MessageSquareText, Upload, Users, Wrench } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 const navigation = [
@@ -14,6 +14,7 @@ const navigation = [
   { label: "Owner statements", href: "/app/owner-statements", icon: Landmark },
   { label: "Maintenance", href: "/app/maintenance", icon: Wrench },
   { label: "Messages", href: "/app/messages", icon: MessageSquareText },
+  { label: "Announcements", href: "/app/announcements", icon: Megaphone },
   { label: "Documents", href: "/app/documents", icon: FileText },
 ] as const;
 

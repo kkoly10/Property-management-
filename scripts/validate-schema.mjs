@@ -31,6 +31,8 @@ const ownerRemittanceConstraintsSql = await readFile(resolve(root, "supabase/mig
 const ownerRemittanceProjectionSql = await readFile(resolve(root, "supabase/migrations/20260724035033_phase_7_owner_remittance_projection_only.sql"), "utf8");
 const conversationMessagingSql = await readFile(resolve(root, "supabase/migrations/20260724042027_phase_8_conversation_messaging.sql"), "utf8");
 const conversationMessagingIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724042144_phase_8_messaging_fk_indexes.sql"), "utf8");
+const announcementsSql = await readFile(resolve(root, "supabase/migrations/20260724105606_phase_8_announcements.sql"), "utf8");
+const announcementIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724105656_phase_8_announcement_fk_indexes.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -757,6 +759,8 @@ async function validateRecurringCharges() {
   await db.exec(ownerRemittanceProjectionSql);
   await db.exec(conversationMessagingSql);
   await db.exec(conversationMessagingIndexesSql);
+  await db.exec(announcementsSql);
+  await db.exec(announcementIndexesSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1183,6 +1187,164 @@ async function validateRecurringCharges() {
       && !messageTraces.event_payloads.includes("kitchen repair")
       && !messageTraces.notification_payloads.includes("kitchen repair"),
     "A message body leaked into audit, event, or notification metadata.",
+  );
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const selectedAnnouncement = (await db.query(`select public.create_announcement(
+    '${organization.organizationId}','${property.propertyId}',
+    'Water service notice',
+    'Water service will be paused Tuesday from 10 AM until noon.',
+    'en-US','selected_tenancies','announcement-create-selected-0001'
+  ) as result`)).rows[0].result;
+  const selectedAnnouncementReplay = (await db.query(`select public.create_announcement(
+    '${organization.organizationId}','${property.propertyId}',
+    'Water service notice',
+    'Water service will be paused Tuesday from 10 AM until noon.',
+    'en-US','selected_tenancies','announcement-create-selected-0001'
+  ) as result`)).rows[0].result;
+  assert(selectedAnnouncementReplay.announcementId === selectedAnnouncement.announcementId, "Announcement creation replay produced a duplicate draft.");
+  await expectDatabaseError(() => db.query(`select public.create_announcement(
+    '${organization.organizationId}','${property.propertyId}',
+    'Conflicting title',
+    'Water service will be paused Tuesday from 10 AM until noon.',
+    'en-US','selected_tenancies','announcement-create-selected-0001'
+  )`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(() => db.query(`select public.publish_announcement(
+    '${selectedAnnouncement.announcementId}',
+    array['cf000000-0000-4000-8000-000000000099'::uuid],
+    1,'announcement-publish-invalid-0001'
+  )`), "TENANCY_AUDIENCE_SCOPE_DENIED");
+  const selectedPublished = (await db.query(`select public.publish_announcement(
+    '${selectedAnnouncement.announcementId}',
+    array['${activation.tenancyId}'::uuid],
+    1,'announcement-publish-selected-0001'
+  ) as result`)).rows[0].result;
+  const selectedPublishedReplay = (await db.query(`select public.publish_announcement(
+    '${selectedAnnouncement.announcementId}',
+    array['${activation.tenancyId}'::uuid],
+    1,'announcement-publish-selected-0001'
+  ) as result`)).rows[0].result;
+  assert(selectedPublished.deliveryCount === 1 && selectedPublishedReplay.version === selectedPublished.version, "Selected-tenancy publication was not delivery-row backed and idempotent.");
+  await expectDatabaseError(() => db.query(`select public.publish_announcement(
+    '${selectedAnnouncement.announcementId}',array[]::uuid[],
+    1,'announcement-publish-selected-0001'
+  )`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(() => db.query("select count(*) from public.announcements"), "permission denied");
+  await expectDatabaseError(() => db.query("select count(*) from public.announcement_deliveries"), "permission denied");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const residentAnnouncements = (await db.query("select public.get_recipient_announcement_workspace() as result")).rows[0].result;
+  assert(
+    residentAnnouncements.items.length === 1
+      && residentAnnouncements.items[0].announcementId === selectedAnnouncement.announcementId
+      && residentAnnouncements.items[0].title === "Water service notice",
+    "The selected resident did not receive the sanitized announcement delivery.",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
+  const ownerBeforeAnnouncement = (await db.query("select public.get_recipient_announcement_workspace() as result")).rows[0].result;
+  assert(ownerBeforeAnnouncement.items.length === 0, "A same-property owner read a resident announcement without an explicit delivery.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const ownerAnnouncement = (await db.query(`select public.create_announcement(
+    '${organization.organizationId}','${property.propertyId}',
+    'Quarterly owner update',
+    'The finalized property statement is now available for review.',
+    'en-US','owners','announcement-create-owners-0001'
+  ) as result`)).rows[0].result;
+  const ownersPublished = (await db.query(`select public.publish_announcement(
+    '${ownerAnnouncement.announcementId}',array[]::uuid[],
+    1,'announcement-publish-owners-0001'
+  ) as result`)).rows[0].result;
+  assert(ownersPublished.deliveryCount === 2, "The owner announcement did not expand to both exact active owner relationships.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
+  const ownerAAnnouncements = (await db.query("select public.get_recipient_announcement_workspace() as result")).rows[0].result;
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerB}'`);
+  const ownerBAnnouncements = (await db.query("select public.get_recipient_announcement_workspace() as result")).rows[0].result;
+  assert(
+    ownerAAnnouncements.items.length === 1
+      && ownerBAnnouncements.items.length === 1
+      && ownerAAnnouncements.items[0].announcementId === ownerAnnouncement.announcementId
+      && ownerBAnnouncements.items[0].announcementId === ownerAnnouncement.announcementId,
+    "An exact owner relationship did not receive its persisted delivery.",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const residentAfterOwnerAnnouncement = (await db.query("select public.get_recipient_announcement_workspace() as result")).rows[0].result;
+  assert(
+    residentAfterOwnerAnnouncement.items.length === 1
+      && !JSON.stringify(residentAfterOwnerAnnouncement).includes("Quarterly owner update"),
+    "A same-property resident read an owner announcement without an explicit delivery.",
+  );
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const outsiderAnnouncements = (await db.query("select public.get_recipient_announcement_workspace() as result")).rows[0].result;
+  assert(outsiderAnnouncements.items.length === 0, "Announcement content leaked to an unrelated user.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedMessenger}'`);
+  await expectDatabaseError(() => db.query(`select public.create_announcement(
+    '${organization.organizationId}','${property.propertyId}',
+    'Expired staff notice','This must not be persisted.',
+    'en-US','property_residents','announcement-expired-staff-0001'
+  )`), "PROPERTY_SCOPE_DENIED");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const canceledAnnouncement = (await db.query(`select public.create_announcement(
+    '${organization.organizationId}','${property.propertyId}',
+    'Draft notice','This draft should be canceled before delivery.',
+    'en-US','property_residents','announcement-create-cancel-0001'
+  ) as result`)).rows[0].result;
+  await expectDatabaseError(() => db.query(`select public.cancel_announcement(
+    '${canceledAnnouncement.announcementId}',2,'announcement-cancel-stale-0001'
+  )`), "ANNOUNCEMENT_VERSION_CONFLICT");
+  const canceledResult = (await db.query(`select public.cancel_announcement(
+    '${canceledAnnouncement.announcementId}',1,'announcement-cancel-0001'
+  ) as result`)).rows[0].result;
+  const canceledReplay = (await db.query(`select public.cancel_announcement(
+    '${canceledAnnouncement.announcementId}',1,'announcement-cancel-0001'
+  ) as result`)).rows[0].result;
+  assert(canceledResult.status === "canceled" && canceledReplay.version === canceledResult.version, "Draft cancellation was not state-checked and idempotent.");
+  const operatorAnnouncements = (await db.query("select public.get_operator_announcement_workspace() as result")).rows[0].result;
+  assert(
+    operatorAnnouncements.items.length === 3
+      && operatorAnnouncements.properties.length === 1
+      && operatorAnnouncements.tenancies.length === 1,
+    `The property-scoped operator announcement workspace is incomplete: ${JSON.stringify({
+      items: operatorAnnouncements.items.length,
+      properties: operatorAnnouncements.properties.length,
+      tenancies: operatorAnnouncements.tenancies.length,
+    })}`,
+  );
+
+  await db.exec("reset role");
+  const announcementTraces = (await db.query(`select
+    (select count(*)::integer from public.announcements) as announcements,
+    (select count(*)::integer from public.announcement_deliveries) as deliveries,
+    (select count(*)::integer from audit.audit_events where action_code='announcement.created') as created_audits,
+    (select count(*)::integer from audit.audit_events where action_code='announcement.published') as published_audits,
+    (select count(*)::integer from audit.audit_events where action_code='announcement.canceled') as canceled_audits,
+    (select count(*)::integer from private.outbox_events where event_type='announcement.published') as events,
+    (select count(*)::integer from private.notification_jobs where template_code='announcement_published') as notifications,
+    (select coalesce(string_agg(after_data::text,' '),'') from audit.audit_events where action_code like 'announcement.%') as audit_payloads,
+    (select coalesce(string_agg(payload::text,' '),'') from private.outbox_events where event_type='announcement.published') as event_payloads,
+    (select coalesce(string_agg(payload::text,' '),'') from private.notification_jobs where template_code='announcement_published') as notification_payloads
+  `)).rows[0];
+  assert(
+    announcementTraces.announcements === 3
+      && announcementTraces.deliveries === 3
+      && announcementTraces.created_audits === 3
+      && announcementTraces.published_audits === 2
+      && announcementTraces.canceled_audits === 1
+      && announcementTraces.events === 2
+      && announcementTraces.notifications === 3,
+    "Announcement persistence, delivery, audit, outbox, or notification traces are incomplete.",
+  );
+  assert(
+    !announcementTraces.audit_payloads.includes("Water service will")
+      && !announcementTraces.event_payloads.includes("Water service will")
+      && !announcementTraces.notification_payloads.includes("Water service will")
+      && !announcementTraces.audit_payloads.includes("finalized property statement"),
+    "Announcement content leaked into audit, event, or notification metadata.",
   );
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
@@ -2235,7 +2397,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

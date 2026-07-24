@@ -1,6 +1,6 @@
 # Phase 8 Progress Report - Relationship Messaging
 
-**Status:** resident, owner, and operator messaging vertical implemented
+**Status:** relationship messaging and explicit-delivery announcements implemented
 **Date:** 2026-07-24
 
 ## Implemented scope
@@ -19,6 +19,13 @@
 - Owner inbox and thread screens are available at `/owner/messages`.
 - Operator inbox and thread screens are available at `/app/messages`.
 - All portals share a replay-safe send control and render setup, empty, closed, and unavailable states.
+- Canonical `announcements` and `announcement_deliveries` persistence supports draft, publish, and cancel states with optimistic version checks.
+- `PublishAnnouncement` expands organization-resident, property-resident, selected-tenancy, or property-owner audiences into explicit delivery rows in the publication transaction.
+- Resident recipients require an active exact person relationship, current household membership, and active tenancy. Owner recipients require an active exact owner relationship and effective property interest.
+- Same-property users without a delivery row cannot read announcement content.
+- Announcement publication queues in-app notification jobs and emits `announcement.published`; audit, outbox, and notification metadata omit announcement text.
+- Operators publish transactional announcements at `/app/announcements`. Marketing content remains outside this P0 command path.
+- Explicitly delivered announcements appear on the resident and owner home screens.
 
 ## Verification evidence
 
@@ -37,11 +44,12 @@ The embedded Postgres suite applies the complete forward migration chain and ver
 
 Vitest covers message input trimming, blank input, and the 10,000-character limit.
 
+Announcement coverage includes selected-tenancy validation, exact resident and owner delivery, same-property non-recipient denial, outsider denial, expired property-membership denial, direct table-access denial, optimistic version conflicts, idempotent create/publish/cancel replay, delivery counts, and content-free audit/event/notification metadata. Vitest covers audience/property compatibility, locale, trimming, recipient limits, and command versions.
+
 Run `npm run check` for ESLint, TypeScript, Vitest, the full database authorization suite, and the production build.
 
 ## Deferred Phase 8 scope
 
-- Operator-created broadcast announcements. The v4.1 contract defines delivery isolation, but no traced public create command is currently authorized.
 - External email, SMS, WhatsApp, and push delivery workers. This slice persists in-app notification jobs only.
 - Attachments, typing indicators, reactions, message edits, and resident-created conversation threads; these are outside the P0 command contract.
 
