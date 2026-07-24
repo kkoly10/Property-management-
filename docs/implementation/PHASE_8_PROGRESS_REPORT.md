@@ -1,6 +1,6 @@
-# Phase 8 Progress Report - Relationship Messaging
+# Phase 8 Progress Report - Communications and Privacy
 
-**Status:** relationship messaging and explicit-delivery announcements implemented
+**Status:** relationship messaging, explicit-delivery announcements, and privacy request scaffolding implemented
 **Date:** 2026-07-24
 
 ## Implemented scope
@@ -26,6 +26,13 @@
 - Announcement publication queues in-app notification jobs and emits `announcement.published`; audit, outbox, and notification metadata omit announcement text.
 - Operators publish transactional announcements at `/app/announcements`. Marketing content remains outside this P0 command path.
 - Explicitly delivered announcements appear on the resident and owner home screens.
+- Canonical `privacy_requests` and private `privacy_request_jobs` persistence supports access, correction, deletion, export, restriction, objection, consent-withdrawal, and appeal requests.
+- `SubmitPrivacyRequest` derives operator-versus-platform controller routing, validates an organization relationship, records jurisdiction and a 30-day target, creates type-specific private jobs, and blocks those jobs until identity verification.
+- `VerifyPrivacyRequest` requires the exact requester and an AAL2 session before unblocking jobs. Organization administrators may review and cancel routed requests but cannot verify another person's identity.
+- `CancelPrivacyRequest` uses optimistic versioning, actor-scoped idempotency, and atomically cancels unfinished private jobs.
+- Request, verification, and cancellation actions are audited and emit `privacy_request.submitted`, `privacy_request.verified`, and `privacy_request.canceled` events without storing free-form request content in event payloads.
+- Authenticated clients cannot select the privacy request or job tables directly. `/settings/privacy` consumes a bounded, server-selected workspace DTO with only status and job-count summaries.
+- The privacy center is linked from operator, resident, and exact-owner surfaces and clearly states that deletion remains subject to legal holds, financial/legal retention, and operator instructions.
 
 ## Verification evidence
 
@@ -46,10 +53,14 @@ Vitest covers message input trimming, blank input, and the 10,000-character limi
 
 Announcement coverage includes selected-tenancy validation, exact resident and owner delivery, same-property non-recipient denial, outsider denial, expired property-membership denial, direct table-access denial, optimistic version conflicts, idempotent create/publish/cancel replay, delivery counts, and content-free audit/event/notification metadata. Vitest covers audience/property compatibility, locale, trimming, recipient limits, and command versions.
 
+Privacy coverage includes requester versus organization-admin visibility, same-organization relationship isolation, unrelated-user and expired-membership denial, direct table-access denial, MFA step-up, identity-gated jobs, platform and operator routing, jurisdiction validation, replay/conflict handling, optimistic versions, administrator cancellation, and audit/outbox/job trace counts. Vitest covers request types, jurisdiction normalization, cancellation limits, and command versions.
+
 Run `npm run check` for ESLint, TypeScript, Vitest, the full database authorization suite, and the production build.
 
 ## Deferred Phase 8 scope
 
 - External email, SMS, WhatsApp, and push delivery workers. This slice persists in-app notification jobs only.
 - Attachments, typing indicators, reactions, message edits, and resident-created conversation threads; these are outside the P0 command contract.
+- Privacy discovery/export/deletion workers and legal-hold adjudication. P0 now persists safely blocked/queued jobs and exposes their status without claiming work has completed.
+- Paid SaaS subscription changes remain deferred until a platform Stripe key and real provider price IDs are configured. The repository does not invent provider identifiers or activate unbilled paid entitlements.
 

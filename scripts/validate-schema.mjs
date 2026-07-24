@@ -33,6 +33,7 @@ const conversationMessagingSql = await readFile(resolve(root, "supabase/migratio
 const conversationMessagingIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724042144_phase_8_messaging_fk_indexes.sql"), "utf8");
 const announcementsSql = await readFile(resolve(root, "supabase/migrations/20260724105606_phase_8_announcements.sql"), "utf8");
 const announcementIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724105656_phase_8_announcement_fk_indexes.sql"), "utf8");
+const privacyRequestsSql = await readFile(resolve(root, "supabase/migrations/20260724123342_phase_8_privacy_requests.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -761,6 +762,7 @@ async function validateRecurringCharges() {
   await db.exec(conversationMessagingIndexesSql);
   await db.exec(announcementsSql);
   await db.exec(announcementIndexesSql);
+  await db.exec(privacyRequestsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1345,6 +1347,153 @@ async function validateRecurringCharges() {
       && !announcementTraces.notification_payloads.includes("Water service will")
       && !announcementTraces.audit_payloads.includes("finalized property statement"),
     "Announcement content leaked into audit, event, or notification metadata.",
+  );
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'; set request.jwt.claim.aal='aal1'`);
+  const residentPrivacyRequest = (await db.query(`select public.submit_privacy_request(
+    '${organization.organizationId}','deletion',null,'privacy-resident-delete-0001'
+  ) as result`)).rows[0].result;
+  const residentPrivacyReplay = (await db.query(`select public.submit_privacy_request(
+    '${organization.organizationId}','deletion',null,'privacy-resident-delete-0001'
+  ) as result`)).rows[0].result;
+  assert(
+    residentPrivacyRequest.status === "identity_verification"
+      && residentPrivacyRequest.identityVerificationStatus === "pending"
+      && residentPrivacyRequest.controllerRole === "operator"
+      && residentPrivacyRequest.jurisdictionCode === "US"
+      && residentPrivacyReplay.privacyRequestId === residentPrivacyRequest.privacyRequestId,
+    "The resident privacy request was not routed, identity-gated, and replay-safe.",
+  );
+  await expectDatabaseError(() => db.query(`select public.submit_privacy_request(
+    '${organization.organizationId}','access',null,'privacy-resident-delete-0001'
+  )`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(() => db.query("select count(*) from public.privacy_requests"), "permission denied");
+  await expectDatabaseError(() => db.query("select count(*) from private.privacy_request_jobs"), "permission denied");
+  await expectDatabaseError(() => db.query(`select public.verify_privacy_request(
+    '${residentPrivacyRequest.privacyRequestId}',1,'privacy-resident-verify-0001'
+  )`), "MFA_STEP_UP_REQUIRED");
+
+  await db.exec("set request.jwt.claim.aal='aal2'");
+  const residentPrivacyVerified = (await db.query(`select public.verify_privacy_request(
+    '${residentPrivacyRequest.privacyRequestId}',1,'privacy-resident-verify-0001'
+  ) as result`)).rows[0].result;
+  const residentPrivacyVerifiedReplay = (await db.query(`select public.verify_privacy_request(
+    '${residentPrivacyRequest.privacyRequestId}',1,'privacy-resident-verify-0001'
+  ) as result`)).rows[0].result;
+  assert(
+    residentPrivacyVerified.status === "operator_action_required"
+      && residentPrivacyVerified.identityVerificationStatus === "verified"
+      && residentPrivacyVerified.version === 2
+      && residentPrivacyVerifiedReplay.version === 2,
+    "Privacy identity verification did not unblock the operator-routed workflow idempotently.",
+  );
+  await expectDatabaseError(() => db.query(`select public.verify_privacy_request(
+    '${residentPrivacyRequest.privacyRequestId}',2,'privacy-resident-verify-again-0001'
+  )`), "PRIVACY_REQUEST_NOT_VERIFIABLE");
+  const residentPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  assert(
+    residentPrivacyWorkspace.items.length === 1
+      && residentPrivacyWorkspace.organizations.length === 1
+      && residentPrivacyWorkspace.items[0].jobCount === 4
+      && residentPrivacyWorkspace.items[0].queuedJobCount === 4
+      && !residentPrivacyWorkspace.items[0].canVerify,
+    "The requester privacy workspace did not expose the sanitized verified request and job status.",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'; set request.jwt.claim.aal='aal2'`);
+  const ownerPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  assert(
+    ownerPrivacyWorkspace.organizations.length === 1
+      && ownerPrivacyWorkspace.items.length === 0,
+    "A same-organization owner read another relationship user's privacy request.",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'; set request.jwt.claim.aal='aal1'`);
+  await expectDatabaseError(() => db.query(`select public.submit_privacy_request(
+    '${organization.organizationId}','access','US','privacy-outsider-org-0001'
+  )`), "ORGANIZATION_SCOPE_DENIED");
+  const platformPrivacyRequest = (await db.query(`select public.submit_privacy_request(
+    null,'export','CA-ON','privacy-platform-export-0001'
+  ) as result`)).rows[0].result;
+  assert(
+    platformPrivacyRequest.controllerRole === "platform"
+      && platformPrivacyRequest.status === "identity_verification"
+      && platformPrivacyRequest.jurisdictionCode === "CA-ON",
+    "The platform privacy request was not jurisdiction-routed or identity-gated.",
+  );
+  await db.exec("set request.jwt.claim.aal='aal2'");
+  const platformPrivacyVerified = (await db.query(`select public.verify_privacy_request(
+    '${platformPrivacyRequest.privacyRequestId}',1,'privacy-platform-verify-0001'
+  ) as result`)).rows[0].result;
+  assert(
+    platformPrivacyVerified.status === "processing" && platformPrivacyVerified.version === 2,
+    "The verified platform privacy request did not enter processing.",
+  );
+  await expectDatabaseError(() => db.query(`select public.cancel_privacy_request(
+    '${platformPrivacyRequest.privacyRequestId}',1,null,'privacy-platform-cancel-stale-0001'
+  )`), "VERSION_CONFLICT");
+  const platformPrivacyCanceled = (await db.query(`select public.cancel_privacy_request(
+    '${platformPrivacyRequest.privacyRequestId}',2,null,'privacy-platform-cancel-0001'
+  ) as result`)).rows[0].result;
+  const platformPrivacyCanceledReplay = (await db.query(`select public.cancel_privacy_request(
+    '${platformPrivacyRequest.privacyRequestId}',2,null,'privacy-platform-cancel-0001'
+  ) as result`)).rows[0].result;
+  assert(
+    platformPrivacyCanceled.status === "canceled"
+      && platformPrivacyCanceled.version === 3
+      && platformPrivacyCanceledReplay.version === 3,
+    "Platform privacy cancellation was not versioned and idempotent.",
+  );
+  const outsiderPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  assert(
+    outsiderPrivacyWorkspace.organizations.length === 0
+      && outsiderPrivacyWorkspace.items.length === 1
+      && outsiderPrivacyWorkspace.items[0].status === "canceled",
+    "The platform requester did not receive only their own sanitized request.",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  const adminPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  assert(
+    adminPrivacyWorkspace.items.length === 1
+      && adminPrivacyWorkspace.items[0].privacyRequestId === residentPrivacyRequest.privacyRequestId,
+    "The organization administrator could not see the routed organization privacy request.",
+  );
+  const residentPrivacyCanceled = (await db.query(`select public.cancel_privacy_request(
+    '${residentPrivacyRequest.privacyRequestId}',2,'Requester confirmed cancellation.','privacy-admin-cancel-0001'
+  ) as result`)).rows[0].result;
+  assert(residentPrivacyCanceled.status === "canceled" && residentPrivacyCanceled.version === 3, "The routed privacy request was not safely cancelable by its organization administrator.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedMessenger}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.submit_privacy_request(
+    '${organization.organizationId}','correction','US','privacy-expired-member-0001'
+  )`), "ORGANIZATION_SCOPE_DENIED");
+
+  await db.exec("reset role");
+  const privacyTraces = (await db.query(`select
+    (select count(*)::integer from public.privacy_requests) as requests,
+    (select count(*)::integer from private.privacy_request_jobs) as jobs,
+    (select count(*)::integer from private.privacy_request_jobs where status='canceled') as canceled_jobs,
+    (select count(*)::integer from private.privacy_request_jobs where blocked_until_verified) as blocked_jobs,
+    (select count(*)::integer from audit.audit_events where action_code='privacy_request.submitted') as submitted_audits,
+    (select count(*)::integer from audit.audit_events where action_code='privacy_request.identity_verified') as verified_audits,
+    (select count(*)::integer from audit.audit_events where action_code='privacy_request.canceled') as canceled_audits,
+    (select count(*)::integer from private.outbox_events where event_type='privacy_request.submitted') as submitted_events,
+    (select count(*)::integer from private.outbox_events where event_type='privacy_request.verified') as verified_events,
+    (select count(*)::integer from private.outbox_events where event_type='privacy_request.canceled') as canceled_events
+  `)).rows[0];
+  assert(
+    privacyTraces.requests === 2
+      && privacyTraces.jobs === 6
+      && privacyTraces.canceled_jobs === 6
+      && privacyTraces.blocked_jobs === 0
+      && privacyTraces.submitted_audits === 2
+      && privacyTraces.verified_audits === 2
+      && privacyTraces.canceled_audits === 2
+      && privacyTraces.submitted_events === 2
+      && privacyTraces.verified_events === 2
+      && privacyTraces.canceled_events === 2,
+    "Privacy request persistence, jobs, audit, or event traces are incomplete.",
   );
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
@@ -2397,7 +2546,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
