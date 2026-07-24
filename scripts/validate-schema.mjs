@@ -29,6 +29,8 @@ const ownerRemittancesSql = await readFile(resolve(root, "supabase/migrations/20
 const ownerRemittanceIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724034738_phase_7_owner_remittance_indexes.sql"), "utf8");
 const ownerRemittanceConstraintsSql = await readFile(resolve(root, "supabase/migrations/20260724034902_phase_7_owner_remittance_constraints.sql"), "utf8");
 const ownerRemittanceProjectionSql = await readFile(resolve(root, "supabase/migrations/20260724035033_phase_7_owner_remittance_projection_only.sql"), "utf8");
+const conversationMessagingSql = await readFile(resolve(root, "supabase/migrations/20260724042027_phase_8_conversation_messaging.sql"), "utf8");
+const conversationMessagingIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724042144_phase_8_messaging_fk_indexes.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -753,6 +755,8 @@ async function validateRecurringCharges() {
   await db.exec(ownerRemittanceIndexesSql);
   await db.exec(ownerRemittanceConstraintsSql);
   await db.exec(ownerRemittanceProjectionSql);
+  await db.exec(conversationMessagingSql);
+  await db.exec(conversationMessagingIndexesSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1016,6 +1020,172 @@ async function validateRecurringCharges() {
       ('${ownerB}','${organization.organizationId}','owner_entity','${ownerEntityB}','active');
     set role authenticated; set request.jwt.claim.sub='${admin}';
   `);
+  const operatorConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  assert(operatorConversations.items.length === 3, "The operator messaging workspace did not provision the resident and exact owner conversations.");
+  const residentConversation = operatorConversations.items.find((item) => item.conversationType === "operator_resident");
+  const ownerAConversation = operatorConversations.items.find((item) => item.ownerEntityId === ownerEntityA);
+  const ownerBConversation = operatorConversations.items.find((item) => item.ownerEntityId === ownerEntityB);
+  assert(residentConversation && ownerAConversation && ownerBConversation, "A required relationship conversation was not provisioned.");
+  await expectDatabaseError(() => db.query("select count(*) from public.conversations"), "permission denied");
+  await expectDatabaseError(() => db.query("select count(*) from public.conversation_participants"), "permission denied");
+  await expectDatabaseError(() => db.query("select count(*) from public.messages"), "permission denied");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const residentConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  assert(
+    residentConversations.items.length === 1
+      && residentConversations.items[0].conversationId === residentConversation.conversationId
+      && residentConversations.items[0].audienceLabel === "Property management",
+    "The resident messaging workspace crossed its exact tenancy boundary.",
+  );
+  const residentMessage = (await db.query(`select public.send_conversation_message(
+    '${residentConversation.conversationId}','The kitchen repair is complete. Thank you.','resident-message-0001'
+  ) as result`)).rows[0].result;
+  const residentMessageReplay = (await db.query(`select public.send_conversation_message(
+    '${residentConversation.conversationId}','The kitchen repair is complete. Thank you.','resident-message-0001'
+  ) as result`)).rows[0].result;
+  assert(residentMessageReplay.messageId === residentMessage.messageId, "Message replay created a duplicate message.");
+  await expectDatabaseError(() => db.query(`select public.send_conversation_message(
+    '${residentConversation.conversationId}','A conflicting body.','resident-message-0001'
+  )`), "IDEMPOTENCY_CONFLICT");
+  await expectDatabaseError(
+    () => db.query(`select public.get_conversation_detail('${ownerAConversation.conversationId}')`),
+    "CONVERSATION_NOT_FOUND",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
+  const ownerAConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  assert(
+    ownerAConversations.items.length === 1
+      && ownerAConversations.items[0].conversationId === ownerAConversation.conversationId
+      && !JSON.stringify(ownerAConversations).includes(ownerEntityB),
+    "Co-owner A crossed the exact owner-entity messaging boundary.",
+  );
+  const ownerMessage = (await db.query(`select public.send_conversation_message(
+    '${ownerAConversation.conversationId}','Please include the final invoice in my statement.','owner-message-0001'
+  ) as result`)).rows[0].result;
+  assert(ownerMessage.senderType === "owner", "An owner message was not attributed to its relationship type.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerB}'`);
+  const ownerBConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  assert(
+    ownerBConversations.items.length === 1
+      && ownerBConversations.items[0].conversationId === ownerBConversation.conversationId
+      && !JSON.stringify(ownerBConversations).includes(ownerEntityA),
+    "Co-owner B crossed the exact owner-entity messaging boundary.",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.send_conversation_message(
+      '${ownerAConversation.conversationId}','Cross-owner message.','owner-cross-message-0001'
+    )`),
+    "CONVERSATION_NOT_FOUND",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const outsiderConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  assert(outsiderConversations.items.length === 0, "Conversation metadata leaked to an unrelated user.");
+  await expectDatabaseError(
+    () => db.query(`select public.get_conversation_detail('${residentConversation.conversationId}')`),
+    "CONVERSATION_NOT_FOUND",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.send_conversation_message(
+      '${residentConversation.conversationId}','Unauthorized message.','outsider-message-0001'
+    )`),
+    "CONVERSATION_NOT_FOUND",
+  );
+
+  const scopedMessenger = "cf000000-0000-4000-8000-000000000015";
+  const scopedMessengerMembership = "cf000000-0000-4000-8000-000000000016";
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('${scopedMessenger}');
+    insert into public.organization_memberships(id,organization_id,user_id,role_code,status,starts_at)
+    values (
+      '${scopedMessengerMembership}','${organization.organizationId}','${scopedMessenger}',
+      'leasing_agent','active',now()-interval '1 day'
+    );
+    insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    values ('${organization.organizationId}','${scopedMessengerMembership}','${property.propertyId}');
+    set role authenticated; set request.jwt.claim.sub='${scopedMessenger}';
+  `);
+  const scopedConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  assert(
+    scopedConversations.items.length === 1
+      && scopedConversations.items[0].conversationId === residentConversation.conversationId,
+    "A property-scoped operator did not receive only the in-scope resident conversation.",
+  );
+  await db.exec(`reset role;
+    update public.organization_memberships
+    set ends_at=now()-interval '1 hour'
+    where id='${scopedMessengerMembership}';
+    set role authenticated; set request.jwt.claim.sub='${scopedMessenger}';
+  `);
+  const expiredScopedConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  assert(expiredScopedConversations.items.length === 0, "An expired property membership retained messaging access.");
+  await expectDatabaseError(
+    () => db.query(`select public.send_conversation_message(
+      '${residentConversation.conversationId}','Expired operator message.','expired-message-0001'
+    )`),
+    "CONVERSATION_NOT_FOUND",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const operatorReply = (await db.query(`select public.send_conversation_message(
+    '${residentConversation.conversationId}','Glad to hear it. We have closed the repair.','operator-message-0001'
+  ) as result`)).rows[0].result;
+  assert(operatorReply.senderType === "member", "An authorized operator message was not attributed as a member message.");
+  const operatorConversationDetail = (await db.query(
+    `select public.get_conversation_detail('${residentConversation.conversationId}') as result`,
+  )).rows[0].result;
+  assert(
+    operatorConversationDetail.messages.length === 2
+      && operatorConversationDetail.messages[0].bodyText === "The kitchen repair is complete. Thank you."
+      && operatorConversationDetail.messages[1].bodyText === "Glad to hear it. We have closed the repair.",
+    "The sanitized conversation detail did not preserve the canonical message timeline.",
+  );
+
+  await db.exec(`reset role;
+    update public.conversations set status='closed' where id='${residentConversation.conversationId}';
+  `);
+  await expectDatabaseError(
+    () => db.query(`update public.messages set body_text='Mutated' where id='${residentMessage.messageId}'`),
+    "MESSAGE_APPEND_ONLY",
+  );
+  await expectDatabaseError(
+    () => db.query(`delete from public.messages where id='${residentMessage.messageId}'`),
+    "MESSAGE_APPEND_ONLY",
+  );
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  const closedReplay = (await db.query(`select public.send_conversation_message(
+    '${residentConversation.conversationId}','The kitchen repair is complete. Thank you.','resident-message-0001'
+  ) as result`)).rows[0].result;
+  assert(closedReplay.messageId === residentMessage.messageId, "A closed conversation did not replay its prior canonical response.");
+  await expectDatabaseError(
+    () => db.query(`select public.send_conversation_message(
+      '${residentConversation.conversationId}','A new message after closing.','resident-message-0002'
+    )`),
+    "CONVERSATION_NOT_OPEN",
+  );
+
+  await db.exec("reset role");
+  const messageTraces = (await db.query(`select
+    (select count(*)::integer from public.messages) as messages,
+    (select count(*)::integer from audit.audit_events where action_code='message.sent') as audits,
+    (select count(*)::integer from private.outbox_events where event_type='message.sent') as events,
+    (select count(*)::integer from private.notification_jobs where template_code='conversation_message_received') as notifications,
+    (select coalesce(string_agg(after_data::text,' '),'') from audit.audit_events where action_code='message.sent') as audit_payloads,
+    (select coalesce(string_agg(payload::text,' '),'') from private.outbox_events where event_type='message.sent') as event_payloads,
+    (select coalesce(string_agg(payload::text,' '),'') from private.notification_jobs where template_code='conversation_message_received') as notification_payloads
+  `)).rows[0];
+  assert(messageTraces.messages === 3 && messageTraces.audits === 3 && messageTraces.events === 3 && messageTraces.notifications === 3, "Message persistence, audit, outbox, or notification traces are incomplete.");
+  assert(
+    !messageTraces.audit_payloads.includes("kitchen repair")
+      && !messageTraces.event_payloads.includes("kitchen repair")
+      && !messageTraces.notification_payloads.includes("kitchen repair"),
+    "A message body leaked into audit, event, or notification metadata.",
+  );
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const vendor = (await db.query(`select public.create_vendor(
     '${organization.organizationId}','Ready Fix Plumbing','dispatch@readyfix.example','+14045551234','vendor-create-0001'
   ) as result`)).rows[0].result;
@@ -2065,7 +2235,7 @@ async function validateRecurringCharges() {
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
