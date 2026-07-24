@@ -1,10 +1,17 @@
-# Phase 8 Progress Report - Communications, Privacy, and Staff Access
+# Phase 8 Progress Report - Reporting, Communications, Privacy, and Staff Access
 
-**Status:** relationship messaging, explicit-delivery announcements, privacy request scaffolding, staff access management, and notification preferences implemented
+**Status:** operator command center, relationship messaging, explicit-delivery announcements, privacy request scaffolding, staff access management, and notification preferences implemented
 **Date:** 2026-07-24
 
 ## Implemented scope
 
+- `/app` now consumes one sanitized `GetOperatorCommandCenter` aggregate query instead of reading base portfolio tables directly.
+- Every command-center domain is authorized independently through active membership dates, explicit property scopes, and its matching portfolio, finance, maintenance, or owner permission.
+- Rent collected and overdue balances remain separated by accounting-book currency; the dashboard never combines USD, CAD, and MXN.
+- Occupancy, open work orders, 90-day lease expiries, pending owner approvals, reconciliation exceptions, property performance, an attention queue, and sanitized audit activity cite the selected scope, payment period, and UTC operational cutoff.
+- Property, book/currency, and date filters are validated on both the server and database boundary. Attention and activity responses are bounded.
+- Command-center responses exclude resident names and contacts, maintenance descriptions, payment reasons, provider identifiers, and audit before/after payloads.
+- The operator layout uses a lightweight organization-name lookup so the aggregate reporting query is not duplicated on every `/app` request.
 - Canonical `conversations`, append-only `messages`, `conversation_participants`, and private `notification_jobs` persistence.
 - Active resident and owner relationships provision one conversation for each matching tenancy or effective property ownership interest.
 - Revoked relationships leave their participant rows with `left_at` set; access helpers require an active participant.
@@ -75,6 +82,8 @@ Privacy coverage includes requester versus organization-admin visibility, same-o
 Staff-access coverage includes organization-admin versus outsider authorization, sensitive-role MFA, recipient-bound acceptance, property-required roles, active-date seat accounting, Growth seat exhaustion, stale versions, role and scope changes, protected self-membership, immediate revocation, service-only email resolution/delivery marking, direct-table denial, idempotent replay, and audit/outbox/notification trace counts. Vitest covers email/date normalization, allowed roles and statuses, property-scope reasons, revocation reasons, and activation-token shape.
 
 Notification-preference coverage includes exact-user reads, other-user isolation, denied direct writes, optimistic versions, idempotent replay/conflict behavior, malformed channel matrices, phone-gated SMS/WhatsApp, marketing-off invariants, masked delivery diagnostics, and one audit/outbox trace per unique update. Vitest covers the complete channel/category matrix, supported locales, accessibility choices, and command versions.
+
+Operator command-center coverage includes full organization-owner scope, property-scoped staff isolation, per-domain finance denial, cross-book filter denial, expired-member and outsider rejection, USD/CAD separation, exact occupancy and lease-expiry counts, bounded attention/activity queues, and absence of resident PII, maintenance detail, internal payment reasons, and provider identifiers. Vitest covers safe defaults plus malformed UUID, reversed, future, and oversized date ranges.
 
 Run `npm run check` for ESLint, TypeScript, Vitest, the full database authorization suite, and the production build.
 

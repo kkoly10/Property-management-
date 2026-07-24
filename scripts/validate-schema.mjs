@@ -37,6 +37,7 @@ const privacyRequestsSql = await readFile(resolve(root, "supabase/migrations/202
 const staffAccessSql = await readFile(resolve(root, "supabase/migrations/20260724134409_phase_8_staff_access.sql"), "utf8");
 const staffAccessIndexesSql = await readFile(resolve(root, "supabase/migrations/20260724134515_phase_8_staff_access_indexes.sql"), "utf8");
 const notificationPreferencesSql = await readFile(resolve(root, "supabase/migrations/20260724141225_phase_8_notification_preferences.sql"), "utf8");
+const operatorCommandCenterSql = await readFile(resolve(root, "supabase/migrations/20260724145515_phase_8_operator_command_center.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -772,6 +773,7 @@ async function validateRecurringCharges() {
   await db.exec(staffAccessSql);
   await db.exec(staffAccessIndexesSql);
   await db.exec(notificationPreferencesSql);
+  await db.exec(operatorCommandCenterSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -2866,6 +2868,143 @@ async function validateRecurringCharges() {
     (select count(*)::integer from private.outbox_events where aggregate_id='${retryPreparation.paymentId}' and event_type='payment.created') as events
   `)).rows[0];
   assert(retryTraces.audits === 1 && retryTraces.events === 1, "The new retry attempt is missing its durable audit or outbox trace.");
+
+  const cadEntityId = "f1000000-0000-4000-8000-000000000001";
+  const cadBookId = "f2000000-0000-4000-8000-000000000002";
+  const cadPropertyId = "f3000000-0000-4000-8000-000000000003";
+  const cadUnitId = "f4000000-0000-4000-8000-000000000004";
+  const cadMaintenanceId = "f5000000-0000-4000-8000-000000000005";
+  const cadWorkOrderId = "f6000000-0000-4000-8000-000000000006";
+  const expiredDashboardUser = "f7000000-0000-4000-8000-000000000007";
+  await db.exec(`
+    reset role;
+    insert into auth.users(id) values ('${expiredDashboardUser}');
+    insert into public.operating_entities(id,organization_id,legal_name,display_name,country_code,entity_type,status,created_by)
+    values ('${cadEntityId}','${organization.organizationId}','Finance Atlas Canada Ltd.','Finance Atlas Canada','CA','company','active','${admin}');
+    insert into public.accounting_books(id,organization_id,operating_entity_id,name,functional_currency_code,status,created_by)
+    values ('${cadBookId}','${organization.organizationId}','${cadEntityId}','Canada operating book','CAD','open','${admin}');
+    insert into public.properties(
+      id,organization_id,operating_entity_id,accounting_book_id,country_profile_id,name,property_type,
+      country_code,subdivision_code,locality,postal_code,address_line1,time_zone,status,created_by
+    ) values (
+      '${cadPropertyId}','${organization.organizationId}','${cadEntityId}','${cadBookId}',
+      (select id from public.country_profiles where code='CA_NATIONAL'),
+      'Harbour House','multifamily','CA','ON','Toronto','M5V 2T6','200 Harbour Street','America/Toronto','active','${admin}'
+    );
+    insert into public.units(id,organization_id,property_id,unit_code,unit_type)
+    values ('${cadUnitId}','${organization.organizationId}','${cadPropertyId}','201','Apartment');
+    insert into public.maintenance_requests(
+      id,organization_id,property_id,unit_id,public_reference,category,title,description,priority,status
+    ) values (
+      '${cadMaintenanceId}','${organization.organizationId}','${cadPropertyId}','${cadUnitId}',
+      'MR-DASH-CAD-001','electrical','Hallway light outage','The second-floor hallway light is out.','medium','triaged'
+    );
+    insert into public.work_orders(
+      id,organization_id,maintenance_request_id,property_id,unit_id,public_reference,status,scope,created_by
+    ) values (
+      '${cadWorkOrderId}','${organization.organizationId}','${cadMaintenanceId}','${cadPropertyId}','${cadUnitId}',
+      'WO-DASH-CAD-001','draft','Inspect and replace the hallway light fixture.','${admin}'
+    );
+    insert into public.organization_memberships(organization_id,user_id,role_code,status,starts_at,ends_at)
+    values (
+      '${organization.organizationId}','${expiredDashboardUser}','property_manager','active',
+      now()-interval '2 days',now()-interval '1 day'
+    );
+    update public.leases
+      set end_date=current_date+30
+      where id='${activation.leaseId}';
+    set role authenticated;
+    set request.jwt.claim.sub='${admin}';
+  `);
+
+  const commandCenter = (await db.query(`
+    select public.get_operator_command_center(
+      '${organization.organizationId}',null,null,current_date-29,current_date
+    ) as result
+  `)).rows[0].result;
+  const dashboardPayload = JSON.stringify(commandCenter);
+  assert(
+    commandCenter.scope.organizationId === organization.organizationId
+      && commandCenter.scope.propertyCount === 2
+      && commandCenter.filters.properties.length === 2
+      && commandCenter.filters.books.length === 2
+      && commandCenter.metrics.currency.map((item) => item.currencyCode).join(",") === "CAD,USD"
+      && commandCenter.metrics.totalUnits === 2
+      && commandCenter.metrics.occupiedUnits === 1
+      && commandCenter.metrics.openWorkOrders >= 1
+      && commandCenter.metrics.expiringLeases === 1
+      && commandCenter.metrics.openReconciliationExceptions === 2
+      && commandCenter.propertyPerformance.length === 2
+      && commandCenter.attention.length <= 12
+      && commandCenter.activity.length <= 20,
+    "The operator command center omitted scoped metrics, filters, currency separation, or bounded queues.",
+  );
+  assert(
+    !dashboardPayload.includes("avery@example.com")
+      && !dashboardPayload.includes("Avery Morgan household")
+      && !dashboardPayload.includes("Kitchen sink is leaking")
+      && !dashboardPayload.includes("acct_testFinance")
+      && !dashboardPayload.includes("Check received at the office"),
+    "The operator command center exposed resident PII, maintenance detail, provider identifiers, or internal payment reasons.",
+  );
+
+  const cadCommandCenter = (await db.query(`
+    select public.get_operator_command_center(
+      '${organization.organizationId}','${cadPropertyId}','${cadBookId}',current_date-29,current_date
+    ) as result
+  `)).rows[0].result;
+  assert(
+    cadCommandCenter.scope.propertyCount === 1
+      && cadCommandCenter.metrics.currency.length === 1
+      && cadCommandCenter.metrics.currency[0].currencyCode === "CAD"
+      && cadCommandCenter.metrics.totalUnits === 1
+      && cadCommandCenter.metrics.occupiedUnits === 0
+      && cadCommandCenter.propertyPerformance[0].propertyId === cadPropertyId,
+    "Property/book filters mixed scopes or currencies in the command center.",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_command_center(
+      '${organization.organizationId}','${property.propertyId}','${cadBookId}',current_date-29,current_date
+    )`),
+    "FILTER_COMBINATION_INVALID",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}'`);
+  const scopedCommandCenter = (await db.query(`
+    select public.get_operator_command_center(
+      '${organization.organizationId}',null,null,current_date-29,current_date
+    ) as result
+  `)).rows[0].result;
+  assert(
+    scopedCommandCenter.scope.propertyCount === 1
+      && scopedCommandCenter.filters.properties.length === 1
+      && scopedCommandCenter.filters.properties[0].propertyId === property.propertyId
+      && scopedCommandCenter.domains.maintenance
+      && !scopedCommandCenter.domains.finance
+      && scopedCommandCenter.metrics.currency.length === 0
+      && !JSON.stringify(scopedCommandCenter).includes("Harbour House"),
+    "A property-scoped operator saw another property or an unauthorized finance aggregate.",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_command_center('${organization.organizationId}',null,'${cadBookId}',current_date-29,current_date)`),
+    "BOOK_FILTER_SCOPE_DENIED",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_command_center('${organization.organizationId}',null,null,current_date,current_date-1)`),
+    "INVALID_DATE_RANGE",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${expiredDashboardUser}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_command_center('${organization.organizationId}',null,null,current_date-29,current_date)`),
+    "OPERATOR_ORGANIZATION_DENIED",
+  );
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_command_center('${organization.organizationId}',null,null,current_date-29,current_date)`),
+    "OPERATOR_ORGANIZATION_DENIED",
+  );
+
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
   await expectDatabaseError(() => db.query(`select public.generate_recurring_charges('2026-08-31',null,'unauthorized-worker')`), "permission denied");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);

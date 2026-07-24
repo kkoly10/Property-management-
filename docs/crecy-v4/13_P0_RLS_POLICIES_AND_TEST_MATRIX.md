@@ -668,6 +668,7 @@ Uploads use a server-created upload grant containing organization, parent resour
 | RLS-029 | Resident | Read a same-property announcement without an explicit delivery | 0 rows; explicitly delivered announcement only |
 | RLS-030 | Property-scoped member | Read another property’s non-portfolio import or document | 0 rows; assigned-property rows only |
 | RLS-031 | Authenticated user | Read or mutate another user’s notification preferences | 0 rows for reads; direct writes denied |
+| RLS-032 | Operator, scoped member, expired member, outsider | Query the operator command center across property, book, finance, or date boundaries | Only effective assigned properties and permitted domain aggregates; cross-book denied; expired/outsider denied; no PII or private provider/audit detail |
 
 ## 6. Financial/database invariant tests
 
