@@ -1,6 +1,6 @@
 # Phase 8 Progress Report - Reporting, Communications, Privacy, and Staff Access
 
-**Status:** operator command center and global search, relationship messaging, explicit-delivery announcements, privacy request scaffolding, staff access management, and notification preferences implemented
+**Status:** operator command center, global search, scoped payment CSV export, relationship messaging, explicit-delivery announcements, privacy request scaffolding, staff access management, and notification preferences implemented
 **Date:** 2026-07-24
 
 ## Implemented scope
@@ -17,6 +17,11 @@
 - Every search domain independently enforces its matching read/manage permission, active organization membership dates, and explicit property scopes.
 - Search results are server-selected projections. They exclude resident email/phone, maintenance descriptions/access instructions, payment reasons, provider identifiers, owner contact data, and raw base-table rows.
 - The global `/` and `Cmd/Ctrl+K` shortcuts focus search without hijacking slash input in editable controls.
+- `/app/payments` now offers a payment CSV download that defaults to the most recent 30 calendar days.
+- The export route and database projection independently require an AAL2 session. Lower-assurance browser sessions are sent through the existing MFA verification screen and returned to the download.
+- Export authorization evaluates active membership dates, explicit property scopes, and `finance.read`/`finance.manage` for every returned payment. Optional property and accounting-book filters cannot cross those boundaries.
+- Export rows use a stable activity-time/payment-ID order and exact minor-unit strings. More than 5,000 matches fail closed with guidance to narrow the filters rather than returning a partial file.
+- CSV output is UTF-8, no-store, attachment-only, and neutralizes spreadsheet-formula prefixes. Server-selected rows exclude resident contacts, manual reasons/external references, provider identifiers, journal IDs, and audit payloads.
 - Canonical `conversations`, append-only `messages`, `conversation_participants`, and private `notification_jobs` persistence.
 - Active resident and owner relationships provision one conversation for each matching tenancy or effective property ownership interest.
 - Revoked relationships leave their participant rows with `left_at` set; access helpers require an active participant.
@@ -91,6 +96,8 @@ Notification-preference coverage includes exact-user reads, other-user isolation
 Operator command-center coverage includes full organization-owner scope, property-scoped staff isolation, per-domain finance denial, cross-book filter denial, expired-member and outsider rejection, USD/CAD separation, exact occupancy and lease-expiry counts, bounded attention/activity queues, and absence of resident PII, maintenance detail, internal payment reasons, and provider identifiers. Vitest covers safe defaults plus malformed UUID, reversed, future, and oversized date ranges.
 
 Operator global-search coverage includes all nine result types, exact and prefix ordering, a hard result limit, property-scoped staff isolation, finance-domain denial, another-property denial, expired-member, resident, and outsider rejection, unsearchable resident email, and absence of contact data, maintenance descriptions/access instructions, payment reasons, and provider identifiers. Vitest covers trimming, duplicate query parameters, empty input, length limits, `/`, and `Cmd/Ctrl+K`.
+
+Operator payment-export coverage includes AAL1 rejection, full-finance and property-scoped finance reads, cross-property/book denial, invalid and oversized date ranges, expired-member, resident, and outsider rejection, stable ordering, the fail-closed 5,000-row bound, and absence of resident contacts, internal reasons, and provider identifiers. Vitest covers calendar/UUID filter validation, unexpected query fields, CSV escaping, UTF-8/CRLF output, and spreadsheet-formula neutralization.
 
 Run `npm run check` for ESLint, TypeScript, Vitest, the full database authorization suite, and the production build.
 

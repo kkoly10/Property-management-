@@ -135,7 +135,7 @@ Every P0 route must implement:
 - **Summary:** collected, pending, failed, returned, unapplied.
 - **Filters:** book/currency, country, property, method, provider status, reconciliation, date.
 - **Table:** date, resident, property/unit, method, provider status, amount/currency, allocation, reconciliation.
-- **Actions:** view detail, record manual payment, allocate, create correction/reversal, export.
+- **Actions:** view detail, record manual payment, allocate, create correction/reversal, export. Payment export requires MFA/step-up, preserves minor-unit amounts, and fails rather than silently truncating beyond its documented row bound.
 - **Never:** editable balance field or “mark paid” without financial command.
 
 ### O-13 Payment detail drawer/page

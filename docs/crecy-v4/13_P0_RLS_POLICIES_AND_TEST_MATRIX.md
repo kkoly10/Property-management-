@@ -670,6 +670,7 @@ Uploads use a server-created upload grant containing organization, parent resour
 | RLS-031 | Authenticated user | Read or mutate another user’s notification preferences | 0 rows for reads; direct writes denied |
 | RLS-032 | Operator, scoped member, expired member, outsider | Query the operator command center across property, book, finance, or date boundaries | Only effective assigned properties and permitted domain aggregates; cross-book denied; expired/outsider denied; no PII or private provider/audit detail |
 | RLS-033 | Operator, property-scoped member, relationship user, expired member, outsider | Search names and public references across properties and operational domains | At most 24 stable server-selected rows from effective assigned properties and independently permitted domains; relationship/expired/outsider denied; contact data, maintenance access/detail, payment reasons, owner contacts, and provider identifiers omitted |
+| RLS-034 | AAL2 finance operator, AAL1 operator, property-scoped finance member, expired member, relationship user, outsider | Export payment rows across date, property, or accounting-book boundaries | At most 5,000 stable server-selected rows from effective assigned properties with `finance.read`/`finance.manage`; AAL2 required at route and database; cross-property/book, expired, relationship, and outsider access denied; contact data, internal reasons/references, provider identifiers, and raw rows omitted |
 
 ## 6. Financial/database invariant tests
 

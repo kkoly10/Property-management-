@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, CircleAlert, CircleCheckBig, Landmark, Plus, ReceiptText, WalletCards } from "lucide-react";
+import { ArrowRight, CircleAlert, CircleCheckBig, Download, Landmark, Plus, ReceiptText, WalletCards } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,10 @@ export default async function PaymentsPage() {
   return <div className="mx-auto max-w-7xl space-y-6">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div><p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-primary">Finance operations</p><h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em]">Payments</h1><p className="mt-2 text-sm text-muted-foreground">Journal-derived balances, controlled manual receipts, and provider settlement reconciliation.</p></div>
-      <Button asChild><Link href="/app/payments/record"><Plus className="h-4 w-4" />Record payment</Link></Button>
+      <div className="flex flex-wrap gap-2">
+        {workspace.mode !== "setup" ? <Button asChild variant="outline"><Link href="/api/v1/payments/export"><Download className="h-4 w-4" />Export last 30 days</Link></Button> : null}
+        <Button asChild><Link href="/app/payments/record"><Plus className="h-4 w-4" />Record payment</Link></Button>
+      </div>
     </div>
     {workspace.mode === "setup" ? <Alert variant="info"><CircleAlert className="h-5 w-5" /><AlertTitle>Finance preview</AlertTitle><AlertDescription>Sample data demonstrates the complete payment workflow until Supabase is connected.</AlertDescription></Alert> : null}
     {workspace.mode === "error" ? <Alert variant="destructive"><CircleAlert className="h-5 w-5" /><AlertTitle>Payments unavailable</AlertTitle><AlertDescription>Refresh and try again. Request {workspace.requestId}.</AlertDescription></Alert> : null}
