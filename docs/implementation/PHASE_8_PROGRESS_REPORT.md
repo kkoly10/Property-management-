@@ -1,6 +1,6 @@
 # Phase 8 Progress Report - Reporting, Communications, Privacy, and Staff Access
 
-**Status:** operator command center, relationship messaging, explicit-delivery announcements, privacy request scaffolding, staff access management, and notification preferences implemented
+**Status:** operator command center and global search, relationship messaging, explicit-delivery announcements, privacy request scaffolding, staff access management, and notification preferences implemented
 **Date:** 2026-07-24
 
 ## Implemented scope
@@ -12,6 +12,11 @@
 - Property, book/currency, and date filters are validated on both the server and database boundary. Attention and activity responses are bounded.
 - Command-center responses exclude resident names and contacts, maintenance descriptions, payment reasons, provider identifiers, and audit before/after payloads.
 - The operator layout uses a lightweight organization-name lookup so the aggregate reporting query is not duplicated on every `/app` request.
+- `/app/search` and the operator top bar now use one bounded `GetOperatorGlobalSearch` DTO across properties, units, resident households, leases, payments, maintenance requests, work orders, documents, and owner entities.
+- Search accepts 2 to 80 characters, returns at most 24 rows in stable exact/prefix order, and searches only names, property addresses, unit codes, public references, maintenance titles, and document titles.
+- Every search domain independently enforces its matching read/manage permission, active organization membership dates, and explicit property scopes.
+- Search results are server-selected projections. They exclude resident email/phone, maintenance descriptions/access instructions, payment reasons, provider identifiers, owner contact data, and raw base-table rows.
+- The global `/` and `Cmd/Ctrl+K` shortcuts focus search without hijacking slash input in editable controls.
 - Canonical `conversations`, append-only `messages`, `conversation_participants`, and private `notification_jobs` persistence.
 - Active resident and owner relationships provision one conversation for each matching tenancy or effective property ownership interest.
 - Revoked relationships leave their participant rows with `left_at` set; access helpers require an active participant.
@@ -84,6 +89,8 @@ Staff-access coverage includes organization-admin versus outsider authorization,
 Notification-preference coverage includes exact-user reads, other-user isolation, denied direct writes, optimistic versions, idempotent replay/conflict behavior, malformed channel matrices, phone-gated SMS/WhatsApp, marketing-off invariants, masked delivery diagnostics, and one audit/outbox trace per unique update. Vitest covers the complete channel/category matrix, supported locales, accessibility choices, and command versions.
 
 Operator command-center coverage includes full organization-owner scope, property-scoped staff isolation, per-domain finance denial, cross-book filter denial, expired-member and outsider rejection, USD/CAD separation, exact occupancy and lease-expiry counts, bounded attention/activity queues, and absence of resident PII, maintenance detail, internal payment reasons, and provider identifiers. Vitest covers safe defaults plus malformed UUID, reversed, future, and oversized date ranges.
+
+Operator global-search coverage includes all nine result types, exact and prefix ordering, a hard result limit, property-scoped staff isolation, finance-domain denial, another-property denial, expired-member, resident, and outsider rejection, unsearchable resident email, and absence of contact data, maintenance descriptions/access instructions, payment reasons, and provider identifiers. Vitest covers trimming, duplicate query parameters, empty input, length limits, `/`, and `Cmd/Ctrl+K`.
 
 Run `npm run check` for ESLint, TypeScript, Vitest, the full database authorization suite, and the production build.
 

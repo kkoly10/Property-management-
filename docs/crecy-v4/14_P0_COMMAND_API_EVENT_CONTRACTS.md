@@ -582,6 +582,7 @@ Queries are separate from commands and must be permission-scoped. P0 query route
 
 ```text
 GET /api/v1/operator/home?organizationId=&propertyId=&from=&to=
+GET /api/v1/operator/search?q=&limit=
 GET /api/v1/properties
 GET /api/v1/properties/{id}
 GET /api/v1/residents
@@ -599,6 +600,8 @@ GET /api/v1/notification-preferences
 ```
 
 Every collection query uses cursor pagination, explicit maximum page size 100, stable sort, organization/property scope, and server-selected fields. Never expose arbitrary table select/filter passthrough as a public API.
+
+Operator search is a bounded exception to cursor pagination because it returns a single relevance-ranked page: `q` is trimmed and 2–80 characters, `limit` defaults to 24 and may not exceed 50, and ordering is exact match, prefix match, resource-type rank, normalized title, then resource ID. Searchable inputs are limited to names, property addresses, unit codes, public references, maintenance titles, and document titles. The response is a sanitized `{ kind, resourceId, title, subtitle, status, propertyId, propertyName, href }` DTO; contact fields, descriptions/access instructions, payment reasons, provider identifiers, and raw rows are forbidden.
 
 ## 6. P0 event catalog
 
