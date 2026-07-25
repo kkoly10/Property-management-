@@ -588,6 +588,7 @@ GET /api/v1/properties/{id}
 GET /api/v1/residents
 GET /api/v1/tenancies/{id}
 GET /api/v1/payments
+GET /api/v1/payments/export?from=&to=&propertyId=&accountingBookId=
 GET /api/v1/payments/{id}
 GET /api/v1/maintenance-requests
 GET /api/v1/work-orders/{id}
@@ -600,6 +601,8 @@ GET /api/v1/notification-preferences
 ```
 
 Every collection query uses cursor pagination, explicit maximum page size 100, stable sort, organization/property scope, and server-selected fields. Never expose arbitrary table select/filter passthrough as a public API.
+
+Payment CSV export is a bounded file-download exception. It defaults to the most recent 30 calendar days, accepts only a past inclusive range of at most 366 days plus optional matching property/accounting-book UUIDs, and fails rather than truncates when more than 5,000 authorized rows match. The route and `get_operator_payment_export` database function both require AAL2. Every row independently requires an active membership window, explicit or allowed organization-wide property scope, and `finance.read` or `finance.manage`. Ordering is activity timestamp descending then payment ID descending. The server-selected fields are payment/public references, activity/received timestamps, property/book IDs and names, unit, household display name, payment source/status/reconciliation, exact minor-unit amounts, and currency. Resident contacts, manual reasons or external references, provider identifiers, journal/audit payloads, and arbitrary table fields are forbidden. Responses use `private, no-store`, spreadsheet-formula neutralization, UTF-8, and exact minor-unit values.
 
 Operator search is a bounded exception to cursor pagination because it returns a single relevance-ranked page: `q` is trimmed and 2–80 characters, `limit` defaults to 24 and may not exceed 50, and ordering is exact match, prefix match, resource-type rank, normalized title, then resource ID. Searchable inputs are limited to names, property addresses, unit codes, public references, maintenance titles, and document titles. The response is a sanitized `{ kind, resourceId, title, subtitle, status, propertyId, propertyName, href }` DTO; contact fields, descriptions/access instructions, payment reasons, provider identifiers, and raw rows are forbidden.
 

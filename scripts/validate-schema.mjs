@@ -39,6 +39,7 @@ const staffAccessIndexesSql = await readFile(resolve(root, "supabase/migrations/
 const notificationPreferencesSql = await readFile(resolve(root, "supabase/migrations/20260724141225_phase_8_notification_preferences.sql"), "utf8");
 const operatorCommandCenterSql = await readFile(resolve(root, "supabase/migrations/20260724145515_phase_8_operator_command_center.sql"), "utf8");
 const operatorGlobalSearchSql = await readFile(resolve(root, "supabase/migrations/20260724235523_phase_8_operator_global_search.sql"), "utf8");
+const paymentCsvExportSql = await readFile(resolve(root, "supabase/migrations/20260725020649_phase_8_payment_csv_export.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -776,6 +777,7 @@ async function validateRecurringCharges() {
   await db.exec(notificationPreferencesSql);
   await db.exec(operatorCommandCenterSql);
   await db.exec(operatorGlobalSearchSql);
+  await db.exec(paymentCsvExportSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -2878,9 +2880,11 @@ async function validateRecurringCharges() {
   const cadMaintenanceId = "f5000000-0000-4000-8000-000000000005";
   const cadWorkOrderId = "f6000000-0000-4000-8000-000000000006";
   const expiredDashboardUser = "f7000000-0000-4000-8000-000000000007";
+  const scopedFinanceUser = "f8000000-0000-4000-8000-000000000008";
+  const scopedFinanceMembership = "f9000000-0000-4000-8000-000000000009";
   await db.exec(`
     reset role;
-    insert into auth.users(id) values ('${expiredDashboardUser}');
+    insert into auth.users(id) values ('${expiredDashboardUser}'),('${scopedFinanceUser}');
     insert into public.operating_entities(id,organization_id,legal_name,display_name,country_code,entity_type,status,created_by)
     values ('${cadEntityId}','${organization.organizationId}','Finance Atlas Canada Ltd.','Finance Atlas Canada','CA','company','active','${admin}');
     insert into public.accounting_books(id,organization_id,operating_entity_id,name,functional_currency_code,status,created_by)
@@ -2912,6 +2916,13 @@ async function validateRecurringCharges() {
       '${organization.organizationId}','${expiredDashboardUser}','property_manager','active',
       now()-interval '2 days',now()-interval '1 day'
     );
+    insert into public.organization_memberships(id,organization_id,user_id,role_code,status,starts_at)
+    values (
+      '${scopedFinanceMembership}','${organization.organizationId}','${scopedFinanceUser}',
+      'property_manager','active',now()-interval '1 day'
+    );
+    insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    values ('${organization.organizationId}','${scopedFinanceMembership}','${property.propertyId}');
     update public.leases
       set end_date=current_date+30
       where id='${activation.leaseId}';
@@ -3093,7 +3104,67 @@ async function validateRecurringCharges() {
     "Property-scoped global search crossed a property or domain permission boundary.",
   );
 
-  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${expiredDashboardUser}'`);
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal1'`);
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_payment_export(current_date-29,current_date,null,null)"),
+    "MFA_REQUIRED",
+  );
+  await db.exec("set request.jwt.claim.aal='aal2'");
+  const paymentExport = (await db.query(
+    "select public.get_operator_payment_export(current_date-365,current_date,null,null) as result",
+  )).rows[0].result;
+  const paymentExportPayload = JSON.stringify(paymentExport);
+  const exportedActivity = paymentExport.items.map((item) => `${item.activityAt}:${item.paymentId}`);
+  assert(
+    paymentExport.scope.organizationId === organization.organizationId
+      && paymentExport.scope.fromDate
+      && paymentExport.scope.toDate
+      && paymentExport.rowCount === paymentExport.items.length
+      && paymentExport.items.some((item) => item.paymentId === payment.paymentId)
+      && exportedActivity.join("|") === [...exportedActivity].sort().reverse().join("|"),
+    "The payment export omitted an authorized payment, returned an unstable order, or reported an inconsistent row count.",
+  );
+  assert(
+    !paymentExportPayload.includes("avery@example.com")
+      && !paymentExportPayload.includes("Check received at the office")
+      && !paymentExportPayload.includes("acct_testFinance")
+      && !paymentExportPayload.includes("pi_resident")
+      && !paymentExportPayload.includes("cs_test"),
+    "The payment export exposed resident contact data, internal payment reasons, or provider identifiers.",
+  );
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_payment_export(current_date,current_date-1,null,null)"),
+    "INVALID_DATE_RANGE",
+  );
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_payment_export(current_date-366,current_date,null,null)"),
+    "INVALID_DATE_RANGE",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_payment_export(current_date-365,current_date,'${property.propertyId}','${cadBookId}')`),
+    "FILTER_COMBINATION_INVALID",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedFinanceUser}'; set request.jwt.claim.aal='aal2'`);
+  const scopedPaymentExport = (await db.query(
+    "select public.get_operator_payment_export(current_date-365,current_date,null,null) as result",
+  )).rows[0].result;
+  assert(
+    scopedPaymentExport.items.length>0
+      && scopedPaymentExport.items.every((item) => item.propertyId === property.propertyId)
+      && !JSON.stringify(scopedPaymentExport).includes("Harbour House"),
+    "A property-scoped finance member exported another property or lost authorized payment rows.",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_payment_export(current_date-365,current_date,'${cadPropertyId}',null)`),
+    "PROPERTY_SCOPE_DENIED",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_payment_export(current_date-365,current_date,null,'${cadBookId}')`),
+    "BOOK_SCOPE_DENIED",
+  );
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${expiredDashboardUser}'; set request.jwt.claim.aal='aal2'`);
   await expectDatabaseError(
     () => db.query(`select public.get_operator_command_center('${organization.organizationId}',null,null,current_date-29,current_date)`),
     "OPERATOR_ORGANIZATION_DENIED",
@@ -3101,8 +3172,13 @@ async function validateRecurringCharges() {
   await expectDatabaseError(
     () => db.query("select public.get_operator_global_search('Map',24)"),
     "OPERATOR_ORGANIZATION_DENIED",
+  );
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_payment_export(current_date-29,current_date,null,null)"),
+    "OPERATOR_FINANCE_DENIED",
   );
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await db.exec("set request.jwt.claim.aal='aal2'");
   await expectDatabaseError(
     () => db.query(`select public.get_operator_command_center('${organization.organizationId}',null,null,current_date-29,current_date)`),
     "OPERATOR_ORGANIZATION_DENIED",
@@ -3111,10 +3187,42 @@ async function validateRecurringCharges() {
     () => db.query("select public.get_operator_global_search('Map',24)"),
     "OPERATOR_ORGANIZATION_DENIED",
   );
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_payment_export(current_date-29,current_date,null,null)"),
+    "OPERATOR_FINANCE_DENIED",
+  );
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  await db.exec("set request.jwt.claim.aal='aal2'");
   await expectDatabaseError(
     () => db.query("select public.get_operator_global_search('Map',24)"),
     "OPERATOR_ORGANIZATION_DENIED",
+  );
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_payment_export(current_date-29,current_date,null,null)"),
+    "OPERATOR_FINANCE_DENIED",
+  );
+
+  await db.exec(`
+    reset role;
+    insert into public.payments(
+      organization_id,operating_entity_id,accounting_book_id,receivable_account_id,tenancy_id,
+      public_reference,payment_source,amount_minor,currency_code,status,reconciliation_status,
+      received_at,created_at,created_by
+    )
+    select
+      source.organization_id,source.operating_entity_id,source.accounting_book_id,source.receivable_account_id,source.tenancy_id,
+      'EXP-LIMIT-'||series.value::text,source.payment_source,source.amount_minor,source.currency_code,
+      'created','unreconciled',null,now()-interval '2 days','${admin}'
+    from public.payments source
+    cross join generate_series(1,5001) series(value)
+    where source.id='${payment.paymentId}';
+    set role authenticated;
+    set request.jwt.claim.sub='${admin}';
+    set request.jwt.claim.aal='aal2';
+  `);
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_payment_export(current_date-29,current_date,null,null)"),
+    "PAYMENT_EXPORT_TOO_LARGE",
   );
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
