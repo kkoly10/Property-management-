@@ -50,6 +50,8 @@ export type OperatorOwnerStatementContext = {
   organizationId: string;
   ownerEntityId: string;
   ownerName: string;
+  email: string | null;
+  invitationState: "active" | "invited" | "not_invited";
   propertyId: string;
   propertyName: string;
   accountingBookId: string;
@@ -131,6 +133,8 @@ const previewContext: OperatorOwnerStatementContext = {
   organizationId: "d0000000-0000-4000-8000-000000000001",
   ownerEntityId: previewSummary.ownerEntityId,
   ownerName: previewSummary.ownerName,
+  email: "owner@maplecourt.example",
+  invitationState: "not_invited",
   propertyId: previewSummary.propertyId,
   propertyName: previewSummary.propertyName,
   accountingBookId: "d2000000-0000-4000-8000-000000000001",
@@ -251,6 +255,8 @@ function normalizeContext(raw: unknown): OperatorOwnerStatementContext {
     organizationId: stringValue(item.organizationId),
     ownerEntityId: stringValue(item.ownerEntityId),
     ownerName: stringValue(item.ownerName),
+    email: nullableString(item.email),
+    invitationState: item.invitationState === "active" ? "active" : item.invitationState === "invited" ? "invited" : "not_invited",
     propertyId: stringValue(item.propertyId),
     propertyName: stringValue(item.propertyName),
     accountingBookId: stringValue(item.accountingBookId),

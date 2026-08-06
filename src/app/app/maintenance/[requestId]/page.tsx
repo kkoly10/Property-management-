@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Camera, CircleAlert, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Camera, CircleAlert, Receipt, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getOperatorVendorDirectory, getOperatorWorkOrderDetail } from "@/lib/data/maintenance";
 import { getOperatorOwnerApprovalWorkspace } from "@/lib/data/owner-approvals";
 import { AssignVendorForm } from "./assign-vendor-form";
+import { RecordCostForm } from "./record-cost-form";
 import { WorkOrderActions } from "./work-order-actions";
 
 export const dynamic = "force-dynamic";
@@ -37,13 +38,17 @@ export default async function OperatorMaintenanceDetailPage({ params }: { params
             {item.workOrder.scheduledStart ? <p><span className="text-muted-foreground">Scheduled:</span> {new Date(item.workOrder.scheduledStart).toLocaleString()} – {item.workOrder.scheduledEnd ? new Date(item.workOrder.scheduledEnd).toLocaleString() : "?"}</p> : null}
             {item.workOrder.estimatedCostMinor !== null && item.workOrder.currencyCode ? <p><span className="text-muted-foreground">Estimated cost:</span> {money(item.workOrder.estimatedCostMinor, item.workOrder.currencyCode)}</p> : null}
             {item.workOrder.actualCostMinor !== null && item.workOrder.currencyCode ? <p><span className="text-muted-foreground">Actual cost:</span> {money(item.workOrder.actualCostMinor, item.workOrder.currencyCode)}</p> : null}
+            {item.workOrder.cost ? <p className="flex items-center gap-1"><Receipt className="h-3.5 w-3.5 text-success" /><span className="text-muted-foreground">Posted to ledger:</span> {money(item.workOrder.cost.amountMinor, item.workOrder.cost.currencyCode)}</p> : null}
             {item.workOrder.completionSummary ? <p><span className="text-muted-foreground">Completion notes:</span> {item.workOrder.completionSummary}</p> : null}
             {item.workOrder.canceledReason ? <p><span className="text-muted-foreground">Canceled:</span> {item.workOrder.canceledReason}</p> : null}
             {item.workOrder.ownerApprovalRequired ? <Badge variant={item.workOrder.ownerApprovalStatus === "approved" ? "success" : "warning"}>Owner approval {item.workOrder.ownerApprovalStatus ?? "pending"}</Badge> : null}
           </CardContent></Card> : null}
           {approvals.length ? <Card><CardHeader className="border-b"><CardTitle>Owner approvals</CardTitle><CardDescription>Each request is isolated to its exact owner entity.</CardDescription></CardHeader><CardContent className="divide-y p-0">{approvals.map((approval) => <div key={approval.approvalRequestId} className="flex flex-col gap-2 p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium">{approval.ownerName}</p><p className="mt-1 text-xs text-muted-foreground">Requested {new Date(approval.requestedAt).toLocaleString()}{approval.decidedAt ? ` · Decided ${new Date(approval.decidedAt).toLocaleString()}` : ""}</p>{approval.reason ? <p className="mt-2 text-sm text-muted-foreground">{approval.reason}</p> : null}</div><Badge variant={approval.status === "approved" ? "success" : approval.status === "rejected" ? "neutral" : "warning"}>{label(approval.status)}</Badge></div>)}</CardContent></Card> : null}
         </div>
-        <aside>{item.workOrder ? <WorkOrderActions key={`${item.workOrder.workOrderId}:${item.workOrder.version}`} workOrderId={item.workOrder.workOrderId} organizationId={item.organizationId} status={item.workOrder.status} version={item.workOrder.version} disabled={detail.mode !== "ready"} /> : <AssignVendorForm maintenanceRequestId={item.maintenanceRequestId} organizationId={item.organizationId} vendors={directory.vendors} disabled={detail.mode !== "ready"} />}</aside>
+        <aside className="space-y-6">{item.workOrder ? <>
+          <WorkOrderActions key={`${item.workOrder.workOrderId}:${item.workOrder.version}`} workOrderId={item.workOrder.workOrderId} organizationId={item.organizationId} status={item.workOrder.status} version={item.workOrder.version} disabled={detail.mode !== "ready"} />
+          {["completed", "closed"].includes(item.workOrder.status) && !item.workOrder.cost ? <RecordCostForm workOrderId={item.workOrder.workOrderId} organizationId={item.organizationId} defaultCurrencyCode={item.workOrder.currencyCode} suggestedAmountMinor={item.workOrder.actualCostMinor ?? item.workOrder.estimatedCostMinor} disabled={detail.mode !== "ready"} /> : null}
+        </> : <AssignVendorForm maintenanceRequestId={item.maintenanceRequestId} organizationId={item.organizationId} vendors={directory.vendors} disabled={detail.mode !== "ready"} />}</aside>
       </div>
     </>}
   </div>;

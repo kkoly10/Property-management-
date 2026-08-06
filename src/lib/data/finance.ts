@@ -19,7 +19,7 @@ export type SettlementSummaryItem = {
   expectedArrivalDate: string | null; receivedAt: string | null; itemCount: number; matchedCount: number;
 };
 export type ReconciliationExceptionItem = {
-  exceptionId: string; settlementId: string; settlementReference: string; paymentId: string | null;
+  exceptionId: string; organizationId: string; settlementId: string; settlementReference: string; paymentId: string | null;
   paymentReference: string | null; exceptionType: string; status: string; expectedMinor: number | null;
   actualMinor: number | null; currencyCode: CurrencyCode; detail: string; detectedAt: string;
 };
@@ -180,7 +180,7 @@ function normalizeSettlementWorkspace(data: unknown) {
     const item = raw as Record<string, unknown>;
     if (!isCurrency(item.currencyCode)) return [];
     return [{
-      exceptionId: String(item.exceptionId), settlementId: String(item.settlementId), settlementReference: String(item.settlementReference),
+      exceptionId: String(item.exceptionId), organizationId: String(item.organizationId), settlementId: String(item.settlementId), settlementReference: String(item.settlementReference),
       paymentId: item.paymentId ? String(item.paymentId) : null, paymentReference: item.paymentReference ? String(item.paymentReference) : null,
       exceptionType: String(item.exceptionType), status: String(item.status), expectedMinor: item.expectedMinor == null ? null : Number(item.expectedMinor),
       actualMinor: item.actualMinor == null ? null : Number(item.actualMinor), currencyCode: item.currencyCode,
@@ -201,7 +201,7 @@ const previewPaymentDetail: PaymentDetail = { ...previewPayment, organizationId:
 const previewFailedPaymentDetail: PaymentDetail = { ...previewFailedPayment, organizationId: previewOption.organizationId, version: 1, reason: null, journalTransactionId: null, canCorrect: false, canRefund: false, refundableMinor: 0, allocations: [], eligibleCharges: previewPaymentDetail.eligibleCharges, refunds: [], disputes: [], settlements: [], corrections: [], attempts: [{ attemptId: "52000000-0000-4000-8000-000000000016", method: "card", providerStatus: "expired", failureCode: "checkout_session_expired", initiatedAt: "2026-07-21T15:45:00Z", expiresAt: "2026-07-21T16:15:00Z", confirmedAt: null, isCurrent: true }] };
 const previewRetryContext: ResidentPaymentRetryContext = { paymentId: previewFailedPayment.paymentId, publicReference: previewFailedPayment.publicReference, tenancyId: previewOption.tenancyId, amountMinor: previewFailedPayment.amountMinor, currencyCode: previewFailedPayment.currencyCode, method: "card", failureCode: "checkout_session_expired", failedAt: "2026-07-21T16:15:00Z", allocations: [{ chargeId: previewOption.charges[0].chargeId, amountMinor: previewFailedPayment.amountMinor }] };
 const previewSettlement: SettlementSummaryItem = { settlementId: "90000000-0000-4000-8000-000000000009", publicReference: "SET-3F7A91C224BE", providerStatus: "paid", reconciliationStatus: "reconciled", grossMinor: 185000, feeMinor: 5665, netMinor: 179335, currencyCode: "USD", expectedArrivalDate: "2026-07-23", receivedAt: "2026-07-23T14:00:00Z", itemCount: 1, matchedCount: 1 };
-const previewException: ReconciliationExceptionItem = { exceptionId: "91000000-0000-4000-8000-000000000010", settlementId: "92000000-0000-4000-8000-000000000011", settlementReference: "SET-5DB42C991F10", paymentId: null, paymentReference: null, exceptionType: "amount_mismatch", status: "open", expectedMinor: 179335, actualMinor: 178835, currencyCode: "USD", detail: "The payout amount does not equal the net of its imported provider balance transactions.", detectedAt: "2026-07-24T14:00:00Z" };
+const previewException: ReconciliationExceptionItem = { exceptionId: "91000000-0000-4000-8000-000000000010", organizationId: "10000000-0000-4000-8000-000000000001", settlementId: "92000000-0000-4000-8000-000000000011", settlementReference: "SET-5DB42C991F10", paymentId: null, paymentReference: null, exceptionType: "amount_mismatch", status: "open", expectedMinor: 179335, actualMinor: 178835, currencyCode: "USD", detail: "The payout amount does not equal the net of its imported provider balance transactions.", detectedAt: "2026-07-24T14:00:00Z" };
 
 export async function getOperatorPaymentWorkspace(): Promise<{ mode: DataMode; items: ReceivableSummaryItem[]; payments: PaymentSummaryItem[]; options: ManualPaymentOption[]; settlements: SettlementSummaryItem[]; exceptions: ReconciliationExceptionItem[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewReceivable], payments: [previewPayment, previewFailedPayment], options: [previewOption], settlements: [previewSettlement], exceptions: [previewException] };

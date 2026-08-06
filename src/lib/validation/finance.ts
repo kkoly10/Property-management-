@@ -97,8 +97,27 @@ export const refundPaymentSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(200),
 }).strict();
 
+export const resolveReconciliationExceptionSchema = z.object({
+  organizationId: z.uuid(),
+  resolution: z.enum(["resolved", "waived", "escalated"]),
+  evidence: z.string().trim().min(8).max(1000).optional(),
+}).strict().superRefine((resolution, context) => {
+  if (resolution.resolution !== "escalated" && !resolution.evidence) {
+    context.addIssue({ code: "custom", path: ["evidence"], message: "Record an evidence note when resolving or waiving an exception." });
+  }
+});
+
+export const writeOffReceivableSchema = z.object({
+  organizationId: z.uuid(),
+  tenancyId: z.uuid(),
+  chargeIds: z.array(z.uuid()).min(1).max(100).refine((ids) => new Set(ids).size === ids.length, "List each charge only once."),
+  reason: z.string().trim().min(3).max(1000),
+}).strict();
+
 export type GenerateRecurringChargesInput = z.infer<typeof generateRecurringChargesSchema>;
 export type RecordManualPaymentInput = z.infer<typeof recordManualPaymentSchema>;
 export type CorrectPaymentInput = z.infer<typeof correctPaymentSchema>;
 export type CreateResidentPaymentSessionInput = z.infer<typeof createResidentPaymentSessionSchema>;
 export type RefundPaymentInput = z.infer<typeof refundPaymentSchema>;
+export type ResolveReconciliationExceptionInput = z.infer<typeof resolveReconciliationExceptionSchema>;
+export type WriteOffReceivableInput = z.infer<typeof writeOffReceivableSchema>;

@@ -40,6 +40,10 @@ const notificationPreferencesSql = await readFile(resolve(root, "supabase/migrat
 const operatorCommandCenterSql = await readFile(resolve(root, "supabase/migrations/20260724145515_phase_8_operator_command_center.sql"), "utf8");
 const operatorGlobalSearchSql = await readFile(resolve(root, "supabase/migrations/20260724235523_phase_8_operator_global_search.sql"), "utf8");
 const relationshipInvitationsSql = await readFile(resolve(root, "supabase/migrations/20260725090000_phase_8_relationship_invitations.sql"), "utf8");
+const maintenanceCostSql = await readFile(resolve(root, "supabase/migrations/20260725100000_phase_6_maintenance_cost.sql"), "utf8");
+const reconciliationResolutionSql = await readFile(resolve(root, "supabase/migrations/20260725110000_phase_5_reconciliation_resolution.sql"), "utf8");
+const receivableWriteOffSql = await readFile(resolve(root, "supabase/migrations/20260725120000_phase_4_receivable_write_off.sql"), "utf8");
+const ownerPortalInviteStateSql = await readFile(resolve(root, "supabase/migrations/20260725130000_phase_8_owner_portal_invite_state.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -778,6 +782,10 @@ async function validateRecurringCharges() {
   await db.exec(operatorCommandCenterSql);
   await db.exec(operatorGlobalSearchSql);
   await db.exec(relationshipInvitationsSql);
+  await db.exec(maintenanceCostSql);
+  await db.exec(reconciliationResolutionSql);
+  await db.exec(receivableWriteOffSql);
+  await db.exec(ownerPortalInviteStateSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3139,6 +3147,42 @@ async function validateRecurringCharges() {
   )`), "TENANCY_SCOPE_DENIED");
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
+  // Maintenance cost posting to the ledger (phase_6_maintenance_cost). workOrder is closed,
+  // highCostWorkOrder is canceled by this point.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'USD','Sink parts and labor','work-order-cost-denied-0001')`), "PROPERTY_SCOPE_DENIED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const costGuardRequest = (await db.query(`select public.submit_maintenance_request('${activation.tenancyId}','plumbing','Cost guard request','A maintenance request used to test cost-before-completion.',null,null,'[]'::jsonb,array[]::uuid[],'work-order-cost-guard-req-0001') as result`)).rows[0].result;
+  const costGuardWorkOrder = (await db.query(`select public.create_and_assign_work_order('${organization.organizationId}','${costGuardRequest.maintenanceRequestId}','${vendor.vendorId}','Guard scope for a not-yet-completed work order.',null,null,null,null,false,null,'work-order-cost-guard-wo-0001') as result`)).rows[0].result;
+  await expectDatabaseError(() => db.query(`select public.record_work_order_cost('${organization.organizationId}','${costGuardWorkOrder.workOrderId}',10000,'USD','Not done yet','work-order-cost-notdone-0001')`), "WORK_ORDER_NOT_COMPLETED");
+  await expectDatabaseError(() => db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'CAD','Wrong currency','work-order-cost-currency-0001')`), "WORK_ORDER_COST_CURRENCY_MISMATCH");
+  const workOrderCost = (await db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'USD','Sink parts and labor','work-order-cost-0001') as result`)).rows[0].result;
+  assert(workOrderCost.journalTransactionId && workOrderCost.amountMinor === 32000 && workOrderCost.currencyCode === "USD", "Work-order cost posting did not return its canonical journal.");
+  const workOrderCostReplay = (await db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'USD','Sink parts and labor','work-order-cost-0001') as result`)).rows[0].result;
+  assert(workOrderCostReplay.journalTransactionId === workOrderCost.journalTransactionId, "Work-order cost replay did not return the canonical journal.");
+  await expectDatabaseError(() => db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'USD','Sink parts and labor','work-order-cost-again-0002')`), "WORK_ORDER_COST_ALREADY_POSTED");
+  await db.exec("reset role");
+  const costPosting = (await db.query(`select
+    sum(e.debit_minor)::integer as debits, sum(e.credit_minor)::integer as credits,
+    count(*) filter (where la.account_class='expense' and la.account_code='6200' and e.debit_minor>0 and e.property_id='${property.propertyId}')::integer as expense_legs,
+    count(*) filter (where la.account_class='liability' and la.account_code='2000' and e.credit_minor>0)::integer as payable_legs,
+    t.transaction_type
+    from public.journal_transactions t
+    join public.journal_entries e on e.journal_transaction_id=t.id
+    join public.ledger_accounts la on la.id=e.ledger_account_id
+    where t.id='${workOrderCost.journalTransactionId}' group by t.transaction_type`)).rows[0];
+  assert(costPosting.debits === 32000 && costPosting.credits === 32000 && costPosting.expense_legs === 1 && costPosting.payable_legs === 1 && costPosting.transaction_type === "maintenance_cost", "Work-order cost journal is not a balanced expense/payable posting carrying the property.");
+  await expectDatabaseError(() => db.query(`update public.journal_transactions set metadata='{}'::jsonb where id='${workOrderCost.journalTransactionId}'`), "APPEND_ONLY_RECORD");
+  const costTraces = (await db.query(`select
+    (select count(*)::integer from private.outbox_events where event_type='work_order.cost_posted') as events,
+    (select count(*)::integer from audit.audit_events where action_code='work_order.cost_posted') as audits
+  `)).rows[0];
+  assert(costTraces.events === 1 && costTraces.audits === 1, "Work-order cost audit/outbox trace is incomplete.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const maintenanceAfterCost = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const costedItem = maintenanceAfterCost.items.find((item) => item.workOrder && item.workOrder.workOrderId === workOrder.workOrderId);
+  assert(costedItem && costedItem.workOrder.cost && costedItem.workOrder.cost.amountMinor === 32000 && costedItem.workOrder.cost.currencyCode === "USD", "Operator workspace did not surface the posted work-order cost.");
+
   // Relationship-user invitation and activation (phase_8_relationship_invitations).
   const invitedResidentPerson = "e5000000-0000-4000-8000-000000000051";
   const invitedResidentUser = "e5000000-0000-4000-8000-000000000052";
@@ -3221,8 +3265,154 @@ async function validateRecurringCharges() {
   `)).rows[0];
   assert(relationshipInviteTraces.invited === 4 && relationshipInviteTraces.activated === 2 && relationshipInviteTraces.notified === 4 && relationshipInviteTraces.jobs === 4 && relationshipInviteTraces.invite_audits === 4 && relationshipInviteTraces.activate_audits === 2, "Relationship invitation audit/outbox/notification trace is incomplete.");
 
+  // Reconciliation-exception resolution (phase_5_reconciliation_resolution). The po_CrecyMismatch001
+  // batch left two open exceptions above; drive resolve/waive/escalate against them.
+  await db.exec("reset role");
+  const mismatchExceptions = (await db.query(`select id,exception_type,status from public.reconciliation_exceptions
+    where settlement_batch_id='${mismatch.settlementId}' order by exception_type,id`)).rows;
+  assert(mismatchExceptions.length === 2 && mismatchExceptions.every((row) => row.status === "open"), "Expected two open reconciliation exceptions on the mismatch batch.");
+  const exceptionA = mismatchExceptions[0].id;
+  const exceptionB = mismatchExceptions[1].id;
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved','Matched to the corrected payout total.','recon-denied-000001')`), "FINANCE_SCOPE_DENIED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','dismissed','x','recon-badres-000001')`), "INVALID_RESOLUTION");
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved',null,'recon-noev-0000001')`), "RESOLUTION_EVIDENCE_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${"0".repeat(8)}-0000-4000-8000-000000009999','resolved','No such exception here.','recon-nf-00000001')`), "RECONCILIATION_EXCEPTION_NOT_FOUND");
+
+  const escalation = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','escalated','Needs finance-lead review before closing.','recon-escalate-0001') as result`)).rows[0].result;
+  assert(escalation.status === "escalated" && escalation.batchCleared === false, "Escalation did not keep the exception open on the batch.");
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','escalated','Escalating again.','recon-escalate-0002')`), "EXCEPTION_ALREADY_ESCALATED");
+  await db.exec("reset role");
+  const escalatedRow = (await db.query(`select status,resolved_at,resolved_by from public.reconciliation_exceptions where id='${exceptionA}'`)).rows[0];
+  assert(escalatedRow.status === "escalated" && escalatedRow.resolved_at === null && escalatedRow.resolved_by === null, "Escalated exception must not carry a resolver.");
+  const batchAfterEscalate = (await db.query(`select reconciliation_status from public.settlement_batches where id='${mismatch.settlementId}'`)).rows[0].reconciliation_status;
+  assert(batchAfterEscalate === "exception", "Batch left its exception state while an escalated exception remained.");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  // Close the OTHER exception (B) while A is still escalated. The batch must NOT clear, because an
+  // unresolved escalated exception still blocks it — this is what makes the 'escalated' arm of the
+  // batch-clear predicate load-bearing (a settlement mismatch cannot be silently closed). If the
+  // predicate were mutated to only ('open'), this assertion would flip and catch it.
+  const waivedB = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionB}','waived','Immaterial rounding difference; waived per policy.','recon-waiveB-00001') as result`)).rows[0].result;
+  assert(waivedB.status === "waived" && waivedB.batchCleared === false, "Closing the open exception wrongly cleared the batch while an escalated exception was still its sole blocker.");
+  await db.exec("reset role");
+  const batchWithEscalatedBlocker = (await db.query(`select reconciliation_status from public.settlement_batches where id='${mismatch.settlementId}'`)).rows[0].reconciliation_status;
+  assert(batchWithEscalatedBlocker === "exception", "Batch left its exception state while an escalated exception was still its sole blocker.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionB}','resolved','Trying to re-close a closed exception.','recon-reclose-0001')`), "EXCEPTION_ALREADY_RESOLVED");
+  // Now resolve the previously-escalated A: it is the last blocker, so the batch clears.
+  const resolvedA = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved','Confirmed the payout total against the bank record.','recon-resolveA-0001') as result`)).rows[0].result;
+  assert(resolvedA.status === "resolved" && resolvedA.resolvedAt && resolvedA.batchCleared === true, "Resolving the last (previously escalated) exception did not clear the batch.");
+  const resolvedAReplay = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved','Confirmed the payout total against the bank record.','recon-resolveA-0001') as result`)).rows[0].result;
+  assert(resolvedAReplay.reconciliationExceptionId === resolvedA.reconciliationExceptionId && resolvedAReplay.status === "resolved", "Resolve replay did not return the stored response.");
+
+  await db.exec("reset role");
+  const resolvedRows = (await db.query(`select status,resolved_by,resolution_evidence from public.reconciliation_exceptions where id in ('${exceptionA}','${exceptionB}') order by status`)).rows;
+  assert(resolvedRows[0].status === "resolved" && resolvedRows[0].resolved_by === admin && resolvedRows[1].status === "waived" && resolvedRows[1].resolved_by === admin, "Resolved/waived exceptions must carry the resolver and status.");
+  const clearedBatch = (await db.query(`select reconciliation_status from public.settlement_batches where id='${mismatch.settlementId}'`)).rows[0].reconciliation_status;
+  assert(clearedBatch === "unreconciled", "Batch did not return to unreconciled after all its exceptions were closed.");
+  const resolutionTraces = (await db.query(`select
+    (select count(*)::integer from private.outbox_events where event_type='reconciliation.exception_resolved' and aggregate_id in ('${exceptionA}','${exceptionB}')) as resolved_events,
+    (select count(*)::integer from private.outbox_events where event_type='reconciliation.exception_escalated' and aggregate_id='${exceptionA}') as escalated_events,
+    (select count(*)::integer from audit.audit_events where action_code='reconciliation.exception_resolved' and resource_id in ('${exceptionA}','${exceptionB}')) as resolved_audits,
+    (select count(*)::integer from audit.audit_events where action_code='reconciliation.exception_escalated' and resource_id='${exceptionA}') as escalated_audits
+  `)).rows[0];
+  assert(resolutionTraces.resolved_events === 2 && resolutionTraces.escalated_events === 1 && resolutionTraces.resolved_audits === 2 && resolutionTraces.escalated_audits === 1, "Reconciliation-resolution audit/outbox trace is incomplete.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const workspaceAfterResolution = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  assert(!workspaceAfterResolution.exceptions.some((row) => row.settlementId === mismatch.settlementId), "Resolved/waived exceptions still appear on the operator reconciliation queue.");
+
+  // Receivable write-off (phase_4_receivable_write_off). Generate two fresh rent charges (the schedule
+  // advanced to 2026-09-30, then 2026-10-31); partially pay September so its write-off posts the
+  // REMAINING not the face amount, then write off BOTH in one call to exercise multi-charge aggregation.
+  await db.exec(`reset role; set role service_role`);
+  const writeOffGenSep = (await db.query(`select public.generate_recurring_charges('2026-09-30',array['${activation.chargeScheduleId}'::uuid],'finance-writeoff-gen-0001') as result`)).rows[0].result;
+  assert(writeOffGenSep.generatedCount === 1 && writeOffGenSep.chargeIds.length === 1, "Fresh September write-off charge was not generated.");
+  const writeOffCharge = writeOffGenSep.chargeIds[0];
+  const writeOffGenOct = (await db.query(`select public.generate_recurring_charges('2026-10-31',array['${activation.chargeScheduleId}'::uuid],'finance-writeoff-gen-0002') as result`)).rows[0].result;
+  assert(writeOffGenOct.generatedCount === 1 && writeOffGenOct.chargeIds.length === 1, "Fresh October write-off charge was not generated.");
+  const writeOffChargeOct = writeOffGenOct.chargeIds[0];
+  // Partially pay the fresh charge so the write-off must post the REMAINING (185000-60000), not the
+  // charge face amount — this is what proves the remaining computation rather than a full-amount post.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',60000,'USD','${receivedAt}','Partial payment before write-off','${evidenceDocumentId}','[{"chargeId":"${writeOffCharge}","amountMinor":60000}]'::jsonb,null,'writeoff-partial-pay-0001')`);
+  await db.exec("reset role");
+  const balanceBefore = (await db.query(`select coalesce(sum(e.debit_minor-e.credit_minor),0)::integer as balance
+    from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
+    where e.tenancy_id='${activation.tenancyId}' and a.account_code='1100'`)).rows[0].balance;
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'Tenant is unreachable and the balance is uncollectible.','writeoff-denied-000001')`), "PROPERTY_SCOPE_DENIED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${"0".repeat(8)}-0000-4000-8000-000000008888',array['${writeOffCharge}']::uuid[],'No such tenancy.','writeoff-notenancy-01')`), "TENANCY_NOT_FOUND");
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'  ','writeoff-noreason-0001')`), "INVALID_WRITE_OFF_REASON");
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array[]::uuid[],'Empty charge set.','writeoff-nocharge-0001')`), "INVALID_WRITE_OFF_CHARGES");
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${"0".repeat(8)}-0000-4000-8000-000000007777']::uuid[],'That charge does not belong here.','writeoff-badcharge-01')`), "WRITE_OFF_CHARGE_NOT_AVAILABLE");
+  // A set mixing a writable charge with an unavailable one is rejected wholesale (the count check).
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}','${"0".repeat(8)}-0000-4000-8000-000000007777']::uuid[],'Mixed valid and invalid charges.','writeoff-mixed-000001')`), "WRITE_OFF_CHARGE_NOT_AVAILABLE");
+
+  // Write off BOTH charges in one call: 125000 (September remaining after the partial payment) + 185000
+  // (October in full) = 310000, proving both the remaining computation and multi-charge aggregation.
+  const writeOff = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}','${writeOffChargeOct}']::uuid[],'Tenant moved out; the remaining rent is uncollectible.','writeoff-0001') as result`)).rows[0].result;
+  assert(writeOff.writtenOffMinor === 310000 && writeOff.chargeCount === 2 && writeOff.journalTransactionId && writeOff.currencyCode === "USD", "Multi-charge write-off did not aggregate the two charges' remaining balances (125000 September + 185000 October).");
+  const writeOffReplay = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}','${writeOffChargeOct}']::uuid[],'Tenant moved out; the remaining rent is uncollectible.','writeoff-0001') as result`)).rows[0].result;
+  assert(writeOffReplay.journalTransactionId === writeOff.journalTransactionId, "Write-off replay did not return the canonical journal.");
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'Attempting to write off an already-written-off charge.','writeoff-again-00001')`), "WRITE_OFF_CHARGE_NOT_AVAILABLE");
+
+  await db.exec("reset role");
+  const writeOffPosting = (await db.query(`select
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${writeOff.journalTransactionId}') as debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${writeOff.journalTransactionId}') as credits,
+    (select count(*)::integer from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
+      where e.journal_transaction_id='${writeOff.journalTransactionId}' and a.account_code='6300' and a.account_class='expense' and e.debit_minor>0 and e.property_id='${property.propertyId}') as expense_legs,
+    (select count(*)::integer from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
+      where e.journal_transaction_id='${writeOff.journalTransactionId}' and a.account_code='1100' and e.credit_minor>0 and e.tenancy_id='${activation.tenancyId}') as ar_legs,
+    (select t.transaction_type from public.journal_transactions t where t.id='${writeOff.journalTransactionId}') as transaction_type,
+    (select count(*)::integer from public.charges c where c.id in ('${writeOffCharge}','${writeOffChargeOct}') and c.status='written_off' and c.voided_by_transaction_id='${writeOff.journalTransactionId}') as linked_written_off,
+    (select coalesce(sum(e.debit_minor-e.credit_minor),0)::integer from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
+      where e.tenancy_id='${activation.tenancyId}' and a.account_code='1100') as balance_after`)).rows[0];
+  assert(writeOffPosting.debits === 310000 && writeOffPosting.credits === 310000 && writeOffPosting.expense_legs === 2 && writeOffPosting.ar_legs === 2 && writeOffPosting.transaction_type === "receivable_write_off", "Multi-charge write-off journal is not a balanced bad-debt/AR posting with one leg pair per charge.");
+  assert(writeOffPosting.linked_written_off === 2, "Both written-off charges did not flip status and link the terminating transaction.");
+  assert(balanceBefore - writeOffPosting.balance_after === 310000, "Write-off did not reduce the tenancy receivable balance by the summed remaining amounts.");
+  await expectDatabaseError(() => db.query(`update public.journal_transactions set metadata='{}'::jsonb where id='${writeOff.journalTransactionId}'`), "APPEND_ONLY_RECORD");
+  const writeOffTraces = (await db.query(`select
+    (select count(*)::integer from private.outbox_events where event_type='receivable.written_off' and aggregate_id='${writeOff.receivableAccountId}') as events,
+    (select count(*)::integer from audit.audit_events where action_code='receivable.written_off' and resource_id='${writeOff.receivableAccountId}') as audits
+  `)).rows[0];
+  assert(writeOffTraces.events === 1 && writeOffTraces.audits === 1, "Write-off audit/outbox trace is incomplete.");
+
+  // Owner-portal invite state on the operator owner-statement workspace (phase_8_owner_portal_invite_state).
+  // invitedOwnerEntity is active (accepted above); add a not-invited and an invited-only owner to cover
+  // all three states, and rely on ownerEntityA (no email) for the null-email path.
+  const ownerNotInvited = "e6000000-0000-4000-8000-000000000061";
+  const ownerInvitedOnly = "e6000000-0000-4000-8000-000000000062";
+  const ownerInvitedOnlyUser = "e6000000-0000-4000-8000-000000000063";
+  await db.exec(`reset role;
+    insert into public.owner_entities(id,organization_id,display_name,entity_type,email) values
+      ('${ownerNotInvited}','${organization.organizationId}','Not Invited Owner LLC','company','notinvited.owner@example.com'),
+      ('${ownerInvitedOnly}','${organization.organizationId}','Invited Only Owner LLC','company','invitedonly.owner@example.com');
+    insert into public.ownership_interests(id,organization_id,property_id,owner_entity_id,ownership_fraction,effective_from) values
+      ('e6000000-0000-4000-8000-000000000064','${organization.organizationId}','${property.propertyId}','${ownerNotInvited}',0.0001,'2026-01-01'),
+      ('e6000000-0000-4000-8000-000000000065','${organization.organizationId}','${property.propertyId}','${ownerInvitedOnly}',0.0001,'2026-01-01');
+    insert into auth.users(id,email) values ('${ownerInvitedOnlyUser}','invitedonly.owner@example.com');
+    insert into public.user_relationships(id,user_id,organization_id,relationship_type,relationship_id,status) values
+      ('e6000000-0000-4000-8000-000000000066','${ownerInvitedOnlyUser}','${organization.organizationId}','owner_entity','${ownerInvitedOnly}','invited');
+  `);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const inviteStateWorkspace = (await db.query("select public.get_operator_owner_statement_workspace() as result")).rows[0].result;
+  const activeOwnerRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === invitedOwnerEntity);
+  const notInvitedRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerNotInvited);
+  const invitedOnlyRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerInvitedOnly);
+  const noEmailRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerEntityA);
+  assert(activeOwnerRow && activeOwnerRow.invitationState === "active" && activeOwnerRow.email === ownerEmail, "Owner-statement workspace did not surface the accepted owner as active with their email.");
+  assert(notInvitedRow && notInvitedRow.invitationState === "not_invited" && notInvitedRow.email === "notinvited.owner@example.com", "Owner-statement workspace did not surface a not-invited owner.");
+  assert(invitedOnlyRow && invitedOnlyRow.invitationState === "invited" && invitedOnlyRow.email === "invitedonly.owner@example.com", "Owner-statement workspace did not surface an invited owner.");
+  assert(noEmailRow && noEmailRow.invitationState === "active" && noEmailRow.email === null, "Owner-statement workspace did not surface a null email for an owner entity without one.");
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
