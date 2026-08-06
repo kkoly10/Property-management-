@@ -39,6 +39,7 @@ const staffAccessIndexesSql = await readFile(resolve(root, "supabase/migrations/
 const notificationPreferencesSql = await readFile(resolve(root, "supabase/migrations/20260724141225_phase_8_notification_preferences.sql"), "utf8");
 const operatorCommandCenterSql = await readFile(resolve(root, "supabase/migrations/20260724145515_phase_8_operator_command_center.sql"), "utf8");
 const operatorGlobalSearchSql = await readFile(resolve(root, "supabase/migrations/20260724235523_phase_8_operator_global_search.sql"), "utf8");
+const relationshipInvitationsSql = await readFile(resolve(root, "supabase/migrations/20260725090000_phase_8_relationship_invitations.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -776,6 +777,7 @@ async function validateRecurringCharges() {
   await db.exec(notificationPreferencesSql);
   await db.exec(operatorCommandCenterSql);
   await db.exec(operatorGlobalSearchSql);
+  await db.exec(relationshipInvitationsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3137,8 +3139,90 @@ async function validateRecurringCharges() {
   )`), "TENANCY_SCOPE_DENIED");
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
+  // Relationship-user invitation and activation (phase_8_relationship_invitations).
+  const invitedResidentPerson = "e5000000-0000-4000-8000-000000000051";
+  const invitedResidentUser = "e5000000-0000-4000-8000-000000000052";
+  const invitedOwnerUser = "e5000000-0000-4000-8000-000000000053";
+  const invitedOwnerEntity = "e5000000-0000-4000-8000-000000000054";
+  const residentEmail = "invited.resident@example.com";
+  const ownerEmail = "invited.owner@example.com";
+  const residentTokenHash = "1".repeat(64);
+  const residentTokenHashTwo = "2".repeat(64);
+  const ownerTokenHash = "3".repeat(64);
+  const ownerTokenHashTwo = "4".repeat(64);
+  await db.exec(`reset role;
+    insert into auth.users(id,email) values ('${invitedResidentUser}','${residentEmail}'),('${invitedOwnerUser}','${ownerEmail}');
+    insert into public.people(id,organization_id,first_name,last_name,email)
+    values ('${invitedResidentPerson}','${organization.organizationId}','Riley','Invited','${residentEmail}');
+    insert into public.household_members(organization_id,household_id,person_id,is_primary_contact,is_financially_responsible)
+    values ('${organization.organizationId}','${activation.householdId}','${invitedResidentPerson}',false,false);
+    insert into public.owner_entities(id,organization_id,display_name,entity_type,email)
+    values ('${invitedOwnerEntity}','${organization.organizationId}','Invited Owner LLC','company','${ownerEmail}');
+    insert into public.ownership_interests(id,organization_id,property_id,owner_entity_id,ownership_fraction,effective_from)
+    values ('e5000000-0000-4000-8000-000000000055','${organization.organizationId}','${property.propertyId}','${invitedOwnerEntity}',0.0001,'2026-01-01');
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+
+  await expectDatabaseError(() => db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_owner','${residentTokenHash}','${residentTokenHash.slice(0, 10)}','relationship-invite-surface')`), "REDIRECT_SURFACE_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','wrong.email@example.com','en-US','crecy_living','${residentTokenHash}','${residentTokenHash.slice(0, 10)}','relationship-invite-email')`), "EMAIL_RELATIONSHIP_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedOwnerUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHash}','${residentTokenHash.slice(0, 10)}','relationship-invite-usermismatch')`), "INVITED_USER_EMAIL_MISMATCH");
+
+  const residentInvite = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHash}','${residentTokenHash.slice(0, 10)}','relationship-invite-resident-0001') as result`)).rows[0].result;
+  assert(residentInvite.invitationId && residentInvite.status === "invited" && residentInvite.deliveryStatus === "queued" && residentInvite.relationshipType === "resident_person" && residentInvite.redirectSurface === "crecy_living", "Resident invitation did not return its canonical queued invitation.");
+  const residentInviteReplay = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHash}','${residentTokenHash.slice(0, 10)}','relationship-invite-resident-0001') as result`)).rows[0].result;
+  assert(residentInviteReplay.invitationId === residentInvite.invitationId && residentInviteReplay.idempotentReplay === true, "Resident invitation replay did not return the canonical invitation.");
+  await db.exec("reset role");
+  const invitedRelRow = (await db.query(`select status from public.user_relationships where user_id='${invitedResidentUser}' and relationship_type='resident_person' and relationship_id='${invitedResidentPerson}'`)).rows[0];
+  assert(invitedRelRow.status === "invited", "The invited resident relationship row was not created in the invited state.");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-denied')`), "PROPERTY_SCOPE_DENIED");
+  await expectDatabaseError(() => db.query(`select public.accept_relationship_invitation('${residentTokenHash}')`), "INVITATION_RECIPIENT_MISMATCH");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const residentReinvite = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-resident-0002') as result`)).rows[0].result;
+  assert(residentReinvite.invitationId !== residentInvite.invitationId, "Re-invitation did not mint a fresh invitation.");
+  await db.exec("reset role");
+  const pendingResidentInvites = (await db.query(`select count(*)::integer as count from public.invitations where relationship_id='${invitedResidentPerson}' and status='pending'`)).rows[0].count;
+  const supersededResidentInvites = (await db.query(`select count(*)::integer as count from public.invitations where id='${residentInvite.invitationId}' and status='superseded'`)).rows[0].count;
+  assert(pendingResidentInvites === 1 && supersededResidentInvites === 1, "Re-invitation did not supersede the prior pending token.");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  await expectDatabaseError(() => db.query(`select public.accept_relationship_invitation('${residentTokenHash}')`), "INVITATION_NOT_PENDING");
+  const residentAccept = (await db.query(`select public.accept_relationship_invitation('${residentTokenHashTwo}') as result`)).rows[0].result;
+  assert(residentAccept.status === "active" && residentAccept.relationshipType === "resident_person" && residentAccept.redirectSurface === "crecy_living", "Resident acceptance did not activate the relationship.");
+  const residentAcceptReplay = (await db.query(`select public.accept_relationship_invitation('${residentTokenHashTwo}') as result`)).rows[0].result;
+  assert(residentAcceptReplay.status === "active", "Resident acceptance replay was not idempotent.");
+  await db.exec("reset role");
+  const activeRelRow = (await db.query(`select status from public.user_relationships where user_id='${invitedResidentUser}' and relationship_type='resident_person' and relationship_id='${invitedResidentPerson}'`)).rows[0];
+  assert(activeRelRow.status === "active", "The resident relationship row was not activated on acceptance.");
+
+  // Owner path, including an expiry-then-recovery cycle.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const ownerInvite = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedOwnerUser}','owner_entity','${invitedOwnerEntity}','${ownerEmail}','en-US','crecy_owner','${ownerTokenHash}','${ownerTokenHash.slice(0, 10)}','relationship-invite-owner-0001') as result`)).rows[0].result;
+  assert(ownerInvite.relationshipType === "owner_entity" && ownerInvite.redirectSurface === "crecy_owner" && ownerInvite.status === "invited", "Owner invitation did not return its canonical queued invitation.");
+  await db.exec(`reset role; update public.invitations set created_at=now()-interval '80 hours',expires_at=now()-interval '8 hours' where id='${ownerInvite.invitationId}'; set role authenticated; set request.jwt.claim.sub='${invitedOwnerUser}'`);
+  await expectDatabaseError(() => db.query(`select public.accept_relationship_invitation('${ownerTokenHash}')`), "INVITATION_EXPIRED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const ownerReinvite = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedOwnerUser}','owner_entity','${invitedOwnerEntity}','${ownerEmail}','en-US','crecy_owner','${ownerTokenHashTwo}','${ownerTokenHashTwo.slice(0, 10)}','relationship-invite-owner-0002') as result`)).rows[0].result;
+  assert(ownerReinvite.invitationId !== ownerInvite.invitationId, "Owner re-invitation did not mint a fresh invitation.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedOwnerUser}'`);
+  const ownerAccept = (await db.query(`select public.accept_relationship_invitation('${ownerTokenHashTwo}') as result`)).rows[0].result;
+  assert(ownerAccept.status === "active" && ownerAccept.relationshipType === "owner_entity", "Owner acceptance did not activate the relationship.");
+
+  await db.exec("reset role");
+  const relationshipInviteTraces = (await db.query(`select
+    (select count(*)::integer from private.outbox_events where event_type='relationship.invited') as invited,
+    (select count(*)::integer from private.outbox_events where event_type='relationship.activated') as activated,
+    (select count(*)::integer from private.outbox_events where event_type='notification.requested' and payload->>'recipientRelationship' in ('resident_person','owner_entity')) as notified,
+    (select count(*)::integer from private.notification_jobs where template_code in ('resident_invitation','owner_invitation')) as jobs,
+    (select count(*)::integer from audit.audit_events where action_code='relationship.invited') as invite_audits,
+    (select count(*)::integer from audit.audit_events where action_code='relationship.activated') as activate_audits
+  `)).rows[0];
+  assert(relationshipInviteTraces.invited === 4 && relationshipInviteTraces.activated === 2 && relationshipInviteTraces.notified === 4 && relationshipInviteTraces.jobs === 4 && relationshipInviteTraces.invite_audits === 4 && relationshipInviteTraces.activate_audits === 2, "Relationship invitation audit/outbox/notification trace is incomplete.");
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {
