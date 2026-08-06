@@ -43,6 +43,7 @@ const relationshipInvitationsSql = await readFile(resolve(root, "supabase/migrat
 const maintenanceCostSql = await readFile(resolve(root, "supabase/migrations/20260725100000_phase_6_maintenance_cost.sql"), "utf8");
 const reconciliationResolutionSql = await readFile(resolve(root, "supabase/migrations/20260725110000_phase_5_reconciliation_resolution.sql"), "utf8");
 const receivableWriteOffSql = await readFile(resolve(root, "supabase/migrations/20260725120000_phase_4_receivable_write_off.sql"), "utf8");
+const ownerPortalInviteStateSql = await readFile(resolve(root, "supabase/migrations/20260725130000_phase_8_owner_portal_invite_state.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -784,6 +785,7 @@ async function validateRecurringCharges() {
   await db.exec(maintenanceCostSql);
   await db.exec(reconciliationResolutionSql);
   await db.exec(receivableWriteOffSql);
+  await db.exec(ownerPortalInviteStateSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3364,6 +3366,34 @@ async function validateRecurringCharges() {
     (select count(*)::integer from audit.audit_events where action_code='receivable.written_off' and resource_id='${writeOff.receivableAccountId}') as audits
   `)).rows[0];
   assert(writeOffTraces.events === 1 && writeOffTraces.audits === 1, "Write-off audit/outbox trace is incomplete.");
+
+  // Owner-portal invite state on the operator owner-statement workspace (phase_8_owner_portal_invite_state).
+  // invitedOwnerEntity is active (accepted above); add a not-invited and an invited-only owner to cover
+  // all three states, and rely on ownerEntityA (no email) for the null-email path.
+  const ownerNotInvited = "e6000000-0000-4000-8000-000000000061";
+  const ownerInvitedOnly = "e6000000-0000-4000-8000-000000000062";
+  const ownerInvitedOnlyUser = "e6000000-0000-4000-8000-000000000063";
+  await db.exec(`reset role;
+    insert into public.owner_entities(id,organization_id,display_name,entity_type,email) values
+      ('${ownerNotInvited}','${organization.organizationId}','Not Invited Owner LLC','company','notinvited.owner@example.com'),
+      ('${ownerInvitedOnly}','${organization.organizationId}','Invited Only Owner LLC','company','invitedonly.owner@example.com');
+    insert into public.ownership_interests(id,organization_id,property_id,owner_entity_id,ownership_fraction,effective_from) values
+      ('e6000000-0000-4000-8000-000000000064','${organization.organizationId}','${property.propertyId}','${ownerNotInvited}',0.0001,'2026-01-01'),
+      ('e6000000-0000-4000-8000-000000000065','${organization.organizationId}','${property.propertyId}','${ownerInvitedOnly}',0.0001,'2026-01-01');
+    insert into auth.users(id,email) values ('${ownerInvitedOnlyUser}','invitedonly.owner@example.com');
+    insert into public.user_relationships(id,user_id,organization_id,relationship_type,relationship_id,status) values
+      ('e6000000-0000-4000-8000-000000000066','${ownerInvitedOnlyUser}','${organization.organizationId}','owner_entity','${ownerInvitedOnly}','invited');
+  `);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const inviteStateWorkspace = (await db.query("select public.get_operator_owner_statement_workspace() as result")).rows[0].result;
+  const activeOwnerRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === invitedOwnerEntity);
+  const notInvitedRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerNotInvited);
+  const invitedOnlyRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerInvitedOnly);
+  const noEmailRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerEntityA);
+  assert(activeOwnerRow && activeOwnerRow.invitationState === "active" && activeOwnerRow.email === ownerEmail, "Owner-statement workspace did not surface the accepted owner as active with their email.");
+  assert(notInvitedRow && notInvitedRow.invitationState === "not_invited" && notInvitedRow.email === "notinvited.owner@example.com", "Owner-statement workspace did not surface a not-invited owner.");
+  assert(invitedOnlyRow && invitedOnlyRow.invitationState === "invited" && invitedOnlyRow.email === "invitedonly.owner@example.com", "Owner-statement workspace did not surface an invited owner.");
+  assert(noEmailRow && noEmailRow.invitationState === "active" && noEmailRow.email === null, "Owner-statement workspace did not surface a null email for an owner entity without one.");
 
   await db.close();
   return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
