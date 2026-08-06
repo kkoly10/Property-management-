@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAndAssignWorkOrderSchema, createVendorSchema, ownerApprovalDecisionSchema, submitMaintenanceRequestSchema, transitionWorkOrderSchema } from "./maintenance";
+import { createAndAssignWorkOrderSchema, createVendorSchema, ownerApprovalDecisionSchema, recordWorkOrderCostSchema, submitMaintenanceRequestSchema, transitionWorkOrderSchema } from "./maintenance";
 
 const valid = {
   tenancyId: "20000000-0000-4000-8000-000000000002",
@@ -73,6 +73,26 @@ describe("work order validation", () => {
 
   it("requires both ends of a schedule transition's visit window", () => {
     expect(transitionWorkOrderSchema.safeParse({ expectedVersion: 2, transition: "schedule", scheduledStart: "2026-07-27T13:00:00-04:00" }).success).toBe(false);
+  });
+});
+
+describe("work order cost validation", () => {
+  const validCost = { organizationId: "10000000-0000-4000-8000-000000000001", amountMinor: 32000, currencyCode: "USD" as const, memo: "Replaced trap and gasket." };
+
+  it("accepts a well-formed cost with and without a memo", () => {
+    expect(recordWorkOrderCostSchema.parse(validCost)).toMatchObject({ amountMinor: 32000, currencyCode: "USD" });
+    expect(recordWorkOrderCostSchema.safeParse({ ...validCost, memo: undefined }).success).toBe(true);
+  });
+
+  it("rejects non-positive, fractional, or wrongly-typed amounts", () => {
+    expect(recordWorkOrderCostSchema.safeParse({ ...validCost, amountMinor: 0 }).success).toBe(false);
+    expect(recordWorkOrderCostSchema.safeParse({ ...validCost, amountMinor: -100 }).success).toBe(false);
+    expect(recordWorkOrderCostSchema.safeParse({ ...validCost, amountMinor: 12.5 }).success).toBe(false);
+  });
+
+  it("rejects an unsupported currency and an over-long memo", () => {
+    expect(recordWorkOrderCostSchema.safeParse({ ...validCost, currencyCode: "EUR" }).success).toBe(false);
+    expect(recordWorkOrderCostSchema.safeParse({ ...validCost, memo: "x".repeat(241) }).success).toBe(false);
   });
 });
 

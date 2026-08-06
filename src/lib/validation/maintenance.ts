@@ -79,7 +79,15 @@ export const ownerApprovalDecisionSchema = z.object({
   }
 });
 
+export const recordWorkOrderCostSchema = z.object({
+  organizationId: z.uuid(),
+  amountMinor: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  currencyCode: z.enum(["USD", "CAD", "MXN"]),
+  memo: z.string().trim().min(1).max(240).optional(),
+});
+
 export type CreateVendorInput = z.infer<typeof createVendorSchema>;
 export type CreateAndAssignWorkOrderInput = z.infer<typeof createAndAssignWorkOrderSchema>;
 export type TransitionWorkOrderInput = z.infer<typeof transitionWorkOrderSchema>;
 export type OwnerApprovalDecisionInput = z.infer<typeof ownerApprovalDecisionSchema>;
+export type RecordWorkOrderCostInput = z.infer<typeof recordWorkOrderCostSchema>;

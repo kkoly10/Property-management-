@@ -40,6 +40,7 @@ const notificationPreferencesSql = await readFile(resolve(root, "supabase/migrat
 const operatorCommandCenterSql = await readFile(resolve(root, "supabase/migrations/20260724145515_phase_8_operator_command_center.sql"), "utf8");
 const operatorGlobalSearchSql = await readFile(resolve(root, "supabase/migrations/20260724235523_phase_8_operator_global_search.sql"), "utf8");
 const relationshipInvitationsSql = await readFile(resolve(root, "supabase/migrations/20260725090000_phase_8_relationship_invitations.sql"), "utf8");
+const maintenanceCostSql = await readFile(resolve(root, "supabase/migrations/20260725100000_phase_6_maintenance_cost.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -778,6 +779,7 @@ async function validateRecurringCharges() {
   await db.exec(operatorCommandCenterSql);
   await db.exec(operatorGlobalSearchSql);
   await db.exec(relationshipInvitationsSql);
+  await db.exec(maintenanceCostSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3139,6 +3141,42 @@ async function validateRecurringCharges() {
   )`), "TENANCY_SCOPE_DENIED");
   assert(outsiderSummary.items.length === 0 && outsiderCharges === 0 && outsiderPayments === 0 && outsiderAttempts === 0 && outsiderRefunds === 0 && outsiderSettlements === 0, "Resident finance or settlement data leaked to an unrelated user.");
 
+  // Maintenance cost posting to the ledger (phase_6_maintenance_cost). workOrder is closed,
+  // highCostWorkOrder is canceled by this point.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'USD','Sink parts and labor','work-order-cost-denied-0001')`), "PROPERTY_SCOPE_DENIED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const costGuardRequest = (await db.query(`select public.submit_maintenance_request('${activation.tenancyId}','plumbing','Cost guard request','A maintenance request used to test cost-before-completion.',null,null,'[]'::jsonb,array[]::uuid[],'work-order-cost-guard-req-0001') as result`)).rows[0].result;
+  const costGuardWorkOrder = (await db.query(`select public.create_and_assign_work_order('${organization.organizationId}','${costGuardRequest.maintenanceRequestId}','${vendor.vendorId}','Guard scope for a not-yet-completed work order.',null,null,null,null,false,null,'work-order-cost-guard-wo-0001') as result`)).rows[0].result;
+  await expectDatabaseError(() => db.query(`select public.record_work_order_cost('${organization.organizationId}','${costGuardWorkOrder.workOrderId}',10000,'USD','Not done yet','work-order-cost-notdone-0001')`), "WORK_ORDER_NOT_COMPLETED");
+  await expectDatabaseError(() => db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'CAD','Wrong currency','work-order-cost-currency-0001')`), "WORK_ORDER_COST_CURRENCY_MISMATCH");
+  const workOrderCost = (await db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'USD','Sink parts and labor','work-order-cost-0001') as result`)).rows[0].result;
+  assert(workOrderCost.journalTransactionId && workOrderCost.amountMinor === 32000 && workOrderCost.currencyCode === "USD", "Work-order cost posting did not return its canonical journal.");
+  const workOrderCostReplay = (await db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'USD','Sink parts and labor','work-order-cost-0001') as result`)).rows[0].result;
+  assert(workOrderCostReplay.journalTransactionId === workOrderCost.journalTransactionId, "Work-order cost replay did not return the canonical journal.");
+  await expectDatabaseError(() => db.query(`select public.record_work_order_cost('${organization.organizationId}','${workOrder.workOrderId}',32000,'USD','Sink parts and labor','work-order-cost-again-0002')`), "WORK_ORDER_COST_ALREADY_POSTED");
+  await db.exec("reset role");
+  const costPosting = (await db.query(`select
+    sum(e.debit_minor)::integer as debits, sum(e.credit_minor)::integer as credits,
+    count(*) filter (where la.account_class='expense' and la.account_code='6200' and e.debit_minor>0 and e.property_id='${property.propertyId}')::integer as expense_legs,
+    count(*) filter (where la.account_class='liability' and la.account_code='2000' and e.credit_minor>0)::integer as payable_legs,
+    t.transaction_type
+    from public.journal_transactions t
+    join public.journal_entries e on e.journal_transaction_id=t.id
+    join public.ledger_accounts la on la.id=e.ledger_account_id
+    where t.id='${workOrderCost.journalTransactionId}' group by t.transaction_type`)).rows[0];
+  assert(costPosting.debits === 32000 && costPosting.credits === 32000 && costPosting.expense_legs === 1 && costPosting.payable_legs === 1 && costPosting.transaction_type === "maintenance_cost", "Work-order cost journal is not a balanced expense/payable posting carrying the property.");
+  await expectDatabaseError(() => db.query(`update public.journal_transactions set metadata='{}'::jsonb where id='${workOrderCost.journalTransactionId}'`), "APPEND_ONLY_RECORD");
+  const costTraces = (await db.query(`select
+    (select count(*)::integer from private.outbox_events where event_type='work_order.cost_posted') as events,
+    (select count(*)::integer from audit.audit_events where action_code='work_order.cost_posted') as audits
+  `)).rows[0];
+  assert(costTraces.events === 1 && costTraces.audits === 1, "Work-order cost audit/outbox trace is incomplete.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const maintenanceAfterCost = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const costedItem = maintenanceAfterCost.items.find((item) => item.workOrder && item.workOrder.workOrderId === workOrder.workOrderId);
+  assert(costedItem && costedItem.workOrder.cost && costedItem.workOrder.cost.amountMinor === 32000 && costedItem.workOrder.cost.currencyCode === "USD", "Operator workspace did not surface the posted work-order cost.");
+
   // Relationship-user invitation and activation (phase_8_relationship_invitations).
   const invitedResidentPerson = "e5000000-0000-4000-8000-000000000051";
   const invitedResidentUser = "e5000000-0000-4000-8000-000000000052";
@@ -3222,7 +3260,7 @@ async function validateRecurringCharges() {
   assert(relationshipInviteTraces.invited === 4 && relationshipInviteTraces.activated === 2 && relationshipInviteTraces.notified === 4 && relationshipInviteTraces.jobs === 4 && relationshipInviteTraces.invite_audits === 4 && relationshipInviteTraces.activate_audits === 2, "Relationship invitation audit/outbox/notification trace is incomplete.");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

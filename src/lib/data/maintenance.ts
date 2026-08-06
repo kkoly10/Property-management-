@@ -19,6 +19,7 @@ export type OperatorWorkOrder = {
   estimatedCostMinor: number | null; actualCostMinor: number | null; currencyCode: string | null;
   ownerApprovalRequired: boolean; ownerApprovalStatus: string | null;
   canceledReason: string | null; version: number; evidenceCount: number;
+  cost: { journalTransactionId: string; amountMinor: number; currencyCode: string } | null;
 };
 export type OperatorMaintenanceItem = {
   maintenanceRequestId: string; organizationId: string; publicReference: string; propertyName: string; unitCode: string; category: string;
@@ -68,7 +69,14 @@ function normalizeWorkOrder(value: unknown): OperatorWorkOrder | null {
     currencyCode: w.currencyCode ? String(w.currencyCode) : null,
     ownerApprovalRequired: Boolean(w.ownerApprovalRequired), ownerApprovalStatus: w.ownerApprovalStatus ? String(w.ownerApprovalStatus) : null,
     canceledReason: w.canceledReason ? String(w.canceledReason) : null, version: Number(w.version), evidenceCount: Number(w.evidenceCount),
+    cost: normalizeWorkOrderCost(w.cost),
   };
+}
+function normalizeWorkOrderCost(value: unknown): OperatorWorkOrder["cost"] {
+  if (!value || typeof value !== "object") return null;
+  const c = value as Record<string, unknown>;
+  if (!c.journalTransactionId) return null;
+  return { journalTransactionId: String(c.journalTransactionId), amountMinor: Number(c.amountMinor), currencyCode: String(c.currencyCode) };
 }
 function normalizeOperatorItems(data: unknown): OperatorMaintenanceItem[] {
   return objects(data, "items").map((raw) => { const item = raw as Record<string, unknown>; return {
