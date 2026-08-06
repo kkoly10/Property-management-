@@ -63,6 +63,7 @@ export async function getExistingLeaseOptions(): Promise<{
 
 export type ResidentDirectoryRow = {
   personId: string;
+  organizationId: string;
   name: string;
   email: string | null;
   phoneE164: string | null;
@@ -74,25 +75,25 @@ export type ResidentDirectoryRow = {
   leaseEnd: string | null;
   rentAmountMinor: number;
   currencyCode: string;
-  invitationState: "active" | "not_invited";
+  invitationState: "active" | "invited" | "not_invited";
 };
 
 export async function getResidentDirectory(): Promise<{ mode: "setup" | "ready" | "error"; residents: ResidentDirectoryRow[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return {
     mode: "setup",
-    residents: [{ personId: "preview-resident", name: "Jordan Rivera", email: "jordan@example.com", phoneE164: "+1 202 555 0110", householdName: "Rivera household", propertyName: "Maple Court", unitCode: "101", tenancyStatus: "active", leaseStart: "2026-01-01", leaseEnd: "2026-12-31", rentAmountMinor: 185000, currencyCode: "USD", invitationState: "not_invited" }],
+    residents: [{ personId: "preview-resident", organizationId: "20000000-0000-4000-8000-000000000002", name: "Jordan Rivera", email: "jordan@example.com", phoneE164: "+1 202 555 0110", householdName: "Rivera household", propertyName: "Maple Court", unitCode: "101", tenancyStatus: "active", leaseStart: "2026-01-01", leaseEnd: "2026-12-31", rentAmountMinor: 185000, currencyCode: "USD", invitationState: "not_invited" }],
   };
   try {
     const supabase = await createClient();
     const [{ data: people, error: peopleError }, { data: members }, { data: households }, { data: tenancies }, { data: leases }, { data: properties }, { data: units }, { data: relationships }] = await Promise.all([
-      supabase.from("people").select("id,first_name,last_name,email,phone_e164").is("archived_at", null),
+      supabase.from("people").select("id,organization_id,first_name,last_name,email,phone_e164").is("archived_at", null),
       supabase.from("household_members").select("household_id,person_id,ends_on"),
       supabase.from("households").select("id,display_name"),
       supabase.from("tenancies").select("id,property_id,unit_id,household_id,lease_id,status").in("status", ["scheduled", "active", "notice_given", "move_out_in_progress"]),
       supabase.from("leases").select("id,start_date,end_date,rent_amount_minor,currency_code"),
       supabase.from("properties").select("id,name"),
       supabase.from("units").select("id,unit_code"),
-      supabase.from("user_relationships").select("relationship_id,status").eq("relationship_type", "resident_person").eq("status", "active"),
+      supabase.from("user_relationships").select("relationship_id,status").eq("relationship_type", "resident_person").in("status", ["active", "invited"]),
     ]);
     if (peopleError) throw peopleError;
     const householdById = new Map((households ?? []).map((household) => [household.id, household]));
@@ -100,7 +101,10 @@ export async function getResidentDirectory(): Promise<{ mode: "setup" | "ready" 
     const leaseById = new Map((leases ?? []).map((lease) => [lease.id, lease]));
     const propertyById = new Map((properties ?? []).map((property) => [property.id, property.name]));
     const unitById = new Map((units ?? []).map((unit) => [unit.id, unit.unit_code]));
-    const activeRelationships = new Set((relationships ?? []).map((relationship) => relationship.relationship_id));
+    const relationshipState = new Map<string, string>();
+    for (const relationship of relationships ?? []) {
+      if (relationship.status === "active" || !relationshipState.has(relationship.relationship_id)) relationshipState.set(relationship.relationship_id, relationship.status);
+    }
     const personById = new Map((people ?? []).map((person) => [person.id, person]));
     const residents: ResidentDirectoryRow[] = [];
     for (const member of members ?? []) {
@@ -110,8 +114,10 @@ export async function getResidentDirectory(): Promise<{ mode: "setup" | "ready" 
       const tenancy = tenancyByHousehold.get(member.household_id);
       const lease = tenancy ? leaseById.get(tenancy.lease_id) : undefined;
       if (!person || !household || !tenancy || !lease) continue;
+      const relationship = relationshipState.get(person.id);
       residents.push({
         personId: person.id,
+        organizationId: person.organization_id,
         name: `${person.first_name} ${person.last_name}`,
         email: person.email,
         phoneE164: person.phone_e164,
@@ -123,7 +129,7 @@ export async function getResidentDirectory(): Promise<{ mode: "setup" | "ready" 
         leaseEnd: lease.end_date,
         rentAmountMinor: Number(lease.rent_amount_minor),
         currencyCode: lease.currency_code,
-        invitationState: activeRelationships.has(person.id) ? "active" : "not_invited",
+        invitationState: relationship === "active" ? "active" : relationship === "invited" ? "invited" : "not_invited",
       });
     }
     residents.sort((a, b) => a.name.localeCompare(b.name));
