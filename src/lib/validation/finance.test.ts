@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createResidentPaymentSessionSchema, generateRecurringChargesSchema, recordManualPaymentSchema, refundPaymentSchema } from "@/lib/validation/finance";
+import { createResidentPaymentSessionSchema, generateRecurringChargesSchema, recordManualPaymentSchema, refundPaymentSchema, resolveReconciliationExceptionSchema } from "@/lib/validation/finance";
 
 describe("generateRecurringChargesSchema", () => {
   it("accepts a bounded worker run", () => {
@@ -83,5 +83,24 @@ describe("refundPaymentSchema", () => {
     expect(refundPaymentSchema.safeParse({ ...refund, amountMinor: 0 }).success).toBe(false);
     expect(refundPaymentSchema.safeParse({ ...refund, expectedVersion: 0 }).success).toBe(false);
     expect(refundPaymentSchema.safeParse({ ...refund, providerChargeId: "ch_forged" }).success).toBe(false);
+  });
+});
+
+describe("resolveReconciliationExceptionSchema", () => {
+  const organizationId = "10000000-0000-4000-8000-000000000001";
+
+  it("requires an evidence note to resolve or waive, but not to escalate", () => {
+    expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "resolved", evidence: "Confirmed against the bank record." }).success).toBe(true);
+    expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "waived", evidence: "Immaterial rounding difference." }).success).toBe(true);
+    expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "escalated" }).success).toBe(true);
+    expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "resolved" }).success).toBe(false);
+    expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "waived" }).success).toBe(false);
+  });
+
+  it("rejects unsupported resolutions, short or long evidence, and extra fields", () => {
+    expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "dismissed", evidence: "A valid length note." }).success).toBe(false);
+    expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "resolved", evidence: "short" }).success).toBe(false);
+    expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "resolved", evidence: "x".repeat(1001) }).success).toBe(false);
+    expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "escalated", note: "extra" }).success).toBe(false);
   });
 });

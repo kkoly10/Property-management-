@@ -41,6 +41,7 @@ const operatorCommandCenterSql = await readFile(resolve(root, "supabase/migratio
 const operatorGlobalSearchSql = await readFile(resolve(root, "supabase/migrations/20260724235523_phase_8_operator_global_search.sql"), "utf8");
 const relationshipInvitationsSql = await readFile(resolve(root, "supabase/migrations/20260725090000_phase_8_relationship_invitations.sql"), "utf8");
 const maintenanceCostSql = await readFile(resolve(root, "supabase/migrations/20260725100000_phase_6_maintenance_cost.sql"), "utf8");
+const reconciliationResolutionSql = await readFile(resolve(root, "supabase/migrations/20260725110000_phase_5_reconciliation_resolution.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -780,6 +781,7 @@ async function validateRecurringCharges() {
   await db.exec(operatorGlobalSearchSql);
   await db.exec(relationshipInvitationsSql);
   await db.exec(maintenanceCostSql);
+  await db.exec(reconciliationResolutionSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3258,6 +3260,56 @@ async function validateRecurringCharges() {
     (select count(*)::integer from audit.audit_events where action_code='relationship.activated') as activate_audits
   `)).rows[0];
   assert(relationshipInviteTraces.invited === 4 && relationshipInviteTraces.activated === 2 && relationshipInviteTraces.notified === 4 && relationshipInviteTraces.jobs === 4 && relationshipInviteTraces.invite_audits === 4 && relationshipInviteTraces.activate_audits === 2, "Relationship invitation audit/outbox/notification trace is incomplete.");
+
+  // Reconciliation-exception resolution (phase_5_reconciliation_resolution). The po_CrecyMismatch001
+  // batch left two open exceptions above; drive resolve/waive/escalate against them.
+  await db.exec("reset role");
+  const mismatchExceptions = (await db.query(`select id,exception_type,status from public.reconciliation_exceptions
+    where settlement_batch_id='${mismatch.settlementId}' order by exception_type,id`)).rows;
+  assert(mismatchExceptions.length === 2 && mismatchExceptions.every((row) => row.status === "open"), "Expected two open reconciliation exceptions on the mismatch batch.");
+  const exceptionA = mismatchExceptions[0].id;
+  const exceptionB = mismatchExceptions[1].id;
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved','Matched to the corrected payout total.','recon-denied-000001')`), "FINANCE_SCOPE_DENIED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','dismissed','x','recon-badres-000001')`), "INVALID_RESOLUTION");
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved',null,'recon-noev-0000001')`), "RESOLUTION_EVIDENCE_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${"0".repeat(8)}-0000-4000-8000-000000009999','resolved','No such exception here.','recon-nf-00000001')`), "RECONCILIATION_EXCEPTION_NOT_FOUND");
+
+  const escalation = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','escalated','Needs finance-lead review before closing.','recon-escalate-0001') as result`)).rows[0].result;
+  assert(escalation.status === "escalated" && escalation.batchCleared === false, "Escalation did not keep the exception open on the batch.");
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','escalated','Escalating again.','recon-escalate-0002')`), "EXCEPTION_ALREADY_ESCALATED");
+  await db.exec("reset role");
+  const escalatedRow = (await db.query(`select status,resolved_at,resolved_by from public.reconciliation_exceptions where id='${exceptionA}'`)).rows[0];
+  assert(escalatedRow.status === "escalated" && escalatedRow.resolved_at === null && escalatedRow.resolved_by === null, "Escalated exception must not carry a resolver.");
+  const batchAfterEscalate = (await db.query(`select reconciliation_status from public.settlement_batches where id='${mismatch.settlementId}'`)).rows[0].reconciliation_status;
+  assert(batchAfterEscalate === "exception", "Batch left its exception state while an escalated exception remained.");
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const resolvedA = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved','Confirmed the payout total against the bank record.','recon-resolveA-0001') as result`)).rows[0].result;
+  assert(resolvedA.status === "resolved" && resolvedA.resolvedAt && resolvedA.batchCleared === false, "Resolving the first of two exceptions should not clear the batch.");
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','waived','Trying to re-close a closed exception.','recon-reclose-0001')`), "EXCEPTION_ALREADY_RESOLVED");
+  const waivedB = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionB}','waived','Immaterial rounding difference; waived per policy.','recon-waiveB-00001') as result`)).rows[0].result;
+  assert(waivedB.status === "waived" && waivedB.batchCleared === true, "Waiving the last open exception must clear the batch.");
+  const waivedBReplay = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionB}','waived','Immaterial rounding difference; waived per policy.','recon-waiveB-00001') as result`)).rows[0].result;
+  assert(waivedBReplay.reconciliationExceptionId === waivedB.reconciliationExceptionId && waivedBReplay.status === "waived", "Waive replay did not return the stored response.");
+
+  await db.exec("reset role");
+  const resolvedRows = (await db.query(`select status,resolved_by,resolution_evidence from public.reconciliation_exceptions where id in ('${exceptionA}','${exceptionB}') order by status`)).rows;
+  assert(resolvedRows[0].status === "resolved" && resolvedRows[0].resolved_by === admin && resolvedRows[1].status === "waived" && resolvedRows[1].resolved_by === admin, "Resolved/waived exceptions must carry the resolver and status.");
+  const clearedBatch = (await db.query(`select reconciliation_status from public.settlement_batches where id='${mismatch.settlementId}'`)).rows[0].reconciliation_status;
+  assert(clearedBatch === "unreconciled", "Batch did not return to unreconciled after all its exceptions were closed.");
+  const resolutionTraces = (await db.query(`select
+    (select count(*)::integer from private.outbox_events where event_type='reconciliation.exception_resolved' and aggregate_id in ('${exceptionA}','${exceptionB}')) as resolved_events,
+    (select count(*)::integer from private.outbox_events where event_type='reconciliation.exception_escalated' and aggregate_id='${exceptionA}') as escalated_events,
+    (select count(*)::integer from audit.audit_events where action_code='reconciliation.exception_resolved' and resource_id in ('${exceptionA}','${exceptionB}')) as resolved_audits,
+    (select count(*)::integer from audit.audit_events where action_code='reconciliation.exception_escalated' and resource_id='${exceptionA}') as escalated_audits
+  `)).rows[0];
+  assert(resolutionTraces.resolved_events === 2 && resolutionTraces.escalated_events === 1 && resolutionTraces.resolved_audits === 2 && resolutionTraces.escalated_audits === 1, "Reconciliation-resolution audit/outbox trace is incomplete.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const workspaceAfterResolution = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  assert(!workspaceAfterResolution.exceptions.some((row) => row.settlementId === mismatch.settlementId), "Resolved/waived exceptions still appear on the operator reconciliation queue.");
 
   await db.close();
   return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
