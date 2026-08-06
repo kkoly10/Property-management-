@@ -19,9 +19,10 @@ export function InviteResidentButton({ personId, organizationId, email, invitati
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [alreadyActive, setAlreadyActive] = useState(false);
   const idempotencyKey = useRef<string | null>(null);
 
-  if (invitationState === "active") return <Badge variant="info">Portal active</Badge>;
+  if (invitationState === "active" || alreadyActive) return <Badge variant="info">Portal active</Badge>;
 
   async function invite() {
     if (disabled || pending || !email) return;
@@ -34,8 +35,14 @@ export function InviteResidentButton({ personId, organizationId, email, invitati
         headers: { "content-type": "application/json", "idempotency-key": idempotencyKey.current },
         body: JSON.stringify({ organizationId, relationshipType: "resident_person", relationshipId: personId, email, locale: "en-US", redirectSurface: "crecy_living" }),
       });
-      const body = await response.json() as { error?: string };
-      if (!response.ok) { idempotencyKey.current = null; throw new Error(body.error ?? "The invitation could not be sent."); }
+      const body = await response.json() as { error?: string; code?: string };
+      if (!response.ok) {
+        // A caller with resident.manage but not organization.manage cannot read user_relationships,
+        // so the directory may show "not invited" for an already-active resident. Reflect the truth.
+        if (body.code === "RELATIONSHIP_ALREADY_ACTIVE") { setAlreadyActive(true); router.refresh(); return; }
+        idempotencyKey.current = null;
+        throw new Error(body.error ?? "The invitation could not be sent.");
+      }
       setSent(true);
       router.refresh();
     } catch (caught) {
