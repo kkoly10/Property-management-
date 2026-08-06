@@ -3291,13 +3291,22 @@ async function validateRecurringCharges() {
   assert(batchAfterEscalate === "exception", "Batch left its exception state while an escalated exception remained.");
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const resolvedA = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved','Confirmed the payout total against the bank record.','recon-resolveA-0001') as result`)).rows[0].result;
-  assert(resolvedA.status === "resolved" && resolvedA.resolvedAt && resolvedA.batchCleared === false, "Resolving the first of two exceptions should not clear the batch.");
-  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','waived','Trying to re-close a closed exception.','recon-reclose-0001')`), "EXCEPTION_ALREADY_RESOLVED");
+  // Close the OTHER exception (B) while A is still escalated. The batch must NOT clear, because an
+  // unresolved escalated exception still blocks it — this is what makes the 'escalated' arm of the
+  // batch-clear predicate load-bearing (a settlement mismatch cannot be silently closed). If the
+  // predicate were mutated to only ('open'), this assertion would flip and catch it.
   const waivedB = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionB}','waived','Immaterial rounding difference; waived per policy.','recon-waiveB-00001') as result`)).rows[0].result;
-  assert(waivedB.status === "waived" && waivedB.batchCleared === true, "Waiving the last open exception must clear the batch.");
-  const waivedBReplay = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionB}','waived','Immaterial rounding difference; waived per policy.','recon-waiveB-00001') as result`)).rows[0].result;
-  assert(waivedBReplay.reconciliationExceptionId === waivedB.reconciliationExceptionId && waivedBReplay.status === "waived", "Waive replay did not return the stored response.");
+  assert(waivedB.status === "waived" && waivedB.batchCleared === false, "Closing the open exception wrongly cleared the batch while an escalated exception was still its sole blocker.");
+  await db.exec("reset role");
+  const batchWithEscalatedBlocker = (await db.query(`select reconciliation_status from public.settlement_batches where id='${mismatch.settlementId}'`)).rows[0].reconciliation_status;
+  assert(batchWithEscalatedBlocker === "exception", "Batch left its exception state while an escalated exception was still its sole blocker.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionB}','resolved','Trying to re-close a closed exception.','recon-reclose-0001')`), "EXCEPTION_ALREADY_RESOLVED");
+  // Now resolve the previously-escalated A: it is the last blocker, so the batch clears.
+  const resolvedA = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved','Confirmed the payout total against the bank record.','recon-resolveA-0001') as result`)).rows[0].result;
+  assert(resolvedA.status === "resolved" && resolvedA.resolvedAt && resolvedA.batchCleared === true, "Resolving the last (previously escalated) exception did not clear the batch.");
+  const resolvedAReplay = (await db.query(`select public.resolve_reconciliation_exception('${organization.organizationId}','${exceptionA}','resolved','Confirmed the payout total against the bank record.','recon-resolveA-0001') as result`)).rows[0].result;
+  assert(resolvedAReplay.reconciliationExceptionId === resolvedA.reconciliationExceptionId && resolvedAReplay.status === "resolved", "Resolve replay did not return the stored response.");
 
   await db.exec("reset role");
   const resolvedRows = (await db.query(`select status,resolved_by,resolution_evidence from public.reconciliation_exceptions where id in ('${exceptionA}','${exceptionB}') order by status`)).rows;
@@ -3315,12 +3324,16 @@ async function validateRecurringCharges() {
   const workspaceAfterResolution = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
   assert(!workspaceAfterResolution.exceptions.some((row) => row.settlementId === mismatch.settlementId), "Resolved/waived exceptions still appear on the operator reconciliation queue.");
 
-  // Receivable write-off (phase_4_receivable_write_off). Generate a fresh September rent charge on
-  // the finance tenancy (the schedule advanced to 2026-09-30) and write it off in full.
+  // Receivable write-off (phase_4_receivable_write_off). Generate two fresh rent charges (the schedule
+  // advanced to 2026-09-30, then 2026-10-31); partially pay September so its write-off posts the
+  // REMAINING not the face amount, then write off BOTH in one call to exercise multi-charge aggregation.
   await db.exec(`reset role; set role service_role`);
-  const writeOffGen = (await db.query(`select public.generate_recurring_charges('2026-09-30',array['${activation.chargeScheduleId}'::uuid],'finance-writeoff-gen-0001') as result`)).rows[0].result;
-  assert(writeOffGen.generatedCount === 1 && writeOffGen.chargeIds.length === 1, "Fresh write-off charge was not generated.");
-  const writeOffCharge = writeOffGen.chargeIds[0];
+  const writeOffGenSep = (await db.query(`select public.generate_recurring_charges('2026-09-30',array['${activation.chargeScheduleId}'::uuid],'finance-writeoff-gen-0001') as result`)).rows[0].result;
+  assert(writeOffGenSep.generatedCount === 1 && writeOffGenSep.chargeIds.length === 1, "Fresh September write-off charge was not generated.");
+  const writeOffCharge = writeOffGenSep.chargeIds[0];
+  const writeOffGenOct = (await db.query(`select public.generate_recurring_charges('2026-10-31',array['${activation.chargeScheduleId}'::uuid],'finance-writeoff-gen-0002') as result`)).rows[0].result;
+  assert(writeOffGenOct.generatedCount === 1 && writeOffGenOct.chargeIds.length === 1, "Fresh October write-off charge was not generated.");
+  const writeOffChargeOct = writeOffGenOct.chargeIds[0];
   // Partially pay the fresh charge so the write-off must post the REMAINING (185000-60000), not the
   // charge face amount — this is what proves the remaining computation rather than a full-amount post.
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
@@ -3337,10 +3350,14 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'  ','writeoff-noreason-0001')`), "INVALID_WRITE_OFF_REASON");
   await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array[]::uuid[],'Empty charge set.','writeoff-nocharge-0001')`), "INVALID_WRITE_OFF_CHARGES");
   await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${"0".repeat(8)}-0000-4000-8000-000000007777']::uuid[],'That charge does not belong here.','writeoff-badcharge-01')`), "WRITE_OFF_CHARGE_NOT_AVAILABLE");
+  // A set mixing a writable charge with an unavailable one is rejected wholesale (the count check).
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}','${"0".repeat(8)}-0000-4000-8000-000000007777']::uuid[],'Mixed valid and invalid charges.','writeoff-mixed-000001')`), "WRITE_OFF_CHARGE_NOT_AVAILABLE");
 
-  const writeOff = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'Tenant moved out; the remaining rent is uncollectible.','writeoff-0001') as result`)).rows[0].result;
-  assert(writeOff.writtenOffMinor === 125000 && writeOff.chargeCount === 1 && writeOff.journalTransactionId && writeOff.currencyCode === "USD", "Write-off posted the charge face amount instead of the remaining balance after the partial payment.");
-  const writeOffReplay = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'Tenant moved out; the remaining rent is uncollectible.','writeoff-0001') as result`)).rows[0].result;
+  // Write off BOTH charges in one call: 125000 (September remaining after the partial payment) + 185000
+  // (October in full) = 310000, proving both the remaining computation and multi-charge aggregation.
+  const writeOff = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}','${writeOffChargeOct}']::uuid[],'Tenant moved out; the remaining rent is uncollectible.','writeoff-0001') as result`)).rows[0].result;
+  assert(writeOff.writtenOffMinor === 310000 && writeOff.chargeCount === 2 && writeOff.journalTransactionId && writeOff.currencyCode === "USD", "Multi-charge write-off did not aggregate the two charges' remaining balances (125000 September + 185000 October).");
+  const writeOffReplay = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}','${writeOffChargeOct}']::uuid[],'Tenant moved out; the remaining rent is uncollectible.','writeoff-0001') as result`)).rows[0].result;
   assert(writeOffReplay.journalTransactionId === writeOff.journalTransactionId, "Write-off replay did not return the canonical journal.");
   await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'Attempting to write off an already-written-off charge.','writeoff-again-00001')`), "WRITE_OFF_CHARGE_NOT_AVAILABLE");
 
@@ -3353,13 +3370,12 @@ async function validateRecurringCharges() {
     (select count(*)::integer from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
       where e.journal_transaction_id='${writeOff.journalTransactionId}' and a.account_code='1100' and e.credit_minor>0 and e.tenancy_id='${activation.tenancyId}') as ar_legs,
     (select t.transaction_type from public.journal_transactions t where t.id='${writeOff.journalTransactionId}') as transaction_type,
-    (select c.status from public.charges c where c.id='${writeOffCharge}') as charge_status,
-    (select (c.voided_by_transaction_id='${writeOff.journalTransactionId}') from public.charges c where c.id='${writeOffCharge}') as charge_linked,
+    (select count(*)::integer from public.charges c where c.id in ('${writeOffCharge}','${writeOffChargeOct}') and c.status='written_off' and c.voided_by_transaction_id='${writeOff.journalTransactionId}') as linked_written_off,
     (select coalesce(sum(e.debit_minor-e.credit_minor),0)::integer from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
       where e.tenancy_id='${activation.tenancyId}' and a.account_code='1100') as balance_after`)).rows[0];
-  assert(writeOffPosting.debits === 125000 && writeOffPosting.credits === 125000 && writeOffPosting.expense_legs === 1 && writeOffPosting.ar_legs === 1 && writeOffPosting.transaction_type === "receivable_write_off", "Write-off journal is not a balanced bad-debt/AR posting carrying the property and tenancy.");
-  assert(writeOffPosting.charge_status === "written_off" && writeOffPosting.charge_linked === true, "Written-off charge did not flip status or link its terminating transaction.");
-  assert(balanceBefore - writeOffPosting.balance_after === 125000, "Write-off did not reduce the tenancy receivable balance by the remaining (post-payment) amount.");
+  assert(writeOffPosting.debits === 310000 && writeOffPosting.credits === 310000 && writeOffPosting.expense_legs === 2 && writeOffPosting.ar_legs === 2 && writeOffPosting.transaction_type === "receivable_write_off", "Multi-charge write-off journal is not a balanced bad-debt/AR posting with one leg pair per charge.");
+  assert(writeOffPosting.linked_written_off === 2, "Both written-off charges did not flip status and link the terminating transaction.");
+  assert(balanceBefore - writeOffPosting.balance_after === 310000, "Write-off did not reduce the tenancy receivable balance by the summed remaining amounts.");
   await expectDatabaseError(() => db.query(`update public.journal_transactions set metadata='{}'::jsonb where id='${writeOff.journalTransactionId}'`), "APPEND_ONLY_RECORD");
   const writeOffTraces = (await db.query(`select
     (select count(*)::integer from private.outbox_events where event_type='receivable.written_off' and aggregate_id='${writeOff.receivableAccountId}') as events,
