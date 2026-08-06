@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getOperatorPaymentWorkspace, type ReceivableSummaryItem } from "@/lib/data/finance";
 import { ResolveExceptionControl } from "./resolve-exception-control";
+import { WriteOffChargesForm } from "./write-off-charges-form";
 
 export const dynamic = "force-dynamic";
 const money = (amount: number, currency: string) => new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount / 100);
@@ -47,5 +48,6 @@ export default async function PaymentsPage() {
       </Card>
     </section>
     <Card><CardHeader className="border-b"><CardTitle>Resident balances</CardTitle><CardDescription>Remaining amounts reflect allocations posted to accounts receivable.</CardDescription></CardHeader><CardContent className="p-0"><div className="divide-y">{workspace.items.map((item) => <div key={item.tenancyId} className="grid gap-3 px-5 py-5 sm:grid-cols-3 sm:items-center"><div><p className="font-semibold">{item.propertyName}</p><p className="text-sm text-muted-foreground">Unit {item.unitCode}</p></div><p className="font-mono font-semibold">{money(item.balanceMinor, item.currencyCode)}</p><div className="sm:text-right"><p className="text-sm">{item.nextDueDate ?? "No upcoming charge"}</p>{item.nextDueAmountMinor != null ? <p className="font-mono text-xs text-muted-foreground">{money(item.nextDueAmountMinor, item.currencyCode)} remaining</p> : null}</div></div>)}</div></CardContent></Card>
+    {workspace.options.some((option) => option.charges.length) ? <Card><CardHeader className="border-b"><CardTitle>Uncollectible receivables</CardTitle><CardDescription>Write off outstanding charges as bad debt. This posts a bad-debt expense against accounts receivable and cannot be undone except by a reversing entry.</CardDescription></CardHeader><CardContent className="divide-y p-0">{workspace.options.filter((option) => option.charges.length).map((option) => <div key={option.tenancyId} className="space-y-3 px-5 py-5"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">{option.householdName}</p><p className="text-sm text-muted-foreground">{option.propertyName} · Unit {option.unitCode}</p></div></div><WriteOffChargesForm option={option} disabled={workspace.mode !== "ready"} /></div>)}</CardContent></Card> : null}
   </div>;
 }

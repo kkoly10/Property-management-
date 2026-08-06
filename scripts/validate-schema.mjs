@@ -42,6 +42,7 @@ const operatorGlobalSearchSql = await readFile(resolve(root, "supabase/migration
 const relationshipInvitationsSql = await readFile(resolve(root, "supabase/migrations/20260725090000_phase_8_relationship_invitations.sql"), "utf8");
 const maintenanceCostSql = await readFile(resolve(root, "supabase/migrations/20260725100000_phase_6_maintenance_cost.sql"), "utf8");
 const reconciliationResolutionSql = await readFile(resolve(root, "supabase/migrations/20260725110000_phase_5_reconciliation_resolution.sql"), "utf8");
+const receivableWriteOffSql = await readFile(resolve(root, "supabase/migrations/20260725120000_phase_4_receivable_write_off.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -782,6 +783,7 @@ async function validateRecurringCharges() {
   await db.exec(relationshipInvitationsSql);
   await db.exec(maintenanceCostSql);
   await db.exec(reconciliationResolutionSql);
+  await db.exec(receivableWriteOffSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3311,8 +3313,60 @@ async function validateRecurringCharges() {
   const workspaceAfterResolution = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
   assert(!workspaceAfterResolution.exceptions.some((row) => row.settlementId === mismatch.settlementId), "Resolved/waived exceptions still appear on the operator reconciliation queue.");
 
+  // Receivable write-off (phase_4_receivable_write_off). Generate a fresh September rent charge on
+  // the finance tenancy (the schedule advanced to 2026-09-30) and write it off in full.
+  await db.exec(`reset role; set role service_role`);
+  const writeOffGen = (await db.query(`select public.generate_recurring_charges('2026-09-30',array['${activation.chargeScheduleId}'::uuid],'finance-writeoff-gen-0001') as result`)).rows[0].result;
+  assert(writeOffGen.generatedCount === 1 && writeOffGen.chargeIds.length === 1, "Fresh write-off charge was not generated.");
+  const writeOffCharge = writeOffGen.chargeIds[0];
+  // Partially pay the fresh charge so the write-off must post the REMAINING (185000-60000), not the
+  // charge face amount — this is what proves the remaining computation rather than a full-amount post.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await db.query(`select public.record_manual_payment('${organization.organizationId}','${activation.tenancyId}','cash',60000,'USD','${receivedAt}','Partial payment before write-off','${evidenceDocumentId}','[{"chargeId":"${writeOffCharge}","amountMinor":60000}]'::jsonb,null,'writeoff-partial-pay-0001')`);
+  await db.exec("reset role");
+  const balanceBefore = (await db.query(`select coalesce(sum(e.debit_minor-e.credit_minor),0)::integer as balance
+    from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
+    where e.tenancy_id='${activation.tenancyId}' and a.account_code='1100'`)).rows[0].balance;
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'Tenant is unreachable and the balance is uncollectible.','writeoff-denied-000001')`), "PROPERTY_SCOPE_DENIED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${"0".repeat(8)}-0000-4000-8000-000000008888',array['${writeOffCharge}']::uuid[],'No such tenancy.','writeoff-notenancy-01')`), "TENANCY_NOT_FOUND");
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'  ','writeoff-noreason-0001')`), "INVALID_WRITE_OFF_REASON");
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array[]::uuid[],'Empty charge set.','writeoff-nocharge-0001')`), "INVALID_WRITE_OFF_CHARGES");
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${"0".repeat(8)}-0000-4000-8000-000000007777']::uuid[],'That charge does not belong here.','writeoff-badcharge-01')`), "WRITE_OFF_CHARGE_NOT_AVAILABLE");
+
+  const writeOff = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'Tenant moved out; the remaining rent is uncollectible.','writeoff-0001') as result`)).rows[0].result;
+  assert(writeOff.writtenOffMinor === 125000 && writeOff.chargeCount === 1 && writeOff.journalTransactionId && writeOff.currencyCode === "USD", "Write-off posted the charge face amount instead of the remaining balance after the partial payment.");
+  const writeOffReplay = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'Tenant moved out; the remaining rent is uncollectible.','writeoff-0001') as result`)).rows[0].result;
+  assert(writeOffReplay.journalTransactionId === writeOff.journalTransactionId, "Write-off replay did not return the canonical journal.");
+  await expectDatabaseError(() => db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${writeOffCharge}']::uuid[],'Attempting to write off an already-written-off charge.','writeoff-again-00001')`), "WRITE_OFF_CHARGE_NOT_AVAILABLE");
+
+  await db.exec("reset role");
+  const writeOffPosting = (await db.query(`select
+    (select sum(e.debit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${writeOff.journalTransactionId}') as debits,
+    (select sum(e.credit_minor)::integer from public.journal_entries e where e.journal_transaction_id='${writeOff.journalTransactionId}') as credits,
+    (select count(*)::integer from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
+      where e.journal_transaction_id='${writeOff.journalTransactionId}' and a.account_code='6300' and a.account_class='expense' and e.debit_minor>0 and e.property_id='${property.propertyId}') as expense_legs,
+    (select count(*)::integer from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
+      where e.journal_transaction_id='${writeOff.journalTransactionId}' and a.account_code='1100' and e.credit_minor>0 and e.tenancy_id='${activation.tenancyId}') as ar_legs,
+    (select t.transaction_type from public.journal_transactions t where t.id='${writeOff.journalTransactionId}') as transaction_type,
+    (select c.status from public.charges c where c.id='${writeOffCharge}') as charge_status,
+    (select (c.voided_by_transaction_id='${writeOff.journalTransactionId}') from public.charges c where c.id='${writeOffCharge}') as charge_linked,
+    (select coalesce(sum(e.debit_minor-e.credit_minor),0)::integer from public.journal_entries e join public.ledger_accounts a on a.id=e.ledger_account_id
+      where e.tenancy_id='${activation.tenancyId}' and a.account_code='1100') as balance_after`)).rows[0];
+  assert(writeOffPosting.debits === 125000 && writeOffPosting.credits === 125000 && writeOffPosting.expense_legs === 1 && writeOffPosting.ar_legs === 1 && writeOffPosting.transaction_type === "receivable_write_off", "Write-off journal is not a balanced bad-debt/AR posting carrying the property and tenancy.");
+  assert(writeOffPosting.charge_status === "written_off" && writeOffPosting.charge_linked === true, "Written-off charge did not flip status or link its terminating transaction.");
+  assert(balanceBefore - writeOffPosting.balance_after === 125000, "Write-off did not reduce the tenancy receivable balance by the remaining (post-payment) amount.");
+  await expectDatabaseError(() => db.query(`update public.journal_transactions set metadata='{}'::jsonb where id='${writeOff.journalTransactionId}'`), "APPEND_ONLY_RECORD");
+  const writeOffTraces = (await db.query(`select
+    (select count(*)::integer from private.outbox_events where event_type='receivable.written_off' and aggregate_id='${writeOff.receivableAccountId}') as events,
+    (select count(*)::integer from audit.audit_events where action_code='receivable.written_off' and resource_id='${writeOff.receivableAccountId}') as audits
+  `)).rows[0];
+  assert(writeOffTraces.events === 1 && writeOffTraces.audits === 1, "Write-off audit/outbox trace is incomplete.");
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
 }
 
 try {

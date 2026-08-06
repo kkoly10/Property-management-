@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createResidentPaymentSessionSchema, generateRecurringChargesSchema, recordManualPaymentSchema, refundPaymentSchema, resolveReconciliationExceptionSchema } from "@/lib/validation/finance";
+import { createResidentPaymentSessionSchema, generateRecurringChargesSchema, recordManualPaymentSchema, refundPaymentSchema, resolveReconciliationExceptionSchema, writeOffReceivableSchema } from "@/lib/validation/finance";
 
 describe("generateRecurringChargesSchema", () => {
   it("accepts a bounded worker run", () => {
@@ -102,5 +102,29 @@ describe("resolveReconciliationExceptionSchema", () => {
     expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "resolved", evidence: "short" }).success).toBe(false);
     expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "resolved", evidence: "x".repeat(1001) }).success).toBe(false);
     expect(resolveReconciliationExceptionSchema.safeParse({ organizationId, resolution: "escalated", note: "extra" }).success).toBe(false);
+  });
+});
+
+describe("writeOffReceivableSchema", () => {
+  const base = {
+    organizationId: "10000000-0000-4000-8000-000000000001",
+    tenancyId: "20000000-0000-4000-8000-000000000002",
+    chargeIds: ["40000000-0000-4000-8000-000000000004"],
+    reason: "Tenant moved out; the remaining rent is uncollectible.",
+  };
+
+  it("accepts a well-formed charge-level write-off", () => {
+    expect(writeOffReceivableSchema.safeParse(base).success).toBe(true);
+  });
+
+  it("rejects an empty, duplicated, or over-long charge set", () => {
+    expect(writeOffReceivableSchema.safeParse({ ...base, chargeIds: [] }).success).toBe(false);
+    expect(writeOffReceivableSchema.safeParse({ ...base, chargeIds: [base.chargeIds[0], base.chargeIds[0]] }).success).toBe(false);
+    expect(writeOffReceivableSchema.safeParse({ ...base, chargeIds: Array.from({ length: 101 }, () => base.chargeIds[0]) }).success).toBe(false);
+  });
+
+  it("rejects a missing reason and unknown fields", () => {
+    expect(writeOffReceivableSchema.safeParse({ ...base, reason: "no" }).success).toBe(false);
+    expect(writeOffReceivableSchema.safeParse({ ...base, amountMinor: 1000 }).success).toBe(false);
   });
 });
