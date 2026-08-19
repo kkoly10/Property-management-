@@ -44,6 +44,7 @@ const maintenanceCostSql = await readFile(resolve(root, "supabase/migrations/202
 const reconciliationResolutionSql = await readFile(resolve(root, "supabase/migrations/20260725110000_phase_5_reconciliation_resolution.sql"), "utf8");
 const receivableWriteOffSql = await readFile(resolve(root, "supabase/migrations/20260725120000_phase_4_receivable_write_off.sql"), "utf8");
 const ownerPortalInviteStateSql = await readFile(resolve(root, "supabase/migrations/20260725130000_phase_8_owner_portal_invite_state.sql"), "utf8");
+const journalIdempotencyActorScopeSql = await readFile(resolve(root, "supabase/migrations/20260726090000_phase_4_journal_idempotency_actor_scope.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -786,6 +787,7 @@ async function validateRecurringCharges() {
   await db.exec(reconciliationResolutionSql);
   await db.exec(receivableWriteOffSql);
   await db.exec(ownerPortalInviteStateSql);
+  await db.exec(journalIdempotencyActorScopeSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3410,6 +3412,28 @@ async function validateRecurringCharges() {
   assert(notInvitedRow && notInvitedRow.invitationState === "not_invited" && notInvitedRow.email === "notinvited.owner@example.com", "Owner-statement workspace did not surface a not-invited owner.");
   assert(invitedOnlyRow && invitedOnlyRow.invitationState === "invited" && invitedOnlyRow.email === "invitedonly.owner@example.com", "Owner-statement workspace did not surface an invited owner.");
   assert(noEmailRow && noEmailRow.invitationState === "active" && noEmailRow.email === null, "Owner-statement workspace did not surface a null email for an owner entity without one.");
+
+  // Journal idempotency actor-scoping (phase_4_journal_idempotency_actor_scope). Two DIFFERENT finance
+  // actors reusing ONE idempotency-key string on distinct charges in the same accounting book must BOTH
+  // post — journal uniqueness is now (accounting_book_id, created_by, idempotency_key) for user postings.
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('e7000000-0000-4000-8000-000000000071');
+    insert into public.organization_memberships(organization_id,user_id,role_code,status,invited_by)
+    values ('${organization.organizationId}','e7000000-0000-4000-8000-000000000071','accountant','active','${admin}');
+    set role service_role;`);
+  const idemChargeNov = (await db.query(`select public.generate_recurring_charges('2026-11-30',array['${activation.chargeScheduleId}'::uuid],'finance-idem-gen-nov-01') as result`)).rows[0].result.chargeIds[0];
+  const idemChargeDec = (await db.query(`select public.generate_recurring_charges('2026-12-31',array['${activation.chargeScheduleId}'::uuid],'finance-idem-gen-dec-01') as result`)).rows[0].result.chargeIds[0];
+  const financeActorB = "e7000000-0000-4000-8000-000000000071";
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const writeOffActorA = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${idemChargeNov}']::uuid[],'Uncollectible balance closed by actor A.','shared-idem-key-000001') as result`)).rows[0].result;
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${financeActorB}'`);
+  const writeOffActorB = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${idemChargeDec}']::uuid[],'Uncollectible balance closed by actor B.','shared-idem-key-000001') as result`)).rows[0].result;
+  assert(writeOffActorB.journalTransactionId && writeOffActorB.journalTransactionId !== writeOffActorA.journalTransactionId,
+    "A second actor reusing one idempotency key on a distinct charge did not post — journal uniqueness is not actor-scoped.");
+  // A single actor replaying the same key still short-circuits to the stored response (idempotency intact).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const writeOffActorAReplay = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${idemChargeNov}']::uuid[],'Uncollectible balance closed by actor A.','shared-idem-key-000001') as result`)).rows[0].result;
+  assert(writeOffActorAReplay.journalTransactionId === writeOffActorA.journalTransactionId, "Same-actor idempotent replay did not return the stored journal after the actor-scoping change.");
 
   await db.close();
   return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
