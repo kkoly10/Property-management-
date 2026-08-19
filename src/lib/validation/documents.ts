@@ -40,3 +40,24 @@ export const finalizeDocumentSchema = z.object({
   grantId: z.uuid(),
   sha256Hex: z.string().regex(/^[0-9a-f]{64}$/i),
 });
+
+export const documentDeliveryChannels = ["portal"] as const;
+export const documentRecipientRelationshipTypes = ["resident_person", "owner_entity"] as const;
+export const documentAcknowledgementTypes = ["viewed", "received", "accepted", "declined", "signed_external"] as const;
+
+export const deliverDocumentSchema = z.object({
+  organizationId: z.uuid(),
+  documentVersionId: z.uuid(),
+  recipientRelationshipType: z.enum(documentRecipientRelationshipTypes),
+  recipientRelationshipId: z.uuid(),
+  deliveryChannel: z.enum(documentDeliveryChannels).default("portal"),
+});
+export type DeliverDocumentInput = z.infer<typeof deliverDocumentSchema>;
+
+export const acknowledgeDocumentDeliverySchema = z.object({
+  organizationId: z.uuid(),
+  acknowledgementType: z.enum(documentAcknowledgementTypes),
+  evidenceHash: z.string().trim().min(8).max(200),
+  legalDocumentVersion: z.string().trim().min(1).max(200).optional(),
+});
+export type AcknowledgeDocumentDeliveryInput = z.infer<typeof acknowledgeDocumentDeliverySchema>;

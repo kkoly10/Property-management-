@@ -47,6 +47,7 @@ const ownerPortalInviteStateSql = await readFile(resolve(root, "supabase/migrati
 const journalIdempotencyActorScopeSql = await readFile(resolve(root, "supabase/migrations/20260726090000_phase_4_journal_idempotency_actor_scope.sql"), "utf8");
 const platformControlPlaneSql = await readFile(resolve(root, "supabase/migrations/20260726100000_phase_8_platform_control_plane_foundation.sql"), "utf8");
 const documentDeliverySql = await readFile(resolve(root, "supabase/migrations/20260726110000_phase_2_document_delivery.sql"), "utf8");
+const documentDeliveryRecipientReadSql = await readFile(resolve(root, "supabase/migrations/20260726120000_phase_2_document_delivery_recipient_read.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -792,6 +793,7 @@ async function validateRecurringCharges() {
   await db.exec(journalIdempotencyActorScopeSql);
   await db.exec(platformControlPlaneSql);
   await db.exec(documentDeliverySql);
+  await db.exec(documentDeliveryRecipientReadSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3565,6 +3567,20 @@ async function validateRecurringCharges() {
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const managerDocReads = (await db.query(`select (select count(*)::integer from public.document_deliveries where id='${documentDelivery.documentDeliveryId}') as deliveries,(select count(*)::integer from public.document_acknowledgements where document_delivery_id='${documentDelivery.documentDeliveryId}') as acks`)).rows[0];
   assert(managerDocReads.deliveries === 1 && managerDocReads.acks === 2, "The managing operator could not read the delivery and acknowledgements.");
+
+  // The delivery grants its recipient read on the (property-scoped) delivered document + version via
+  // the documents_scoped_read "delivered to me" clause — but not on documents never delivered to them,
+  // and never to an outsider. deliveryDoc/deliveryQuarantineDoc are both property-scoped with no tenancy.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  const recipientDocVisibility = (await db.query(`select
+    (select count(*)::integer from public.documents where id='${deliveryDoc}') as delivered_doc,
+    (select count(*)::integer from public.document_versions where id='${deliveryVersion}') as delivered_version,
+    (select count(*)::integer from public.documents where id='${deliveryQuarantineDoc}') as undelivered_doc`)).rows[0];
+  assert(recipientDocVisibility.delivered_doc === 1 && recipientDocVisibility.delivered_version === 1 && recipientDocVisibility.undelivered_doc === 0,
+    "Delivery did not grant the recipient read on exactly the delivered document.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${deliveryOutsider}'`);
+  const outsiderDocVisibility = (await db.query(`select (select count(*)::integer from public.documents where id='${deliveryDoc}') as delivered_doc`)).rows[0];
+  assert(outsiderDocVisibility.delivered_doc === 0, "An outsider read a document delivered to another recipient.");
 
   await db.exec("reset role");
   const documentDeliveryTrace = (await db.query(`select

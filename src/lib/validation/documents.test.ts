@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createUploadGrantSchema, finalizeDocumentSchema, maximumDocumentSizeBytes } from "./documents";
+import { acknowledgeDocumentDeliverySchema, createUploadGrantSchema, deliverDocumentSchema, finalizeDocumentSchema, maximumDocumentSizeBytes } from "./documents";
 
 const validUpload = {
   organizationId: "10000000-0000-4000-8000-000000000001",
@@ -31,5 +31,34 @@ describe("document request validation", () => {
   it("requires a canonical SHA-256 checksum", () => {
     expect(finalizeDocumentSchema.safeParse({ grantId: validUpload.organizationId, sha256Hex: "a".repeat(64) }).success).toBe(true);
     expect(finalizeDocumentSchema.safeParse({ grantId: validUpload.organizationId, sha256Hex: "not-a-checksum" }).success).toBe(false);
+  });
+});
+
+const orgId = "10000000-0000-4000-8000-000000000001";
+const versionId = "20000000-0000-4000-8000-000000000002";
+const relationshipId = "30000000-0000-4000-8000-000000000003";
+
+describe("document delivery validation", () => {
+  it("defaults the delivery channel to portal and requires a relationship recipient", () => {
+    const parsed = deliverDocumentSchema.parse({ organizationId: orgId, documentVersionId: versionId, recipientRelationshipType: "resident_person", recipientRelationshipId: relationshipId });
+    expect(parsed.deliveryChannel).toBe("portal");
+  });
+
+  it("rejects unsupported channels, recipient types, and non-uuid ids", () => {
+    const base = { organizationId: orgId, documentVersionId: versionId, recipientRelationshipType: "resident_person" as const, recipientRelationshipId: relationshipId };
+    expect(deliverDocumentSchema.safeParse({ ...base, deliveryChannel: "email" }).success).toBe(false);
+    expect(deliverDocumentSchema.safeParse({ ...base, recipientRelationshipType: "vendor_contact" }).success).toBe(false);
+    expect(deliverDocumentSchema.safeParse({ ...base, recipientRelationshipId: "not-a-uuid" }).success).toBe(false);
+  });
+});
+
+describe("document acknowledgement validation", () => {
+  it("accepts a typed acknowledgement with an evidence hash", () => {
+    expect(acknowledgeDocumentDeliverySchema.safeParse({ organizationId: orgId, acknowledgementType: "received", evidenceHash: "a".repeat(64), legalDocumentVersion: "lease-v3" }).success).toBe(true);
+  });
+
+  it("rejects unknown types and short evidence hashes", () => {
+    expect(acknowledgeDocumentDeliverySchema.safeParse({ organizationId: orgId, acknowledgementType: "signed", evidenceHash: "a".repeat(64) }).success).toBe(false);
+    expect(acknowledgeDocumentDeliverySchema.safeParse({ organizationId: orgId, acknowledgementType: "received", evidenceHash: "short" }).success).toBe(false);
   });
 });
