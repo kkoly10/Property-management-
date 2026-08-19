@@ -46,6 +46,7 @@ const receivableWriteOffSql = await readFile(resolve(root, "supabase/migrations/
 const ownerPortalInviteStateSql = await readFile(resolve(root, "supabase/migrations/20260725130000_phase_8_owner_portal_invite_state.sql"), "utf8");
 const journalIdempotencyActorScopeSql = await readFile(resolve(root, "supabase/migrations/20260726090000_phase_4_journal_idempotency_actor_scope.sql"), "utf8");
 const platformControlPlaneSql = await readFile(resolve(root, "supabase/migrations/20260726100000_phase_8_platform_control_plane_foundation.sql"), "utf8");
+const documentDeliverySql = await readFile(resolve(root, "supabase/migrations/20260726110000_phase_2_document_delivery.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -790,6 +791,7 @@ async function validateRecurringCharges() {
   await db.exec(ownerPortalInviteStateSql);
   await db.exec(journalIdempotencyActorScopeSql);
   await db.exec(platformControlPlaneSql);
+  await db.exec(documentDeliverySql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3506,8 +3508,74 @@ async function validateRecurringCharges() {
   const agentHasSessionAfterEnd = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
   assert(agentHasSessionAfterEnd === false, "The agent still held an active session after it was ended.");
 
+  // Document delivery & acknowledgement (phase_2_document_delivery). Operator delivers a finalized,
+  // clean document version to a portal recipient identified by their active user_relationship; the
+  // recipient records an append-only acknowledgement. Covers RLS isolation, replay, and the per-type
+  // acknowledgement guard.
+  const deliveryDoc = "e9000000-0000-4000-8000-0000000000d1";
+  const deliveryVersion = "e9000000-0000-4000-8000-0000000000d2";
+  const deliveryQuarantineDoc = "e9000000-0000-4000-8000-0000000000d5";
+  const deliveryQuarantineVersion = "e9000000-0000-4000-8000-0000000000d6";
+  const deliveryOutsider = "e9000000-0000-4000-8000-0000000000d4";
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('${deliveryOutsider}');
+    insert into public.documents(id,organization_id,property_id,document_type,title,source,status,created_by)
+      select '${deliveryDoc}','${organization.organizationId}',p.id,'notice','Quiet hours notice','operator_supplied','active','${admin}' from public.properties p where p.organization_id='${organization.organizationId}' limit 1;
+    insert into public.documents(id,organization_id,property_id,document_type,title,source,status,created_by)
+      select '${deliveryQuarantineDoc}','${organization.organizationId}',p.id,'notice','Unscanned notice','operator_supplied','active','${admin}' from public.properties p where p.organization_id='${organization.organizationId}' limit 1;
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status) values
+      ('${deliveryVersion}','${organization.organizationId}','${deliveryDoc}',1,'documents','org/notice-v1.pdf','application/pdf',2048,'${"a".repeat(64)}','notice.pdf','${admin}','clean'),
+      ('${deliveryQuarantineVersion}','${organization.organizationId}','${deliveryQuarantineDoc}',1,'documents','org/notice-q.pdf','application/pdf',2048,'${"b".repeat(64)}','notice-q.pdf','${admin}','quarantined');`);
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email','doc-deliver-email-01')`), "UNSUPPORTED_DELIVERY_CHANNEL");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}',null,null,'portal','doc-deliver-norecip-1')`), "INVALID_DELIVERY_RECIPIENT");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','e9000000-0000-4000-8000-0000000000ff','resident_person','${invitedResidentPerson}','portal','doc-deliver-noverr-1')`), "DOCUMENT_VERSION_NOT_FOUND");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryQuarantineVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-quar-01')`), "DOCUMENT_NOT_DELIVERABLE");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','00000000-0000-4000-8000-0000000000fe','portal','doc-deliver-norel-1')`), "DELIVERY_RECIPIENT_NOT_FOUND");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${deliveryOutsider}'`);
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-outsid-1')`), "PROPERTY_SCOPE_DENIED");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const documentDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-0001') as result`)).rows[0].result;
+  assert(documentDelivery.documentDeliveryId && documentDelivery.status === "delivered" && documentDelivery.recipientUserId === invitedResidentUser, "Document delivery did not create a portal delivery addressed to the resident.");
+  const documentDeliveryReplay = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-0001') as result`)).rows[0].result;
+  assert(documentDeliveryReplay.documentDeliveryId === documentDelivery.documentDeliveryId, "Document delivery replay returned a different delivery.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${deliveryOutsider}'`);
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','${"e".repeat(40)}',null,'doc-ack-forbid-01')`), "DOCUMENT_DELIVERY_FORBIDDEN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','signed','${"e".repeat(40)}',null,'doc-ack-badtype-1')`), "INVALID_ACKNOWLEDGEMENT_TYPE");
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','short',null,'doc-ack-badhash-1')`), "INVALID_EVIDENCE_HASH");
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','e9000000-0000-4000-8000-0000000000fd','received','${"e".repeat(40)}',null,'doc-ack-nodel-01')`), "DOCUMENT_DELIVERY_NOT_FOUND");
+  const documentAck = (await db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','${"e".repeat(40)}','lease-v3','doc-ack-0001') as result`)).rows[0].result;
+  assert(documentAck.acknowledgementId && documentAck.acknowledgementType === "received", "Recipient acknowledgement did not record.");
+  const documentAckReplay = (await db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','${"e".repeat(40)}','lease-v3','doc-ack-0001') as result`)).rows[0].result;
+  assert(documentAckReplay.acknowledgementId === documentAck.acknowledgementId, "Acknowledgement replay returned a different ack.");
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','${"e".repeat(40)}','lease-v3','doc-ack-dup-0001')`), "DOCUMENT_DELIVERY_ALREADY_ACKNOWLEDGED");
+  const documentAckViewed = (await db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','viewed','${"e".repeat(40)}',null,'doc-ack-viewed-01') as result`)).rows[0].result;
+  assert(documentAckViewed.acknowledgementId && documentAckViewed.acknowledgementId !== documentAck.acknowledgementId, "A distinct acknowledgement type did not create a separate ack.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  const residentDocReads = (await db.query(`select (select count(*)::integer from public.document_deliveries where id='${documentDelivery.documentDeliveryId}') as deliveries,(select count(*)::integer from public.document_acknowledgements where document_delivery_id='${documentDelivery.documentDeliveryId}') as acks`)).rows[0];
+  assert(residentDocReads.deliveries === 1 && residentDocReads.acks === 2, "Recipient could not read their own delivery and acknowledgements.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${deliveryOutsider}'`);
+  const outsiderDocReads = (await db.query(`select (select count(*)::integer from public.document_deliveries where id='${documentDelivery.documentDeliveryId}') as deliveries,(select count(*)::integer from public.document_acknowledgements where document_delivery_id='${documentDelivery.documentDeliveryId}') as acks`)).rows[0];
+  assert(outsiderDocReads.deliveries === 0 && outsiderDocReads.acks === 0, "An outsider read another member's document delivery or acknowledgements.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const managerDocReads = (await db.query(`select (select count(*)::integer from public.document_deliveries where id='${documentDelivery.documentDeliveryId}') as deliveries,(select count(*)::integer from public.document_acknowledgements where document_delivery_id='${documentDelivery.documentDeliveryId}') as acks`)).rows[0];
+  assert(managerDocReads.deliveries === 1 && managerDocReads.acks === 2, "The managing operator could not read the delivery and acknowledgements.");
+
+  await db.exec("reset role");
+  const documentDeliveryTrace = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where action_code='document.delivered' and actor_type='user' and resource_id='${documentDelivery.documentDeliveryId}') as delivered_audits,
+    (select count(*)::integer from audit.audit_events where action_code='document.acknowledged' and actor_type='user' and organization_id='${organization.organizationId}') as acknowledged_audits,
+    (select count(*)::integer from private.outbox_events where event_type='document.delivered' and aggregate_id='${documentDelivery.documentDeliveryId}') as delivered_events,
+    (select count(*)::integer from private.outbox_events where event_type='document.acknowledged' and organization_id='${organization.organizationId}') as acknowledged_events`)).rows[0];
+  assert(documentDeliveryTrace.delivered_audits === 1 && documentDeliveryTrace.acknowledged_audits === 2 && documentDeliveryTrace.delivered_events === 1 && documentDeliveryTrace.acknowledged_events === 2, "Document delivery/acknowledgement trace counts are wrong.");
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits };
 }
 
 try {

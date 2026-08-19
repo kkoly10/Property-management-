@@ -560,9 +560,11 @@ Request: `{ targetPlanCode:'free'|'starter'|'growth'|'pro'; billingInterval:'mon
 
 Request type is access, correction, deletion, export, restriction, objection, withdrawal, or appeal. The command persists jurisdiction, controller routing, due date, identity-verification state, audit evidence, and jobs. It does not promise deletion where legal holds or operator instructions apply.
 
-### 4.26 AcknowledgeDocumentDelivery
+### 4.26 DeliverDocument / AcknowledgeDocumentDelivery
 
-`POST /api/v1/document-deliveries/{id}/acknowledgements` with acknowledgement type and evidence hash. Actor must be the recipient. Creates append-only acknowledgement and emits `document.acknowledged`.
+**DeliverDocument** — RPC command `deliver_document(p_organization_id, p_document_version_id, p_recipient_relationship_type, p_recipient_relationship_id, p_delivery_channel, p_idempotency_key)`. Operator posts a finalized (`upload_status='clean'`) document version to a portal recipient identified by their active `user_relationship`; requires parent-scoped `documents.manage` (`PROPERTY_SCOPE_DENIED`/`DOCUMENTS_SCOPE_DENIED`). Only `delivery_channel='portal'` is accepted this pilot (`UNSUPPORTED_DELIVERY_CHANNEL` otherwise — email/secure_link await a delivery worker); `DOCUMENT_VERSION_NOT_FOUND`, `DOCUMENT_NOT_DELIVERABLE` (unscanned), and `DELIVERY_RECIPIENT_NOT_FOUND` (no active relationship user) guard the rest. Creates a `document_deliveries` row (`status='delivered'`), idempotent per (org, actor, `DeliverDocument`, key), and emits `document.delivered`. No public HTTP route in this backend slice.
+
+**AcknowledgeDocumentDelivery** — `POST /api/v1/document-deliveries/{id}/acknowledgements` with acknowledgement type and evidence hash. Actor must be the delivery's recipient (`DOCUMENT_DELIVERY_FORBIDDEN`). Creates an append-only acknowledgement (`viewed|received|accepted|declined|signed_external`, unique per delivery+user+type — `DOCUMENT_DELIVERY_ALREADY_ACKNOWLEDGED`, checked after the idempotency short-circuit) and emits `document.acknowledged`.
 
 ### 4.27 RespondToOwnerApproval
 
@@ -641,6 +643,7 @@ Operator search is a bounded exception to cursor pagination because it returns a
 | `notification.requested` | templateCode, recipientRelationship, locale, channelPreference |
 | `message.sent` | conversationId, messageId, senderType |
 | `announcement.published` | announcementId, propertyId, audienceType, deliveryCount |
+| `document.delivered` | documentDeliveryId, documentVersionId, recipientUserId |
 | `document.acknowledged` | deliveryId, acknowledgementId, type |
 | `payment.corrected` | paymentId, correctionType, correctiveJournalTransactionId |
 | `owner_remittance.recorded` | remittanceId, ownerId, propertyId, amountMinor, currency |
