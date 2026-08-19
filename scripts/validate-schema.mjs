@@ -45,6 +45,7 @@ const reconciliationResolutionSql = await readFile(resolve(root, "supabase/migra
 const receivableWriteOffSql = await readFile(resolve(root, "supabase/migrations/20260725120000_phase_4_receivable_write_off.sql"), "utf8");
 const ownerPortalInviteStateSql = await readFile(resolve(root, "supabase/migrations/20260725130000_phase_8_owner_portal_invite_state.sql"), "utf8");
 const journalIdempotencyActorScopeSql = await readFile(resolve(root, "supabase/migrations/20260726090000_phase_4_journal_idempotency_actor_scope.sql"), "utf8");
+const platformControlPlaneSql = await readFile(resolve(root, "supabase/migrations/20260726100000_phase_8_platform_control_plane_foundation.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -124,7 +125,7 @@ async function validateAuthority() {
   await db.exec(rlsSql);
   const tableResult = await db.query(`select count(*)::integer as count from information_schema.tables where table_schema in ('public','private','audit','reporting')`);
   const policyResult = await db.query(`select count(*)::integer as count from pg_policies where schemaname in ('public','reporting')`);
-  assert(tableResult.rows[0].count === 74, "Authority schema table count changed unexpectedly.");
+  assert(tableResult.rows[0].count === 76, "Authority schema table count changed unexpectedly.");
   assert(policyResult.rows[0].count === 59, "Authority RLS policy count changed unexpectedly.");
 
   const admin = "d0000000-0000-4000-8000-000000000001";
@@ -788,6 +789,7 @@ async function validateRecurringCharges() {
   await db.exec(receivableWriteOffSql);
   await db.exec(ownerPortalInviteStateSql);
   await db.exec(journalIdempotencyActorScopeSql);
+  await db.exec(platformControlPlaneSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3434,6 +3436,75 @@ async function validateRecurringCharges() {
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const writeOffActorAReplay = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${idemChargeNov}']::uuid[],'Uncollectible balance closed by actor A.','shared-idem-key-000001') as result`)).rows[0].result;
   assert(writeOffActorAReplay.journalTransactionId === writeOffActorA.journalTransactionId, "Same-actor idempotent replay did not return the stored journal after the actor-scoping change.");
+
+  // Platform control-plane foundation (phase_8_platform_control_plane_foundation). Audited, time-boxed
+  // support grants. The DECISIVE assertion is the negative one: an active session is INERT — it grants
+  // zero cross-org data access until a later slice wires has_active_support_session into a policy.
+  const platformAgent = "e8000000-0000-4000-8000-000000000081";
+  const platformAgentTwo = "e8000000-0000-4000-8000-000000000082";
+  const platformAdmin = "e8000000-0000-4000-8000-000000000083";
+  const nonPlatformUser = "e8000000-0000-4000-8000-000000000084";
+  const platformAgentActor = "e8000000-0000-4000-8000-000000000091";
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('${platformAgent}'),('${platformAgentTwo}'),('${platformAdmin}'),('${nonPlatformUser}');
+    insert into private.platform_actors(id,user_id,platform_role,status) values
+      ('${platformAgentActor}','${platformAgent}','support_agent','active'),
+      ('e8000000-0000-4000-8000-000000000092','${platformAgentTwo}','support_agent','active'),
+      ('e8000000-0000-4000-8000-000000000093','${platformAdmin}','platform_admin','active');`);
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal1'`);
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','Investigating a billing discrepancy.',60,'support-noaal-000001')`), "MFA_STEP_UP_REQUIRED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${nonPlatformUser}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','A non-platform user must not open a session.',60,'support-notactor-01')`), "NOT_PLATFORM_ACTOR");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','   ',60,'support-noreason-01')`), "AUDIT_REASON_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','A valid support reason.',1,'support-badttl-01')`), "INVALID_SUPPORT_TTL");
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${"0".repeat(8)}-0000-4000-8000-000000009999','No such org to support here.',60,'support-noorg-01')`), "ORGANIZATION_NOT_FOUND");
+
+  const supportSession = (await db.query(`select public.start_support_session('${organization.organizationId}','Investigating a billing discrepancy.',60,'support-session-0001') as result`)).rows[0].result;
+  assert(supportSession.supportSessionId && supportSession.status === "active" && supportSession.accessScope === "read_only" && supportSession.expiresAt, "Support session did not open as a read-only, time-boxed grant.");
+  const supportSessionReplay = (await db.query(`select public.start_support_session('${organization.organizationId}','Investigating a billing discrepancy.',60,'support-session-0001') as result`)).rows[0].result;
+  assert(supportSessionReplay.supportSessionId === supportSession.supportSessionId, "Support-session replay did not return the stored session.");
+
+  await db.exec(`reset role; set request.jwt.claim.sub='${platformAgent}'`);
+  const agentHasSession = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
+  await db.exec(`set request.jwt.claim.sub='${admin}'`);
+  const memberHasSession = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
+  assert(agentHasSession === true && memberHasSession === false, "has_active_support_session did not resolve only the caller's own active session.");
+
+  // DECISIVE INERT TEST: the agent holds an active session and is NOT a member of the org; the helper
+  // is wired into no policy, so a normal tenant read still returns zero rows.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const agentMaintenance = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const agentReceivables = (await db.query("select public.get_operator_receivables_summary() as result")).rows[0].result;
+  assert(agentMaintenance.items.length === 0 && (agentReceivables.items ?? []).length === 0,
+    "An active support session leaked cross-org data — the grant must be inert until a policy wires the helper in.");
+
+  await db.exec("reset role");
+  const supportStartTrace = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where action_code='support.session_started' and actor_type='support' and organization_id='${organization.organizationId}' and resource_id='${supportSession.supportSessionId}') as audits,
+    (select count(*)::integer from private.outbox_events where event_type='support.session_started' and aggregate_id='${supportSession.supportSessionId}') as events`)).rows[0];
+  assert(supportStartTrace.audits === 1 && supportStartTrace.events === 1, "Support session start did not write a single support-typed audit + outbox trace.");
+
+  // Time-box: an 'active' row past its expiry is not honored (checked on the admin, whose only session is expired).
+  await db.exec(`insert into private.support_sessions(id,organization_id,platform_actor_id,user_id,reason,correlation_id,started_at,expires_at,created_by)
+    values ('e8000000-0000-4000-8000-0000000000a1','${organization.organizationId}','e8000000-0000-4000-8000-000000000093','${platformAdmin}','Expired session for the time-box test.',gen_random_uuid(),now()-interval '2 hours',now()-interval '1 hour','${platformAdmin}')`);
+  await db.exec(`set request.jwt.claim.sub='${platformAdmin}'`);
+  const adminExpiredHasSession = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
+  assert(adminExpiredHasSession === false, "An expired support session was still honored — the time-box is not enforced.");
+
+  // Lifecycle: a second agent cannot end another's session; the owner ends their own; re-end fails.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgentTwo}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.end_support_session('${organization.organizationId}','${supportSession.supportSessionId}','ended','support-forbidden-01')`), "SUPPORT_SESSION_FORBIDDEN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const supportEnd = (await db.query(`select public.end_support_session('${organization.organizationId}','${supportSession.supportSessionId}','ended','support-end-0001') as result`)).rows[0].result;
+  assert(supportEnd.status === "ended", "Ending a support session did not close it.");
+  const supportEndReplay = (await db.query(`select public.end_support_session('${organization.organizationId}','${supportSession.supportSessionId}','ended','support-end-0001') as result`)).rows[0].result;
+  assert(supportEndReplay.status === "ended", "End-support-session replay did not return the stored response.");
+  await expectDatabaseError(() => db.query(`select public.end_support_session('${organization.organizationId}','${supportSession.supportSessionId}','revoked','support-reend-0001')`), "SUPPORT_SESSION_NOT_ACTIVE");
+  await db.exec(`reset role; set request.jwt.claim.sub='${platformAgent}'`);
+  const agentHasSessionAfterEnd = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
+  assert(agentHasSessionAfterEnd === false, "The agent still held an active session after it was ended.");
 
   await db.close();
   return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };

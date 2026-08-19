@@ -576,6 +576,16 @@ Request: `{ decision:'approved'|'rejected'; reason?:string; expectedVersion:numb
 
 Request includes locale, reduced-motion/high-contrast/text-scale accessibility choices, the complete transactional channel/category matrix, expected preference version, and an idempotency key. The command is bound to `auth.uid()` and cannot target another user. SMS or WhatsApp activation requires a profile phone. Marketing email/SMS remain off and cannot be enabled by this command because a preference is not consent. The command updates `profiles` and `notification_preferences` atomically, writes an audit record, and emits `notification_preferences.updated`.
 
+### 4.29 StartSupportSession (platform control plane)
+
+RPC command `start_support_session(p_organization_id, p_reason, p_ttl_minutes, p_idempotency_key)`. No public HTTP route in this foundation slice — the operator/platform HTTP surface and the tenant-policy wiring that will *honor* a session are a later slice; this slice ships the audited grant record and its lifecycle only.
+
+Caller must be an `active` `private.platform_actors` row (`NOT_PLATFORM_ACTOR`), stepped up to AAL2 (`MFA_STEP_UP_REQUIRED`). Reason is mandatory, 8–500 chars (`AUDIT_REASON_REQUIRED`/`INVALID_SUPPORT_REASON`); `ttlMinutes` is 5–240 (`INVALID_SUPPORT_TTL`); target org must exist and not be `closed` (`ORGANIZATION_NOT_FOUND`). Opens a `read_only` `private.support_sessions` row expiring at `now()+ttl`, writes one `audit.audit_events` row with `actor_type='support'`, and emits `support.session_started`. Idempotent per (org, actor, `StartSupportSession`, key); replay returns the stored session. **Granting a session confers no cross-org data access** — `private.has_active_support_session()` exists but is wired into no policy.
+
+### 4.30 EndSupportSession (platform control plane)
+
+RPC command `end_support_session(p_organization_id, p_support_session_id, p_disposition, p_idempotency_key)`. `disposition` ∈ `ended|revoked` (`INVALID_SUPPORT_DISPOSITION`). The session's own actor may end it; a `platform_admin` may end anyone's (`SUPPORT_SESSION_FORBIDDEN` otherwise). `SUPPORT_SESSION_NOT_FOUND` if the session/org pair is unknown; `SUPPORT_SESSION_NOT_ACTIVE` if already closed (checked after the idempotency short-circuit so a true replay returns the stored result). Sets `status`/`ended_at`/`ended_reason`, writes an `actor_type='support'` audit row, and emits `support.session_ended` or `support.session_revoked`. Idempotent per (org, actor, `EndSupportSession`, key).
+
 ## 5. Query contracts
 
 Queries are separate from commands and must be permission-scoped. P0 query routes:
@@ -645,6 +655,9 @@ Operator search is a bounded exception to cursor pagination because it returns a
 | `membership.scopes_changed` | membershipId, propertyIds, version |
 | `membership.revoked` | membershipId, revokedUserId, version |
 | `notification_preferences.updated` | userId, locale, preferencesVersion |
+| `support.session_started` | supportSessionId, organizationId, accessScope, expiresAt |
+| `support.session_ended` | supportSessionId, organizationId, disposition |
+| `support.session_revoked` | supportSessionId, organizationId, disposition |
 
 ## 7. Payment state transition table
 
