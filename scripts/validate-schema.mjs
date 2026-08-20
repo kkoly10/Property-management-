@@ -50,6 +50,7 @@ const documentDeliverySql = await readFile(resolve(root, "supabase/migrations/20
 const documentDeliveryRecipientReadSql = await readFile(resolve(root, "supabase/migrations/20260726120000_phase_2_document_delivery_recipient_read.sql"), "utf8");
 const platformSupportQueriesSql = await readFile(resolve(root, "supabase/migrations/20260727100000_phase_8_platform_support_queries.sql"), "utf8");
 const platformControlPlaneHardeningSql = await readFile(resolve(root, "supabase/migrations/20260727110000_phase_8_platform_control_plane_hardening.sql"), "utf8");
+const occupiedLeaseImportSql = await readFile(resolve(root, "supabase/migrations/20260727120000_phase_3_occupied_lease_import.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -757,6 +758,7 @@ async function validateRecurringCharges() {
   await db.exec(foundationSql);
   await db.exec(portfolioSql);
   await db.exec(documentsSql);
+  await db.exec(importsSql);
   await db.exec(leasingSql);
   await db.exec(financeSql);
   await db.exec(manualPaymentsSql);
@@ -798,6 +800,7 @@ async function validateRecurringCharges() {
   await db.exec(documentDeliveryRecipientReadSql);
   await db.exec(platformSupportQueriesSql);
   await db.exec(platformControlPlaneHardeningSql);
+  await db.exec(occupiedLeaseImportSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3763,6 +3766,67 @@ async function validateRecurringCharges() {
     (select count(*)::integer from private.outbox_events where event_type='document.delivered' and aggregate_id='${documentDelivery.documentDeliveryId}') as delivered_events,
     (select count(*)::integer from private.outbox_events where event_type='document.acknowledged' and organization_id='${organization.organizationId}') as acknowledged_events`)).rows[0];
   assert(documentDeliveryTrace.delivered_audits === 1 && documentDeliveryTrace.acknowledged_audits === 2 && documentDeliveryTrace.delivered_events === 1 && documentDeliveryTrace.acknowledged_events === 2, "Document delivery/acknowledgement trace counts are wrong.");
+
+  // ── §3 Occupied-portfolio import — occupied-lease leg (phase_3_occupied_lease_import) ────────────
+  // An operator imports an OCCUPIED unit against an already-imported unit: one row activates a lease —
+  // household + tenancy + rent schedule + a balanced opening receivable — so the tenancy is operational
+  // (its next recurring charge is generatable) and the opening ledger balances (1100 DR / 3900 CR).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const occUnit = (await db.query(`select public.create_unit('${organization.organizationId}','${property.propertyId}',null,'201','Apartment',2,1,900,'finance-occ-unit-0001') as result`)).rows[0].result;
+  const occSourceDoc = "ea000000-0000-4000-8000-0000000000f1";
+  const occSourceVersion = "ea000000-0000-4000-8000-0000000000f2";
+  await db.exec(`reset role;
+    insert into public.documents(id,organization_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${occSourceDoc}','${organization.organizationId}','portfolio_import','Occupied roster','operator_supplied','active',true,'${admin}');
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${occSourceVersion}','${organization.organizationId}','${occSourceDoc}',1,'private-documents','organizations/${organization.organizationId}/organization/${organization.organizationId}/${occSourceVersion}/occupied.csv','text/csv',256,'${"d".repeat(64)}','occupied.csv','${admin}','clean');
+    set role authenticated; set request.jwt.claim.sub='${admin}';`);
+
+  const occHeaders = ["Property","Address","City","Country","Unit","First","Last","Email","Start","Rent","Freq","Currency","Opening"];
+  const occRows = [{ Property: "Maple Court", Address: "100 Main Street", City: "Richmond", Country: "US", Unit: "201", First: "Dana", Last: "Rivera", Email: "dana.rivera@example.test", Start: "2026-08-01", Rent: "120000", Freq: "monthly", Currency: "USD", Opening: "150000" }];
+  const occMapping = { propertyName: "Property", addressLine1: "Address", locality: "City", countryCode: "Country", unitCode: "Unit", primaryFirstName: "First", primaryLastName: "Last", primaryEmail: "Email", leaseStartDate: "Start", rentAmountMinor: "Rent", rentFrequency: "Freq", currencyCode: "Currency", openingBalanceMinor: "Opening" };
+  const occOptions = { dedupeMode: "strict", dateLocale: "en-US" };
+
+  const occJob = (await db.query(`select public.create_import_job('${organization.organizationId}','leases','${occSourceDoc}','${occSourceVersion}','${JSON.stringify(occHeaders)}'::jsonb,'${JSON.stringify(occRows)}'::jsonb,'occupied-import-0001') as result`)).rows[0].result.importJobId;
+  const occJobReplay = (await db.query(`select public.create_import_job('${organization.organizationId}','leases','${occSourceDoc}','${occSourceVersion}','${JSON.stringify(occHeaders)}'::jsonb,'${JSON.stringify(occRows)}'::jsonb,'occupied-import-0001') as result`)).rows[0].result.importJobId;
+  assert(occJob === occJobReplay, "Occupied-import create replay returned a different job.");
+  const occValidation = (await db.query(`select public.validate_occupied_import('${occJob}','${JSON.stringify(occMapping)}'::jsonb,'${JSON.stringify(occOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(occValidation.status === "ready" && occValidation.totals.creates === 1 && occValidation.totals.errors === 0, "Valid occupied-lease row did not reach ready with one create.");
+  const occCommitted = (await db.query(`select public.commit_occupied_import('${occJob}','${occValidation.validationHash}') as result`)).rows[0].result;
+  assert(occCommitted.status === "completed" && occCommitted.committed.tenancies === 1 && occCommitted.committed.openingBalances === 1, "Occupied import did not activate exactly one tenancy with an opening balance.");
+  const occCommitReplay = (await db.query(`select public.commit_occupied_import('${occJob}','${occValidation.validationHash}') as result`)).rows[0].result;
+  assert(occCommitReplay.reportDocumentId === occCommitted.reportDocumentId, "Occupied-import commit replay returned a different report document.");
+
+  await db.exec("reset role");
+  const occTenancy = (await db.query(`select t.id, t.status, cs.id as schedule_id
+    from public.tenancies t join public.charge_schedules cs on cs.tenancy_id=t.id
+    where t.unit_id='${occUnit.unitId}' and t.status='active'`)).rows[0];
+  assert(occTenancy && occTenancy.status === "active" && occTenancy.schedule_id, "Occupied import did not create an active tenancy with a rent schedule.");
+  const occLedger = (await db.query(`select
+    coalesce(sum(je.debit_minor) filter (where la.account_code='1100'),0)::bigint as ar_debit,
+    coalesce(sum(je.credit_minor) filter (where la.account_code='3900'),0)::bigint as equity_credit,
+    coalesce(sum(je.debit_minor),0)::bigint as total_debit,
+    coalesce(sum(je.credit_minor),0)::bigint as total_credit
+    from public.journal_transactions jt
+    join public.journal_entries je on je.journal_transaction_id=jt.id
+    join public.ledger_accounts la on la.id=je.ledger_account_id
+    where jt.source_type='tenancy' and jt.source_id='${occTenancy.id}' and jt.transaction_type='opening_balance'`)).rows[0];
+  assert(Number(occLedger.ar_debit) === 150000 && Number(occLedger.equity_credit) === 150000, "Opening receivable did not post 150000 to 1100 DR / 3900 CR.");
+  assert(Number(occLedger.total_debit) === Number(occLedger.total_credit), "Occupied-import opening journal is unbalanced.");
+
+  // The tenancy is operational: its next recurring rent charge is generatable (service_role worker).
+  await db.exec("reset role; set role service_role");
+  const occCharge = (await db.query(`select public.generate_recurring_charges('2026-08-01',array['${occTenancy.schedule_id}']::uuid[],'occupied-charge-gen-0001') as result`)).rows[0].result;
+  assert(occCharge.generatedCount >= 1, "The imported tenancy could not generate its first recurring rent charge.");
+
+  // A row referencing an unknown property is a per-row error and blocks commit (no partial writes).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const occBadRows = [{ Property: "Nonexistent Manor", Address: "999 Nowhere Rd", City: "Richmond", Country: "US", Unit: "999", First: "Sam", Last: "Doe", Email: "", Start: "2026-08-01", Rent: "100000", Freq: "monthly", Currency: "USD", Opening: "0" }];
+  const occBadJob = (await db.query(`select public.create_import_job('${organization.organizationId}','leases','${occSourceDoc}','${occSourceVersion}','${JSON.stringify(occHeaders)}'::jsonb,'${JSON.stringify(occBadRows)}'::jsonb,'occupied-import-bad-1') as result`)).rows[0].result.importJobId;
+  const occBadValidation = (await db.query(`select public.validate_occupied_import('${occBadJob}','${JSON.stringify(occMapping)}'::jsonb,'${JSON.stringify(occOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(occBadValidation.status === "mapping" && occBadValidation.totals.errors === 1, "Unknown-property occupied row was not flagged as an error.");
+  await expectDatabaseError(() => db.query(`select public.commit_occupied_import('${occBadJob}','${occBadValidation.validationHash}')`), "IMPORT_NOT_READY");
+  await db.exec("reset role");
 
   await db.close();
   return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits };

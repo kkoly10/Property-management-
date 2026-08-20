@@ -9,7 +9,9 @@ export async function POST(request: Request, context: { params: Promise<{ import
   const supabase = await createClient();
   const { data: auth, error: authError } = await supabase.auth.getUser();
   if (authError || !auth.user) return NextResponse.json({ error: "Sign in to validate imports." }, { status: 401 });
-  const result = await supabase.rpc("validate_portfolio_import", {
+  const { data: job } = await supabase.from("import_jobs").select("import_type").eq("id", importJobId).maybeSingle();
+  const rpc = job?.import_type === "leases" ? "validate_occupied_import" : "validate_portfolio_import";
+  const result = await supabase.rpc(rpc, {
     p_import_job_id: importJobId,
     p_mapping: parsed.data.mapping,
     p_options: parsed.data.options,

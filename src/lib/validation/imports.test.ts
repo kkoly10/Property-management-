@@ -7,7 +7,13 @@ describe("import command validation", () => {
     expect(validateImportSchema.safeParse({ mapping: { propertyName:"Name",propertyType:"Type",addressLine1:"Address",countryCode:"Country",timeZone:"Time Zone" }, options: { dedupeMode:"strict",dateLocale:"en-US" } }).success).toBe(true);
   });
 
-  it("rejects incomplete mapping and changed hash shapes", () => {
+  it("accepts the occupied-lease import type and its shared required mapping", () => {
+    expect(createImportJobSchema.safeParse({ organizationId: "10000000-0000-4000-8000-000000000001", importType: "leases", sourceDocumentId: "20000000-0000-4000-8000-000000000002" }).success).toBe(true);
+    expect(validateImportSchema.safeParse({ mapping: { propertyName:"Property",addressLine1:"Address",countryCode:"Country",unitCode:"Unit",primaryFirstName:"First",primaryLastName:"Last",leaseStartDate:"Start",rentAmountMinor:"Rent",rentFrequency:"Freq",currencyCode:"Currency" }, options: { dedupeMode:"strict",dateLocale:"en-US" } }).success).toBe(true);
+  });
+
+  it("rejects an unknown import type, incomplete mapping, and changed hash shapes", () => {
+    expect(createImportJobSchema.safeParse({ organizationId: "10000000-0000-4000-8000-000000000001", importType: "residents", sourceDocumentId: "20000000-0000-4000-8000-000000000002" }).success).toBe(false);
     expect(validateImportSchema.safeParse({ mapping: { propertyName:"Name" }, options: { dedupeMode:"strict",dateLocale:"en-US" } }).success).toBe(false);
     expect(commitImportSchema.safeParse({ expectedValidationHash: "short" }).success).toBe(false);
   });
