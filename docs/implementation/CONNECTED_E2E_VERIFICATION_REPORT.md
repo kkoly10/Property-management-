@@ -68,9 +68,52 @@ Each run uses a unique org slug (`crecy-e2e-<timestamp>`) so re-runs never colli
 verification the live project was returned to its pristine pre-run state (0 auth users,
 0 organizations, 7 seeded role definitions) — the E2E tenant and test user were removed.
 
+## Deep coverage — financial postings + resident portal round trip
+
+A second, deeper pass drives the money path all the way through the double-entry ledger and
+back out to the resident portal. It is split across three env-gated specs plus out-of-band
+fixture seeding (the storage/scan pipeline and the recurring-charge worker have no UI, so those
+prerequisites are seeded directly, exactly as the auth user is):
+
+| Spec | Browser-driven | Seeded out of band (before it) |
+| --- | --- | --- |
+| `onboarding.spec.ts` | operator login → create org/entity/book/property | (confirmed auth user) |
+| `lease-activation.spec.ts` | operator activates an existing lease via the wizard (`activate_existing_lease`) | an active `units` row + a scanned-clean `signed_lease` document/version + a raised `manual_payment_evidence_threshold_minor` |
+| `payment-and-portal.spec.ts` | operator records a manual payment via the wizard (`record_manual_payment`); resident signs in and sees it in Crecy Living | one OPEN rent charge from `generate_recurring_charges` (service_role worker) + an active `resident_person` `user_relationship` |
+
+### Verified in the live DB after the run
+
+- **Both journals balanced with the correct account codes:**
+  - `rent_charge` (from the worker): **1100 DR / 4000 CR** 150000 (AR / rental income).
+  - `manual_payment` (from the browser): **1010 DR / 1100 CR** 150000 (undeposited checks / AR).
+  - AR (1100) nets to zero, so the charge closed (`status='paid'`) and the payment posted a
+    `succeeded` row + one immutable `payment_receipt` document.
+- **Operator → resident round trip:** before payment the resident's `get_resident_balance_summary`
+  returned `balanceMinor=150000`; after the browser payment it returned `balanceMinor=0` with the
+  `check` payment (and its `receiptDocumentId`) in `get_resident_payment_history` — the same
+  payment the resident saw rendered in Crecy Living `/home`.
+
+### Out-of-band seeding used for the deep legs
+
+Done via the privileged SQL connection between browser runs (the specs are UI-only):
+direct inserts for the `units` row and the clean `signed_lease` document/version; a call to
+`activate_existing_lease` as the operator; `generate_recurring_charges(run_date, ARRAY[schedule], run_id)`
+to mint the open charge; and an `active` `resident_person` `user_relationship`
+(`relationship_id = household_members.person_id`) for the resident user. The org
+`settings->>'manual_payment_evidence_threshold_minor'` is raised so a sub-threshold payment needs no
+evidence upload. Note: `document_versions.upload_status='clean'` is set directly — no RPC transitions
+a version to clean; the malware-scan worker does that in production.
+
+## Cleanup after the deep pass
+
+The live project was again returned to pristine (0 auth users, 0 organizations, 0 tenancies,
+0 journal transactions, 0 charges; 7 seeded roles) and the local build was rebuilt in demo mode,
+with the demo smoke suite re-confirmed at 42/42.
+
 ## Scope boundary
 
-This covers the operator bootstrap + read path (auth, onboarding commands, RLS, audit/outbox,
-dashboard). Deeper connected flows (financial postings, document delivery + acknowledgement,
-resident/owner portals) are the natural next layer and would seed a richer fixture; they are
-not part of this pass.
+Covered end-to-end against the live schema: auth, onboarding, lease activation, recurring-charge
+generation, manual payment + double-entry ledger, receipts, and the resident portal read. Still
+unexercised here (future passes): document delivery + acknowledgement through the portal (needs a
+delivered-document fixture), owner statements with real postings, refunds/corrections/write-offs,
+and provider (Stripe) payment flows.
