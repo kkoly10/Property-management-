@@ -16,6 +16,18 @@ test.describe.configure({ mode: "serial" });
 
 const TITLE = "E2E leaky faucet under the kitchen sink";
 
+// Derive a valid future visit window at runtime (never a hardcoded calendar date).
+function futureVisitWindow() {
+  const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  start.setHours(9, 0, 0, 0);
+  const end = new Date(start);
+  end.setHours(11, 0, 0, 0);
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` +
+    `T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return { start: fmt(start), end: fmt(end) };
+}
+
 async function signIn(page: import("@playwright/test").Page, email: string, password: string, next: string) {
   await page.goto(`/login?next=${encodeURIComponent(next)}`);
   await page.locator("#email").fill(email);
@@ -59,8 +71,9 @@ test("operator runs the work order to completion and posts cost to the ledger", 
 
   await transition(/Mark vendor accepted/i);
   await transition(/Schedule visit/i, async () => {
-    await page.locator("#wo-start").fill("2026-08-21T09:00");
-    await page.locator("#wo-end").fill("2026-08-21T11:00");
+    const window = futureVisitWindow();
+    await page.locator("#wo-start").fill(window.start);
+    await page.locator("#wo-end").fill(window.end);
   });
   await transition(/Mark started/i);
   await transition(/Mark complete/i, async () => {
@@ -72,5 +85,8 @@ test("operator runs the work order to completion and posts cost to the ledger", 
   await page.locator("#wo-cost-amount").fill("250.00");
   await page.locator("#wo-cost-currency").selectOption("USD");
   await page.getByRole("button", { name: /Post cost to ledger/i }).click();
-  await expect(page.getByText(/posted|ledger|cost/i).first()).toBeVisible({ timeout: 30_000 });
+  // Precise success postcondition (not a label match): the command posted the DR 6200 /
+  // CR 2000 journal and returned the confirmation.
+  await expect(page.getByText(/Cost posted to the ledger/i)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/recorded as a repairs expense/i)).toBeVisible();
 });

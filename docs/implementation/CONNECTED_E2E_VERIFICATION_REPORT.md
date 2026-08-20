@@ -176,3 +176,26 @@ document delivery + acknowledgement, the maintenance lifecycle + cost posting, a
 resident↔operator messaging — with the double-entry ledger verified for every financial step and the
 resident + owner portal reads. Not exercised here: provider (Stripe) refund/payout flows and staff
 invitation invite delivery (both blocked on external config — server secret key + email transport).
+
+## Connected certification harness
+
+- **Explicit command:** `npm run test:e2e:connected` runs the connected config. Its
+  `globalSetup` (`e2e-connected/global-setup.ts`) **fails the run** if the base connection env
+  (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `E2E_EMAIL`, `E2E_PASSWORD`)
+  is missing or still a placeholder — a certification run cannot silently pass by skipping every
+  test. The ordinary suites (`npm run test:e2e`, and `npm run check` overall) do not use this setup
+  and stay environment-independent; the per-spec `test.skip` still self-skips fixture-specific legs
+  (e.g. `E2E_CONV_ID`) so partial runs remain possible.
+- **No hardcoded calendar dates:** the maintenance schedule window is derived at runtime
+  (`futureVisitWindow()` → tomorrow 09:00–11:00) instead of a fixed `2026-08-21`, so the suite does
+  not rot as the clock advances.
+- **Postcondition automation split.** App-observable postconditions are asserted *in-spec* through
+  the app's own authenticated read surfaces — resident balance returning to `0` and the receipt link
+  after a payment, the persisted message bubble (with the textarea clearing only on a durable send),
+  the delivered announcement on `/home`, and the precise "Cost posted to the ledger" confirmation.
+  Raw-ledger and audit/outbox-cardinality postconditions (exact debit/credit account codes, outbox
+  counts) are **not browser-readable by RLS design** — journals and `audit`/`private` tables are
+  exposed to no browser role — so they are certified via the privileged path (Supabase MCP
+  `execute_sql`) recorded above. Fully automating those in-process would require a dedicated
+  read-only assertion database role with `SELECT` on the finance/audit tables; that is a tracked
+  follow-up, not a correctness gap in the app.
