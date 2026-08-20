@@ -48,6 +48,7 @@ const journalIdempotencyActorScopeSql = await readFile(resolve(root, "supabase/m
 const platformControlPlaneSql = await readFile(resolve(root, "supabase/migrations/20260726100000_phase_8_platform_control_plane_foundation.sql"), "utf8");
 const documentDeliverySql = await readFile(resolve(root, "supabase/migrations/20260726110000_phase_2_document_delivery.sql"), "utf8");
 const documentDeliveryRecipientReadSql = await readFile(resolve(root, "supabase/migrations/20260726120000_phase_2_document_delivery_recipient_read.sql"), "utf8");
+const platformSupportQueriesSql = await readFile(resolve(root, "supabase/migrations/20260727100000_phase_8_platform_support_queries.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -794,6 +795,7 @@ async function validateRecurringCharges() {
   await db.exec(platformControlPlaneSql);
   await db.exec(documentDeliverySql);
   await db.exec(documentDeliveryRecipientReadSql);
+  await db.exec(platformSupportQueriesSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3509,6 +3511,96 @@ async function validateRecurringCharges() {
   await db.exec(`reset role; set request.jwt.claim.sub='${platformAgent}'`);
   const agentHasSessionAfterEnd = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
   assert(agentHasSessionAfterEnd === false, "The agent still held an active session after it was ended.");
+
+  // ── Sanitized support-query surface (phase_8_platform_support_queries) ────────────────────────
+  // Support access is served ONLY by definer support-query RPCs gated on (active platform actor)
+  // AND (active, unexpired session for the exact org). Tenant RLS is untouched.
+
+  // GUARD: no tenant base-table policy ORs the support gate in — support must not bypass tenant RLS.
+  await db.exec("reset role");
+  const supportPolicyLeak = (await db.query(`select count(*)::integer as c from pg_policies
+    where schemaname in ('public','reporting') and (coalesce(qual,'')||coalesce(with_check,'')) ilike '%has_active_support_session%'`)).rows[0].c;
+  assert(supportPolicyLeak === 0, "A tenant RLS policy references has_active_support_session — support access must not bypass tenant RLS.");
+
+  // (A) A platform actor with NO active session gets zero org data.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_organization_overview('${organization.organizationId}')`), "SUPPORT_SESSION_REQUIRED");
+  // (B) A non-platform user cannot touch the support surface at all.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${nonPlatformUser}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_lookup_organizations(null,25)`), "NOT_PLATFORM_ACTOR");
+
+  // (C) Open a fresh session; sanitized reads now work and are audited. Set a member email first so
+  // the masking is provable (test users otherwise have null emails).
+  await db.exec(`reset role; update auth.users set email='jane.doe@example.com' where id='${admin}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const investigateSession = (await db.query(`select public.start_support_session('${organization.organizationId}','Investigating why a resident cannot see their tenancy.',60,'support-investigate-01') as r`)).rows[0].r;
+  const overview = (await db.query(`select public.support_get_organization_overview('${organization.organizationId}') as r`)).rows[0].r;
+  assert(overview.organizationId === organization.organizationId && typeof overview.propertyCount === "number" && typeof overview.activeMemberCount === "number",
+    "Support overview did not return sanitized org counts.");
+  assert(!Object.keys(overview).some((k) => /email|phone|secret|token|storage|balance|amount|before|after|password|provider|reason/i.test(k)),
+    "Support overview DTO exposed a prohibited field.");
+  const members = (await db.query(`select public.support_list_organization_members('${organization.organizationId}',50) as r`)).rows[0].r;
+  assert(!JSON.stringify(members).includes("jane.doe@example.com"), "Support member list exposed a raw email address.");
+  assert(members.members.length >= 1 && members.members[0].maskedEmail && members.members[0].maskedEmail.includes("***"), "Support member email was not masked.");
+  assert(!members.members.some((m) => "beforeData" in m || "afterData" in m || "phone" in m || "phoneE164" in m), "Support member DTO exposed a prohibited field.");
+  const activity = (await db.query(`select public.support_list_recent_activity('${organization.organizationId}',50) as r`)).rows[0].r;
+  assert(Array.isArray(activity.activity) && activity.activity.every((a) => !("beforeData" in a) && !("afterData" in a) && !("reason" in a) && !("ipHash" in a)),
+    "Support activity feed leaked raw before/after payloads or a reason.");
+
+  // (D) Each investigation is audited with the support session id.
+  await db.exec("reset role");
+  const investigateAudit = (await db.query(`select count(*)::integer as c from audit.audit_events
+    where actor_type='support' and organization_id='${organization.organizationId}'
+      and action_code in ('support.viewed_overview','support.viewed_members','support.viewed_activity')
+      and after_data->>'supportSessionId'='${investigateSession.supportSessionId}'`)).rows[0].c;
+  assert(investigateAudit === 3, "Support investigations were not each audited with the support session id.");
+
+  // (E) Org-scoping: the session is for this org only; any other org id is denied.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_organization_overview('${"0".repeat(8)}-0000-4000-8000-0000000000e2')`), "SUPPORT_SESSION_REQUIRED");
+
+  // (F) The support session gate is active, yet a domain WRITE command is still denied — a session
+  // never lets the actor mutate tenant data (write commands gate on membership, not on the session).
+  // (has_active_support_session is definer-internal to schema private; call it as superuser — the uid
+  // still resolves from the sub GUC — then attempt the write back as the authenticated agent.)
+  await db.exec("reset role");
+  const agentSupportGate = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as support`)).rows[0].support;
+  assert(agentSupportGate === true, "The support session gate was not active during the investigation.");
+  await db.exec(`set role authenticated; set request.jwt.claim.aal='aal2'`);
+  let supportWroteTenantData = false;
+  try {
+    await db.query(`select public.create_operating_entity_and_book('${organization.organizationId}','Support Co','Support','US','company','USD','Support Book','support-write-attempt-1')`);
+    supportWroteTenantData = true;
+  } catch { /* expected: the support actor is not a member, so the command's authorization denies it */ }
+  assert(supportWroteTenantData === false, "A support session let the actor run a domain write command.");
+
+  // (G) Suspending the platform actor revokes access immediately.
+  await db.exec(`reset role; update private.platform_actors set status='suspended' where id='${platformAgentActor}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_organization_overview('${organization.organizationId}')`), "NOT_PLATFORM_ACTOR");
+  await db.exec(`reset role; update private.platform_actors set status='active' where id='${platformAgentActor}'`);
+
+  // (H) An 'active'-status session past its expiry yields no data (expiry authoritative at query time).
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAdmin}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_organization_overview('${organization.organizationId}')`), "SUPPORT_SESSION_REQUIRED");
+
+  // (I) Provisioning lifecycle: only a platform_admin at AAL2 provisions/suspends actors; no lockout.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.provision_platform_actor('${nonPlatformUser}','support_agent','New agent','provision-notadmin-1')`), "NOT_PLATFORM_ADMIN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAdmin}'; set request.jwt.claim.aal='aal1'`);
+  await expectDatabaseError(() => db.query(`select public.provision_platform_actor('${nonPlatformUser}','support_agent','New agent','provision-noaal-1')`), "MFA_STEP_UP_REQUIRED");
+  await db.exec(`set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.provision_platform_actor('${"0".repeat(8)}-0000-4000-8000-0000000000ff','support_agent','Ghost','provision-nouser-1')`), "PLATFORM_USER_NOT_FOUND");
+  const provisioned = (await db.query(`select public.provision_platform_actor('${nonPlatformUser}','support_agent','Provisioned agent','provision-ok-1') as r`)).rows[0].r;
+  assert(provisioned.platformActorId && provisioned.status === "active", "Platform-admin provisioning did not create an active actor.");
+  await expectDatabaseError(() => db.query(`select public.provision_platform_actor('${nonPlatformUser}','support_agent','Dup','provision-dup-1')`), "PLATFORM_ACTOR_EXISTS");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.set_platform_actor_status('${provisioned.platformActorId}','suspended','suspend-notadmin-1')`), "NOT_PLATFORM_ADMIN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAdmin}'; set request.jwt.claim.aal='aal2'`);
+  const suspendedActor = (await db.query(`select public.set_platform_actor_status('${provisioned.platformActorId}','suspended','suspend-ok-1') as r`)).rows[0].r;
+  assert(suspendedActor.status === "suspended", "Suspend did not change the platform actor status.");
+  await expectDatabaseError(() => db.query(`select public.set_platform_actor_status('e8000000-0000-4000-8000-000000000093','suspended','suspend-lastadmin-1')`), "CANNOT_SUSPEND_LAST_ADMIN");
+  await db.exec("reset role");
 
   // Document delivery & acknowledgement (phase_2_document_delivery). Operator delivers a finalized,
   // clean document version to a portal recipient identified by their active user_relationship; the
