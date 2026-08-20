@@ -77,6 +77,25 @@ Thereafter all provisioning flows through `provision_platform_actor` (existing a
 `npm run check` passes (lint, typecheck, Vitest, embedded-Postgres `test:db`, production build). The
 support-query adversarial coverage is inside the control-plane block of `validateRecurringCharges()`.
 
+## Live application
+
+Applied to the connected Supabase project (`apply_migration` → `{"success":true}`); a live smoke
+confirmed the RPCs run on real Supabase Postgres (an active platform actor received empty
+`organizations`/`sessions` on the pristine project). Security advisor after the DDL: **0 ERROR-level
+issues**; the nine `authenticated_security_definer_function_executable` WARNs are the same by-design
+notice every command RPC in this codebase raises (internal auth gates are the boundary), and no
+function triggers a mutable-`search_path` warning. The throwaway actor + project debris were removed,
+leaving the project pristine.
+
+## Console UI (shipped in the follow-up commit)
+
+A distinct `/platform` surface consumes these RPCs: organization lookup, sanitized read-only
+diagnostics (counts, masked-email members, action-code activity), start/end session, a persistent
+Support-session banner (target org + expiry), and session history. See
+`CONNECTED_E2E_VERIFICATION_REPORT.md` note: the **start-session happy path requires an AAL2/MFA-enrolled
+platform actor**, so its browser certification is environment-gated (like Stripe/email); the RPC layer
+is certified on the live schema as above and exhaustively by the embedded-Postgres adversarial suite.
+
 ## Follow-up (next slice)
 
 The platform/support **console UI** and the persistent Support-session banner (target org + expiry, End
