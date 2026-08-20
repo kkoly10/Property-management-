@@ -4,6 +4,9 @@ import path from "node:path";
 export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
   test: {
+    // Unit/validation tests live under src as *.test.ts(x); Playwright e2e specs
+    // (e2e/*.spec.ts) are driven by `npx playwright test`, not Vitest.
+    include: ["src/**/*.test.{ts,tsx}"],
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     coverage: { provider: "v8", reporter: ["text", "json-summary"] },
