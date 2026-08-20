@@ -110,10 +110,43 @@ The live project was again returned to pristine (0 auth users, 0 organizations, 
 0 journal transactions, 0 charges; 7 seeded roles) and the local build was rebuilt in demo mode,
 with the demo smoke suite re-confirmed at 42/42.
 
+## Extended coverage — documents, reversals, owner statements
+
+A third pass drives four more feature areas against the live project, each on top of the base
+tenant fixture (org / entity / book / property / unit / tenancy / charges / succeeded payment):
+
+| Spec | Browser-driven | Verified in the live DB |
+| --- | --- | --- |
+| `document-delivery.spec.ts` | operator delivers via `POST /api/v1/document-deliveries` (API-only, driven from the authenticated session); resident acknowledges via the `/documents` "Acknowledge receipt" button | `document_deliveries` row `delivered`; `document_acknowledgements` row type `received`, by the resident, with evidence hash |
+| `financial-reversals.spec.ts` | operator writes off an open charge (`/app/payments`); operator reverses the manual payment (`/app/payments/{id}` correction) | write-off journal **6300 DR / 1100 CR**, charge → `written_off`; reversal journal **1100 DR / 1010 CR**, payment → `reversed`, its charge reopened to `open` |
+| `owner-statement.spec.ts` | operator calculates + finalizes a statement (`/app/owner-statements/{ownerEntityId}`); owner views it in Crecy Owner | `reporting.owner_statement_snapshots` v1, **net owner position $1,500** (= $3,000 rent income − $1,500 write-off), plus a balanced `owner_statement_accrual` journal **3905 DR / 2100 CR** |
+
+Every journal posted by these flows was confirmed balanced with the correct account codes.
+Out-of-band seeds (no in-app command exists): a clean deliverable document/version; the
+`owner_entities` + `ownership_interests` (fraction 1.0) rows; and an active `owner_entity`
+`user_relationship` for the owner user. Ids are passed to the specs via env.
+
+**Provider (Stripe) refunds are intentionally excluded** — `request_provider_refund` +
+`complete_provider_refund` require configured Stripe Connect and a signed provider webhook, which
+are not available in this environment. The *manual* refund path (payment correction: `reversal` /
+`return`) is covered above.
+
+### Bug found and fixed by this pass
+
+The connected run surfaced a real defect that demo/preview mode had masked: the recipient
+documents fetcher (`getRecipientDocumentDeliveries`, `src/lib/data/documents.ts`) embedded
+`document_versions → documents`, but `document_versions` has **two** foreign keys to `documents`
+(a single-column `document_id` FK and a composite `organization_id, document_id` FK). PostgREST
+cannot disambiguate and returns `PGRST201`, so the query threw and both `/documents` (resident)
+and `/owner/documents` (owner) rendered "Documents unavailable" against a real backend. Fixed by
+naming the FK in the embed (`documents!document_versions_document_id_fkey(...)`). This bug was
+invisible to `test:db` (PGlite runs raw SQL, not PostgREST embeds) and to demo mode (preview data,
+no query) — only the connected E2E exercised the real PostgREST path.
+
 ## Scope boundary
 
 Covered end-to-end against the live schema: auth, onboarding, lease activation, recurring-charge
-generation, manual payment + double-entry ledger, receipts, and the resident portal read. Still
-unexercised here (future passes): document delivery + acknowledgement through the portal (needs a
-delivered-document fixture), owner statements with real postings, refunds/corrections/write-offs,
-and provider (Stripe) payment flows.
+generation, manual payment, receivable write-off, payment reversal, owner-statement finalization,
+document delivery + acknowledgement, the double-entry ledger for all of them, and the resident +
+owner portal reads. Not exercised here: provider (Stripe) refund/payout flows (blocked on external
+provider config).

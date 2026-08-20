@@ -66,7 +66,10 @@ export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumen
     const supabase = await createClient();
     const { data, error } = await supabase
       .from("document_deliveries")
-      .select("id,organization_id,delivered_at,status,document_version_id,document_versions(version_number,sha256_hex,document_id,documents(id,title,document_type)),document_acknowledgements(acknowledgement_type,acknowledged_at)")
+      // document_versions has two FKs to documents (a single-column document_id FK and a
+      // composite organization_id+document_id FK), so the embed must name the FK explicitly
+      // or PostgREST returns PGRST201 ("more than one relationship was found").
+      .select("id,organization_id,delivered_at,status,document_version_id,document_versions(version_number,sha256_hex,document_id,documents!document_versions_document_id_fkey(id,title,document_type)),document_acknowledgements(acknowledgement_type,acknowledged_at)")
       .order("delivered_at", { ascending: false });
     if (error) throw error;
 
