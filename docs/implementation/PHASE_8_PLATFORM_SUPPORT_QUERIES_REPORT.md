@@ -96,8 +96,14 @@ Support-session banner (target org + expiry), and session history. See
 platform actor**, so its browser certification is environment-gated (like Stripe/email); the RPC layer
 is certified on the live schema as above and exhaustively by the embedded-Postgres adversarial suite.
 
-## Follow-up (next slice)
+## Follow-up
 
-The platform/support **console UI** and the persistent Support-session banner (target org + expiry, End
-session) that consume these RPCs via `api/v1` are the follow-up slice; the API routes + data layer land
-with it. The `access_scope` column remains `read_only`-only.
+The platform/support **console UI** and persistent Support-session banner shipped (see the "Console UI"
+section above), and the **control-plane hardening** slice
+(`20260727110000_phase_8_platform_control_plane_hardening.sql`) followed — a race-free last-admin
+invariant + one-active-session-per-actor invariant (both advisory-locked, plus a partial unique index),
+a deterministic current-subscription selector, MFA step-up routing on the console, and a strict full
+connected-certification command. See `PHASE_8_PLATFORM_CONTROL_PLANE_HARDENING_REPORT.md`.
+
+Still open (not this slice): any **mutating** support action (`access_scope` remains `read_only`-only),
+and a **console UI for actor provisioning/suspension** (the lifecycle is RPC-only today).

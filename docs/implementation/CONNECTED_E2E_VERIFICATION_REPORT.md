@@ -179,13 +179,22 @@ invitation invite delivery (both blocked on external config — server secret ke
 
 ## Connected certification harness
 
-- **Explicit command:** `npm run test:e2e:connected` runs the connected config. Its
-  `globalSetup` (`e2e-connected/global-setup.ts`) **fails the run** if the base connection env
-  (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `E2E_EMAIL`, `E2E_PASSWORD`)
-  is missing or still a placeholder — a certification run cannot silently pass by skipping every
-  test. The ordinary suites (`npm run test:e2e`, and `npm run check` overall) do not use this setup
-  and stay environment-independent; the per-spec `test.skip` still self-skips fixture-specific legs
-  (e.g. `E2E_CONV_ID`) so partial runs remain possible.
+- **Two commands, deliberately distinct — do not call the partial one a certification:**
+  - `npm run test:e2e:connected` (partial / developer run, `playwright.connected.config.ts`). The
+    config **throws at load** (before any build/webServer) if the base connection env
+    (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `E2E_EMAIL`, `E2E_PASSWORD`)
+    is missing or a placeholder — so it cannot silently pass by skipping every test — but the per-spec
+    `test.skip` still self-skips fixture-specific legs (e.g. `E2E_CONV_ID`), so a run with a green
+    result but skipped legs is **not** a certified pilot pass.
+  - `npm run test:e2e:connected:full` (**pilot certification**, `playwright.connected.full.config.ts`).
+    The config throws at load unless **every** required non-provider-blocked P0 fixture is present (a
+    missing one would self-skip a required leg), and the certification reporter
+    (`playwright.certification-reporter.ts`) turns any required skip or failure into a non-zero exit
+    while printing **specs / executed / passed / failed / skipped / externally-excluded**. Only
+    provider-blocked journeys (Stripe payments/refunds/payouts, staff-invitation email, the platform
+    support-session MFA happy path) are allowed exclusions; a spec needing them is tagged `@external`.
+  - The ordinary suites (`npm run test:e2e`, and `npm run check` overall) load neither connected config
+    and stay environment-independent.
 - **No hardcoded calendar dates:** the maintenance schedule window is derived at runtime
   (`futureVisitWindow()` → tomorrow 09:00–11:00) instead of a fixed `2026-08-21`, so the suite does
   not rot as the clock advances.

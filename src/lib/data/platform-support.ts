@@ -78,6 +78,21 @@ export async function getActiveSupportSessions(): Promise<SupportSessionRow[]> {
   }
 }
 
+// The DB requires AAL2 for start_support_session/provisioning; this mirrors the payments/staff/privacy
+// convention of surfacing the caller's current assurance level so the UI can route a step-up BEFORE the
+// RPC 403s. Never weakens the DB gate — it only decides whether to show the "Verify with MFA" affordance.
+export async function getPlatformAuthenticatorLevel(): Promise<"aal1" | "aal2"> {
+  if (!getPublicSupabaseConfig()) return "aal2";
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) return "aal1";
+    return data.currentLevel === "aal2" ? "aal2" : "aal1";
+  } catch {
+    return "aal1";
+  }
+}
+
 export async function getSupportOrganizationDiagnostics(organizationId: string): Promise<SupportDiagnosticsState> {
   if (!getPublicSupabaseConfig()) {
     return {

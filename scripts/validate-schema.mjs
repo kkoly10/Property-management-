@@ -49,6 +49,7 @@ const platformControlPlaneSql = await readFile(resolve(root, "supabase/migration
 const documentDeliverySql = await readFile(resolve(root, "supabase/migrations/20260726110000_phase_2_document_delivery.sql"), "utf8");
 const documentDeliveryRecipientReadSql = await readFile(resolve(root, "supabase/migrations/20260726120000_phase_2_document_delivery_recipient_read.sql"), "utf8");
 const platformSupportQueriesSql = await readFile(resolve(root, "supabase/migrations/20260727100000_phase_8_platform_support_queries.sql"), "utf8");
+const platformControlPlaneHardeningSql = await readFile(resolve(root, "supabase/migrations/20260727110000_phase_8_platform_control_plane_hardening.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -796,6 +797,7 @@ async function validateRecurringCharges() {
   await db.exec(documentDeliverySql);
   await db.exec(documentDeliveryRecipientReadSql);
   await db.exec(platformSupportQueriesSql);
+  await db.exec(platformControlPlaneHardeningSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3600,6 +3602,86 @@ async function validateRecurringCharges() {
   const suspendedActor = (await db.query(`select public.set_platform_actor_status('${provisioned.platformActorId}','suspended','suspend-ok-1') as r`)).rows[0].r;
   assert(suspendedActor.status === "suspended", "Suspend did not change the platform actor status.");
   await expectDatabaseError(() => db.query(`select public.set_platform_actor_status('e8000000-0000-4000-8000-000000000093','suspended','suspend-lastadmin-1')`), "CANNOT_SUSPEND_LAST_ADMIN");
+  await db.exec("reset role");
+
+  // ── Correction A/B/C: control-plane hardening (phase_8_platform_control_plane_hardening) ─────────
+  // PGlite is single-connection, so a literal two-transaction race cannot execute here. These tests
+  // prove the SERIALIZED outcome the transaction-scoped advisory lock guarantees, and additionally
+  // assert the static presence of that lock and of the storage-layer partial unique index — the two
+  // mechanisms that make the losing concurrent outcome impossible even under true parallelism.
+
+  // (A) Last-admin cardinality is race-free. Provision a SECOND active admin, then suspend the two in
+  // sequence: the first suspend succeeds (2 active → 1); suspending the now-last admin is refused. Under
+  // real concurrency the advisory lock forces exactly this serialization, so at most one suspend commits.
+  const platformAdminTwo = "e8000000-0000-4000-8000-000000000085";
+  await db.exec(`reset role; insert into auth.users(id) values ('${platformAdminTwo}')`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAdmin}'; set request.jwt.claim.aal='aal2'`);
+  const provisionedAdminTwo = (await db.query(`select public.provision_platform_actor('${platformAdminTwo}','platform_admin','Second admin','provision-admintwo-1') as r`)).rows[0].r;
+  assert(provisionedAdminTwo.platformActorId && provisionedAdminTwo.status === "active", "Provisioning a second platform admin did not create an active actor.");
+  await db.exec("reset role");
+  const twoAdmins = (await db.query(`select count(*)::integer as c from private.platform_actors where status='active' and platform_role='platform_admin'`)).rows[0].c;
+  assert(twoAdmins === 2, "Expected exactly two active platform admins before the cardinality test.");
+  // The second admin (085) suspends the first (093): 2 active → 1, allowed.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAdminTwo}'; set request.jwt.claim.aal='aal2'`);
+  const suspendFirstAdmin = (await db.query(`select public.set_platform_actor_status('e8000000-0000-4000-8000-000000000093','suspended','suspend-admin-a-1') as r`)).rows[0].r;
+  assert(suspendFirstAdmin.status === "suspended", "Suspending the first of two admins did not succeed.");
+  // 085 is now the last active admin; suspending it is refused — the invariant re-read holds under lock.
+  await expectDatabaseError(() => db.query(`select public.set_platform_actor_status('${provisionedAdminTwo.platformActorId}','suspended','suspend-admin-b-1')`), "CANNOT_SUSPEND_LAST_ADMIN");
+  await db.exec("reset role");
+  const oneAdminLeft = (await db.query(`select count(*)::integer as c from private.platform_actors where status='active' and platform_role='platform_admin'`)).rows[0].c;
+  assert(oneAdminLeft === 1, "After the serialized suspends exactly one active admin must remain.");
+  // The advisory lock that serializes every cardinality change is present in both commands.
+  const provisionDef = (await db.query(`select pg_get_functiondef('public.provision_platform_actor(uuid,text,text,text)'::regprocedure) as d`)).rows[0].d;
+  const statusDef = (await db.query(`select pg_get_functiondef('public.set_platform_actor_status(uuid,text,text)'::regprocedure) as d`)).rows[0].d;
+  assert(provisionDef.includes("pg_advisory_xact_lock") && statusDef.includes("pg_advisory_xact_lock"), "The admin-cardinality commands must serialize on a transaction-scoped advisory lock.");
+  // Reactivate 093 (the activate path also runs under the lock) to leave a clean two-admin state.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAdminTwo}'; set request.jwt.claim.aal='aal2'`);
+  await db.query(`select public.set_platform_actor_status('e8000000-0000-4000-8000-000000000093','active','reactivate-admin-a-1')`);
+
+  // (B) One active, unexpired support session per platform ACTOR, GLOBALLY. The agent already holds an
+  // active session (support-investigate-01, opened in the sanitized-query tests and never ended).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  // Same org, different key → refused (not silently duplicated).
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','A second concurrent session for the same org.',60,'support-second-same-1')`), "SUPPORT_SESSION_ALREADY_ACTIVE");
+  // A genuinely different, open organization for the cross-org refusal.
+  const orgTwoOwner = "e8000000-0000-4000-8000-000000000086";
+  await db.exec(`reset role; insert into auth.users(id) values ('${orgTwoOwner}')`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${orgTwoOwner}'; set request.jwt.claim.aal='aal2'`);
+  const orgTwo = (await db.query(`select public.create_organization('Beacon Realty','beacon-realty','property_manager','US','en-US','America/New_York','2026-07-20','beacon-org-0001') as result`)).rows[0].result;
+  // The single active session must block a session for a DIFFERENT org too — the invariant is global.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${orgTwo.organizationId}','A concurrent session for a different org.',60,'support-second-diff-1')`), "SUPPORT_SESSION_ALREADY_ACTIVE");
+  // Storage-layer defense-in-depth: the partial unique index enforcing one active session per actor.
+  await db.exec("reset role");
+  const activeSessionIndex = (await db.query(`select count(*)::integer as c from pg_indexes where schemaname='private' and indexname='support_sessions_active_per_actor_unique'`)).rows[0].c;
+  assert(activeSessionIndex === 1, "The one-active-session-per-actor partial unique index is missing.");
+  // An EXPIRED prior session does NOT block a new one: force the agent's active session past its TTL,
+  // then a fresh start succeeds (start_support_session materializes the lapsed row to 'expired' first).
+  await db.exec(`reset role; update private.support_sessions set started_at=now()-interval '2 hours', expires_at=now()-interval '1 hour' where user_id='${platformAgent}' and status='active'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const reopened = (await db.query(`select public.start_support_session('${organization.organizationId}','Reopening after the prior session lapsed at its TTL.',60,'support-reopen-after-expiry-1') as r`)).rows[0].r;
+  assert(reopened.status === "active" && reopened.supportSessionId, "A new session was not allowed after the prior one lapsed at its TTL.");
+  // The lapsed session was materialized to 'expired'; exactly one active session exists for the actor.
+  await db.exec("reset role");
+  const agentActiveCount = (await db.query(`select count(*)::integer as c from private.support_sessions where user_id='${platformAgent}' and status='active'`)).rows[0].c;
+  assert(agentActiveCount === 1, "After reopening, the actor must have exactly one active session.");
+  // True idempotent replay of the reopened session returns the SAME session (short-circuit before the
+  // ALREADY_ACTIVE guard), never a spurious conflict.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const reopenedReplay = (await db.query(`select public.start_support_session('${organization.organizationId}','Reopening after the prior session lapsed at its TTL.',60,'support-reopen-after-expiry-1') as r`)).rows[0].r;
+  assert(reopenedReplay.supportSessionId === reopened.supportSessionId, "Idempotent replay of the reopened session did not return the stored session.");
+
+  // (C) Deterministic current-subscription selection: a historical CANCELED Starter must never mask the
+  // current Growth trial. Insert an older canceled Starter alongside the seeded Growth/trialing row.
+  await db.exec("reset role");
+  await db.exec(`insert into public.organization_subscriptions(organization_id,plan_code,country_price_book,status,created_at)
+    values ('${organization.organizationId}','starter','US','canceled',now()-interval '400 days')`);
+  const subRows = (await db.query(`select count(*)::integer as c from public.organization_subscriptions where organization_id='${organization.organizationId}'`)).rows[0].c;
+  assert(subRows === 2, "Expected a current + a historical subscription row for the determinism test.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const overviewDeterministic = (await db.query(`select public.support_get_organization_overview('${organization.organizationId}') as r`)).rows[0].r;
+  assert(overviewDeterministic.subscriptionPlanCode === "growth" && overviewDeterministic.subscriptionStatus === "trialing",
+    "The overview did not deterministically report the current Growth trial over the historical canceled Starter.");
   await db.exec("reset role");
 
   // Document delivery & acknowledgement (phase_2_document_delivery). Operator delivers a finalized,

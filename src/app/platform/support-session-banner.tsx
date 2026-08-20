@@ -13,22 +13,27 @@ export function SupportSessionBanner({ sessions }: { sessions: SupportSessionRow
   const router = useRouter();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const idempotencyKey = useRef<string | null>(null);
+  // One idempotency key per session+action, minted lazily and reused across a genuine retry so the End
+  // call replays idempotently; cleared for that session on any HTTP failure so a fresh attempt re-mints.
+  // A single shared key would collide across sessions (different org/session → IDEMPOTENCY_CONFLICT).
+  const idempotencyKeys = useRef<Map<string, string>>(new Map());
 
   if (!sessions.length) return null;
 
   async function end(session: SupportSessionRow) {
     setPendingId(session.supportSessionId);
     setError(null);
-    idempotencyKey.current ??= crypto.randomUUID();
+    const keyMap = idempotencyKeys.current;
+    let key = keyMap.get(session.supportSessionId);
+    if (!key) { key = crypto.randomUUID(); keyMap.set(session.supportSessionId, key); }
     try {
       const response = await fetch(`/api/v1/platform/support-sessions/${session.supportSessionId}/end`, {
         method: "POST",
-        headers: { "content-type": "application/json", "idempotency-key": idempotencyKey.current },
-        body: JSON.stringify({ organizationId: session.organizationId, disposition: "ended", idempotencyKey: crypto.randomUUID() }),
+        headers: { "content-type": "application/json", "idempotency-key": key },
+        body: JSON.stringify({ organizationId: session.organizationId, disposition: "ended", idempotencyKey: key }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) { idempotencyKey.current = null; throw new Error(body.error ?? "The session could not be ended."); }
+      if (!response.ok) { keyMap.delete(session.supportSessionId); throw new Error(body.error ?? "The session could not be ended."); }
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The session could not be ended.");

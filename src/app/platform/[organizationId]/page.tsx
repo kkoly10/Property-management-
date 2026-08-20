@@ -4,7 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getSupportOrganizationDiagnostics } from "@/lib/data/platform-support";
+import { getActiveSupportSessions, getPlatformAuthenticatorLevel, getSupportOrganizationDiagnostics } from "@/lib/data/platform-support";
 import { StartSupportSessionForm } from "../start-support-session-form";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,16 @@ const label = (value: string) => value.replaceAll(".", " ").replaceAll("_", " ")
 export default async function PlatformOrganizationPage({ params }: { params: Promise<{ organizationId: string }> }) {
   const { organizationId } = await params;
   const state = await getSupportOrganizationDiagnostics(organizationId);
+  // Only when we are on the "open a session" view do we need the extra context: whether the actor is
+  // already at AAL2 (the DB requires it) and whether they already hold a session elsewhere (only one
+  // active session per actor is allowed). Both let us gate the form BEFORE it submits into a 403/409.
+  const [authLevel, activeSessions] =
+    state.mode === "no_session"
+      ? await Promise.all([getPlatformAuthenticatorLevel(), getActiveSupportSessions()])
+      : (["aal2", []] as const);
+  const needsStepUp = authLevel !== "aal2";
+  const activeElsewhere = activeSessions.find((session) => session.organizationId !== organizationId) ?? null;
+  const stepUpHref = `/settings/security/mfa?returnTo=${encodeURIComponent(`/platform/${organizationId}`)}`;
 
   return (
     <div className="space-y-6">
@@ -29,7 +39,33 @@ export default async function PlatformOrganizationPage({ params }: { params: Pro
       {state.mode === "no_session" ? (
         <Card>
           <CardHeader><div className="flex items-center gap-2"><KeyRound className="h-4 w-4 text-primary" /><CardTitle>Open a support session</CardTitle></div><CardDescription>You need an active, audited support session for this organization before any diagnostics are shown.</CardDescription></CardHeader>
-          <CardContent><StartSupportSessionForm organizationId={organizationId} disabled={false} /></CardContent>
+          <CardContent className="space-y-4">
+            {needsStepUp ? (
+              <>
+                <Alert variant="info">
+                  <ShieldCheck className="h-5 w-5" />
+                  <AlertTitle>Multi-factor verification required</AlertTitle>
+                  <AlertDescription>Opening an audited support session requires a verified authenticator. Verify to continue — you&apos;ll return here.</AlertDescription>
+                </Alert>
+                <Button asChild><Link href={stepUpHref}><ShieldCheck className="h-4 w-4" />Verify with MFA</Link></Button>
+              </>
+            ) : (
+              <>
+                {activeElsewhere ? (
+                  <Alert variant="info">
+                    <ShieldCheck className="h-5 w-5" />
+                    <AlertTitle>A support session is already active</AlertTitle>
+                    <AlertDescription>
+                      You already hold an active support session for{" "}
+                      <span className="font-semibold">{activeElsewhere.organizationName ?? activeElsewhere.organizationId}</span>. Only one is
+                      allowed at a time — end it from the banner above before opening one here.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                <StartSupportSessionForm organizationId={organizationId} disabled={activeElsewhere != null} />
+              </>
+            )}
+          </CardContent>
         </Card>
       ) : null}
 

@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     if (code.includes("ORGANIZATION_NOT_FOUND")) return errorResponse("That organization was not found.", 404);
     if (code.includes("AUDIT_REASON_REQUIRED") || code.includes("INVALID_SUPPORT_REASON")) return errorResponse("Enter a support reason of 8–500 characters.", 422);
     if (code.includes("INVALID_SUPPORT_TTL")) return errorResponse("Choose a session length between 5 and 240 minutes.", 422);
+    if (code.includes("SUPPORT_SESSION_ALREADY_ACTIVE")) return errorResponse("You already have an active support session. End it before opening another — only one is allowed at a time.", 409);
     if (code.includes("IDEMPOTENCY_CONFLICT")) return errorResponse("This retry no longer matches the original request.", 409);
     if (code.includes("COMMAND_IN_PROGRESS")) return errorResponse("This session is already being opened. Try again in a moment.", 409);
     return errorResponse("The support session could not be opened.", 422);

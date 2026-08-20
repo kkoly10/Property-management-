@@ -50,4 +50,5 @@ next-env.d.ts
 # Playwright
 /playwright-report/
 /playwright-report-connected/
+/playwright-report-connected-full/
 /test-results/

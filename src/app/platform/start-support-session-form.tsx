@@ -29,10 +29,18 @@ export function StartSupportSessionForm({ organizationId, disabled }: { organiza
       const response = await fetch("/api/v1/platform/support-sessions", {
         method: "POST",
         headers: { "content-type": "application/json", "idempotency-key": idempotencyKey.current },
-        body: JSON.stringify({ organizationId, reason: reason.trim(), ttlMinutes, idempotencyKey: crypto.randomUUID() }),
+        body: JSON.stringify({ organizationId, reason: reason.trim(), ttlMinutes, idempotencyKey: idempotencyKey.current }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) { idempotencyKey.current = null; throw new Error(body.error ?? "The support session could not be opened."); }
+      if (!response.ok) {
+        idempotencyKey.current = null;
+        // Route an AAL2 step-up back through the existing MFA flow, returning to this org's page.
+        if (response.status === 403 && /multi-factor/i.test(body.error ?? "")) {
+          window.location.assign(`/settings/security/mfa?returnTo=${encodeURIComponent(`/platform/${organizationId}`)}`);
+          return;
+        }
+        throw new Error(body.error ?? "The support session could not be opened.");
+      }
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The support session could not be opened.");

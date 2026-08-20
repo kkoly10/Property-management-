@@ -16,6 +16,7 @@
     "test:db": "node scripts/validate-schema.mjs",
     "test:e2e": "playwright test",
     "test:e2e:connected": "playwright test --config=playwright.connected.config.ts",
+    "test:e2e:connected:full": "playwright test --config=playwright.connected.full.config.ts",
     "check": "npm run lint && npm run typecheck && npm run test && npm run test:db && npm run build"
   },
   "dependencies": {
