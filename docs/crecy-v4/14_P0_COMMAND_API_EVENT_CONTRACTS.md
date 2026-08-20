@@ -560,9 +560,11 @@ Request: `{ targetPlanCode:'free'|'starter'|'growth'|'pro'; billingInterval:'mon
 
 Request type is access, correction, deletion, export, restriction, objection, withdrawal, or appeal. The command persists jurisdiction, controller routing, due date, identity-verification state, audit evidence, and jobs. It does not promise deletion where legal holds or operator instructions apply.
 
-### 4.26 AcknowledgeDocumentDelivery
+### 4.26 DeliverDocument / AcknowledgeDocumentDelivery
 
-`POST /api/v1/document-deliveries/{id}/acknowledgements` with acknowledgement type and evidence hash. Actor must be the recipient. Creates append-only acknowledgement and emits `document.acknowledged`.
+**DeliverDocument** — RPC command `deliver_document(p_organization_id, p_document_version_id, p_recipient_relationship_type, p_recipient_relationship_id, p_delivery_channel, p_idempotency_key)`. Operator posts a finalized (`upload_status='clean'`) document version to a portal recipient identified by their active `user_relationship`; requires parent-scoped `documents.manage` (`PROPERTY_SCOPE_DENIED`/`DOCUMENTS_SCOPE_DENIED`). Only `delivery_channel='portal'` is accepted this pilot (`UNSUPPORTED_DELIVERY_CHANNEL` otherwise — email/secure_link await a delivery worker); `DOCUMENT_VERSION_NOT_FOUND`, `DOCUMENT_NOT_DELIVERABLE` (unscanned), and `DELIVERY_RECIPIENT_NOT_FOUND` (no active relationship user) guard the rest. Creates a `document_deliveries` row (`status='delivered'`), idempotent per (org, actor, `DeliverDocument`, key), and emits `document.delivered`. `POST /api/v1/document-deliveries`. Delivery also grants the recipient RLS read on the delivered document (`private.is_document_delivery_recipient`), so they can view and download it in their portal.
+
+**AcknowledgeDocumentDelivery** — `POST /api/v1/document-deliveries/{id}/acknowledgements` with acknowledgement type and evidence hash. Actor must be the delivery's recipient (`DOCUMENT_DELIVERY_FORBIDDEN`). Creates an append-only acknowledgement (`viewed|received|accepted|declined|signed_external`, unique per delivery+user+type — `DOCUMENT_DELIVERY_ALREADY_ACKNOWLEDGED`, checked after the idempotency short-circuit) and emits `document.acknowledged`.
 
 ### 4.27 RespondToOwnerApproval
 
@@ -575,6 +577,16 @@ Request: `{ decision:'approved'|'rejected'; reason?:string; expectedVersion:numb
 `PUT /api/v1/notification-preferences`
 
 Request includes locale, reduced-motion/high-contrast/text-scale accessibility choices, the complete transactional channel/category matrix, expected preference version, and an idempotency key. The command is bound to `auth.uid()` and cannot target another user. SMS or WhatsApp activation requires a profile phone. Marketing email/SMS remain off and cannot be enabled by this command because a preference is not consent. The command updates `profiles` and `notification_preferences` atomically, writes an audit record, and emits `notification_preferences.updated`.
+
+### 4.29 StartSupportSession (platform control plane)
+
+RPC command `start_support_session(p_organization_id, p_reason, p_ttl_minutes, p_idempotency_key)`. No public HTTP route in this foundation slice — the operator/platform HTTP surface and the tenant-policy wiring that will *honor* a session are a later slice; this slice ships the audited grant record and its lifecycle only.
+
+Caller must be an `active` `private.platform_actors` row (`NOT_PLATFORM_ACTOR`), stepped up to AAL2 (`MFA_STEP_UP_REQUIRED`). Reason is mandatory, 8–500 chars (`AUDIT_REASON_REQUIRED`/`INVALID_SUPPORT_REASON`); `ttlMinutes` is 5–240 (`INVALID_SUPPORT_TTL`); target org must exist and not be `closed` (`ORGANIZATION_NOT_FOUND`). Opens a `read_only` `private.support_sessions` row expiring at `now()+ttl`, writes one `audit.audit_events` row with `actor_type='support'`, and emits `support.session_started`. Idempotent per (org, actor, `StartSupportSession`, key); replay returns the stored session. **Granting a session confers no cross-org data access** — `private.has_active_support_session()` exists but is wired into no policy.
+
+### 4.30 EndSupportSession (platform control plane)
+
+RPC command `end_support_session(p_organization_id, p_support_session_id, p_disposition, p_idempotency_key)`. `disposition` ∈ `ended|revoked` (`INVALID_SUPPORT_DISPOSITION`). The session's own actor may end it; a `platform_admin` may end anyone's (`SUPPORT_SESSION_FORBIDDEN` otherwise). `SUPPORT_SESSION_NOT_FOUND` if the session/org pair is unknown; `SUPPORT_SESSION_NOT_ACTIVE` if already closed (checked after the idempotency short-circuit so a true replay returns the stored result). Sets `status`/`ended_at`/`ended_reason`, writes an `actor_type='support'` audit row, and emits `support.session_ended` or `support.session_revoked`. Idempotent per (org, actor, `EndSupportSession`, key).
 
 ## 5. Query contracts
 
@@ -631,6 +643,7 @@ Operator search is a bounded exception to cursor pagination because it returns a
 | `notification.requested` | templateCode, recipientRelationship, locale, channelPreference |
 | `message.sent` | conversationId, messageId, senderType |
 | `announcement.published` | announcementId, propertyId, audienceType, deliveryCount |
+| `document.delivered` | documentDeliveryId, documentVersionId, recipientUserId |
 | `document.acknowledged` | deliveryId, acknowledgementId, type |
 | `payment.corrected` | paymentId, correctionType, correctiveJournalTransactionId |
 | `owner_remittance.recorded` | remittanceId, ownerId, propertyId, amountMinor, currency |
@@ -645,6 +658,9 @@ Operator search is a bounded exception to cursor pagination because it returns a
 | `membership.scopes_changed` | membershipId, propertyIds, version |
 | `membership.revoked` | membershipId, revokedUserId, version |
 | `notification_preferences.updated` | userId, locale, preferencesVersion |
+| `support.session_started` | supportSessionId, organizationId, accessScope, expiresAt |
+| `support.session_ended` | supportSessionId, organizationId, disposition |
+| `support.session_revoked` | supportSessionId, organizationId, disposition |
 
 ## 7. Payment state transition table
 

@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { autoMapImportColumns } from "@/lib/imports/csv";
 
-const fields = [
+const portfolioFields = [
   { key: "propertyName", label: "Property name", required: true },
   { key: "propertyType", label: "Property type", required: true },
   { key: "addressLine1", label: "Address line 1", required: true },
@@ -26,11 +26,35 @@ const fields = [
   { key: "squareFeet", label: "Square feet", required: false },
 ] as const;
 
-export function ImportWorkflow({ jobId, headers, currentMapping, currentOptions, status, validationHash, disabled }: {
-  jobId: string; headers: string[]; currentMapping: Record<string, string>;
+// Occupied-lease import: identify an already-imported unit, then the primary resident + lease terms +
+// an optional opening receivable. The command activates the tenancy and posts the opening balance.
+const occupiedFields = [
+  { key: "propertyName", label: "Property name", required: true },
+  { key: "addressLine1", label: "Address line 1", required: true },
+  { key: "locality", label: "City / locality", required: false },
+  { key: "countryCode", label: "Country code", required: true },
+  { key: "unitCode", label: "Unit code", required: true },
+  { key: "householdName", label: "Household name", required: false },
+  { key: "primaryFirstName", label: "Primary resident first name", required: true },
+  { key: "primaryLastName", label: "Primary resident last name", required: true },
+  { key: "primaryEmail", label: "Primary resident email", required: false },
+  { key: "primaryPhone", label: "Primary resident phone (E.164)", required: false },
+  { key: "leaseStartDate", label: "Lease start date", required: true },
+  { key: "leaseEndDate", label: "Lease end date", required: false },
+  { key: "rentAmountMinor", label: "Rent (minor units)", required: true },
+  { key: "rentFrequency", label: "Rent frequency", required: true },
+  { key: "currencyCode", label: "Currency code", required: true },
+  { key: "externalReference", label: "External reference", required: false },
+  { key: "openingBalanceMinor", label: "Opening balance (minor units)", required: false },
+  { key: "firstChargeDueDate", label: "First charge due date", required: false },
+] as const;
+
+export function ImportWorkflow({ jobId, importType, headers, currentMapping, currentOptions, status, validationHash, disabled }: {
+  jobId: string; importType: string; headers: string[]; currentMapping: Record<string, string>;
   currentOptions?: { dedupeMode: "strict" | "review"; dateLocale: string };
   status: string; validationHash: string | null; disabled: boolean;
 }) {
+  const fields: readonly { key: string; label: string; required: boolean }[] = importType === "leases" ? occupiedFields : portfolioFields;
   const router = useRouter();
   const [mapping, setMapping] = useState<Record<string, string>>(() => Object.keys(currentMapping).length ? currentMapping : autoMapImportColumns(headers));
   const [dedupeMode, setDedupeMode] = useState<"strict" | "review">(currentOptions?.dedupeMode ?? "strict");

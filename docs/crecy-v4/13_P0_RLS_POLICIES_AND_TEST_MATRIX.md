@@ -209,6 +209,20 @@ as $$
   );
 $$;
 
+create or replace function private.is_document_delivery_recipient(target_document uuid)
+returns boolean
+language sql stable security definer
+set search_path = public,private,pg_temp
+as $$
+  select exists (
+    select 1
+    from public.document_deliveries dd
+    join public.document_versions dv on dv.id=dd.document_version_id
+    where dv.document_id=target_document
+      and dd.recipient_user_id=(select auth.uid())
+  );
+$$;
+
 create or replace function private.is_vendor_for_work_order(target_work_order uuid)
 returns boolean
 language sql stable security definer
@@ -239,6 +253,7 @@ revoke all on function private.is_owner_entity(uuid) from public;
 revoke all on function private.has_announcement_delivery(uuid) from public;
 revoke all on function private.can_manage_announcement(uuid) from public;
 revoke all on function private.can_manage_document_version(uuid) from public;
+revoke all on function private.is_document_delivery_recipient(uuid) from public;
 revoke all on function private.is_vendor_for_work_order(uuid) from public;
 grant execute on function private.is_active_org_member(uuid) to authenticated;
 grant execute on function private.has_org_permission(uuid,text) to authenticated;
@@ -251,6 +266,7 @@ grant execute on function private.is_owner_entity(uuid) to authenticated;
 grant execute on function private.has_announcement_delivery(uuid) to authenticated;
 grant execute on function private.can_manage_announcement(uuid) to authenticated;
 grant execute on function private.can_manage_document_version(uuid) to authenticated;
+grant execute on function private.is_document_delivery_recipient(uuid) to authenticated;
 grant execute on function private.is_vendor_for_work_order(uuid) to authenticated;
 
 -- Enable RLS on every exposed table.
@@ -463,6 +479,7 @@ using (
   (property_id is not null and ((select private.has_property_access(property_id,'documents.read')) or (select private.has_property_access(property_id,'documents.manage'))))
   or (tenancy_id is not null and (select private.is_resident_for_tenancy(tenancy_id)))
   or (owner_entity_id is not null and exists(select 1 from public.user_relationships ur where ur.user_id=(select auth.uid()) and ur.organization_id=organization_id and ur.relationship_type='owner_entity' and ur.relationship_id=owner_entity_id and ur.status='active'))
+  or (select private.is_document_delivery_recipient(documents.id))
 );
 create policy document_versions_parent_read on public.document_versions for select to authenticated
 using (exists(select 1 from public.documents d where d.id=document_id));

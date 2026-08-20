@@ -14,6 +14,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:db": "node scripts/validate-schema.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:connected": "playwright test --config=playwright.connected.config.ts",
+    "test:e2e:connected:full": "playwright test --config=playwright.connected.full.config.ts",
     "check": "npm run lint && npm run typecheck && npm run test && npm run test:db && npm run build"
   },
   "dependencies": {
@@ -35,6 +38,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.4",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "4.3.3",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.2",

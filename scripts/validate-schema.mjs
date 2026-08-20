@@ -44,6 +44,13 @@ const maintenanceCostSql = await readFile(resolve(root, "supabase/migrations/202
 const reconciliationResolutionSql = await readFile(resolve(root, "supabase/migrations/20260725110000_phase_5_reconciliation_resolution.sql"), "utf8");
 const receivableWriteOffSql = await readFile(resolve(root, "supabase/migrations/20260725120000_phase_4_receivable_write_off.sql"), "utf8");
 const ownerPortalInviteStateSql = await readFile(resolve(root, "supabase/migrations/20260725130000_phase_8_owner_portal_invite_state.sql"), "utf8");
+const journalIdempotencyActorScopeSql = await readFile(resolve(root, "supabase/migrations/20260726090000_phase_4_journal_idempotency_actor_scope.sql"), "utf8");
+const platformControlPlaneSql = await readFile(resolve(root, "supabase/migrations/20260726100000_phase_8_platform_control_plane_foundation.sql"), "utf8");
+const documentDeliverySql = await readFile(resolve(root, "supabase/migrations/20260726110000_phase_2_document_delivery.sql"), "utf8");
+const documentDeliveryRecipientReadSql = await readFile(resolve(root, "supabase/migrations/20260726120000_phase_2_document_delivery_recipient_read.sql"), "utf8");
+const platformSupportQueriesSql = await readFile(resolve(root, "supabase/migrations/20260727100000_phase_8_platform_support_queries.sql"), "utf8");
+const platformControlPlaneHardeningSql = await readFile(resolve(root, "supabase/migrations/20260727110000_phase_8_platform_control_plane_hardening.sql"), "utf8");
+const occupiedLeaseImportSql = await readFile(resolve(root, "supabase/migrations/20260727120000_phase_3_occupied_lease_import.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -123,7 +130,7 @@ async function validateAuthority() {
   await db.exec(rlsSql);
   const tableResult = await db.query(`select count(*)::integer as count from information_schema.tables where table_schema in ('public','private','audit','reporting')`);
   const policyResult = await db.query(`select count(*)::integer as count from pg_policies where schemaname in ('public','reporting')`);
-  assert(tableResult.rows[0].count === 74, "Authority schema table count changed unexpectedly.");
+  assert(tableResult.rows[0].count === 76, "Authority schema table count changed unexpectedly.");
   assert(policyResult.rows[0].count === 59, "Authority RLS policy count changed unexpectedly.");
 
   const admin = "d0000000-0000-4000-8000-000000000001";
@@ -751,6 +758,7 @@ async function validateRecurringCharges() {
   await db.exec(foundationSql);
   await db.exec(portfolioSql);
   await db.exec(documentsSql);
+  await db.exec(importsSql);
   await db.exec(leasingSql);
   await db.exec(financeSql);
   await db.exec(manualPaymentsSql);
@@ -786,6 +794,13 @@ async function validateRecurringCharges() {
   await db.exec(reconciliationResolutionSql);
   await db.exec(receivableWriteOffSql);
   await db.exec(ownerPortalInviteStateSql);
+  await db.exec(journalIdempotencyActorScopeSql);
+  await db.exec(platformControlPlaneSql);
+  await db.exec(documentDeliverySql);
+  await db.exec(documentDeliveryRecipientReadSql);
+  await db.exec(platformSupportQueriesSql);
+  await db.exec(platformControlPlaneHardeningSql);
+  await db.exec(occupiedLeaseImportSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3411,8 +3426,410 @@ async function validateRecurringCharges() {
   assert(invitedOnlyRow && invitedOnlyRow.invitationState === "invited" && invitedOnlyRow.email === "invitedonly.owner@example.com", "Owner-statement workspace did not surface an invited owner.");
   assert(noEmailRow && noEmailRow.invitationState === "active" && noEmailRow.email === null, "Owner-statement workspace did not surface a null email for an owner entity without one.");
 
+  // Journal idempotency actor-scoping (phase_4_journal_idempotency_actor_scope). Two DIFFERENT finance
+  // actors reusing ONE idempotency-key string on distinct charges in the same accounting book must BOTH
+  // post — journal uniqueness is now (accounting_book_id, created_by, idempotency_key) for user postings.
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('e7000000-0000-4000-8000-000000000071');
+    insert into public.organization_memberships(organization_id,user_id,role_code,status,invited_by)
+    values ('${organization.organizationId}','e7000000-0000-4000-8000-000000000071','accountant','active','${admin}');
+    set role service_role;`);
+  const idemChargeNov = (await db.query(`select public.generate_recurring_charges('2026-11-30',array['${activation.chargeScheduleId}'::uuid],'finance-idem-gen-nov-01') as result`)).rows[0].result.chargeIds[0];
+  const idemChargeDec = (await db.query(`select public.generate_recurring_charges('2026-12-31',array['${activation.chargeScheduleId}'::uuid],'finance-idem-gen-dec-01') as result`)).rows[0].result.chargeIds[0];
+  const financeActorB = "e7000000-0000-4000-8000-000000000071";
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const writeOffActorA = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${idemChargeNov}']::uuid[],'Uncollectible balance closed by actor A.','shared-idem-key-000001') as result`)).rows[0].result;
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${financeActorB}'`);
+  const writeOffActorB = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${idemChargeDec}']::uuid[],'Uncollectible balance closed by actor B.','shared-idem-key-000001') as result`)).rows[0].result;
+  assert(writeOffActorB.journalTransactionId && writeOffActorB.journalTransactionId !== writeOffActorA.journalTransactionId,
+    "A second actor reusing one idempotency key on a distinct charge did not post — journal uniqueness is not actor-scoped.");
+  // A single actor replaying the same key still short-circuits to the stored response (idempotency intact).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const writeOffActorAReplay = (await db.query(`select public.write_off_receivable('${organization.organizationId}','${activation.tenancyId}',array['${idemChargeNov}']::uuid[],'Uncollectible balance closed by actor A.','shared-idem-key-000001') as result`)).rows[0].result;
+  assert(writeOffActorAReplay.journalTransactionId === writeOffActorA.journalTransactionId, "Same-actor idempotent replay did not return the stored journal after the actor-scoping change.");
+
+  // Platform control-plane foundation (phase_8_platform_control_plane_foundation). Audited, time-boxed
+  // support grants. The DECISIVE assertion is the negative one: an active session is INERT — it grants
+  // zero cross-org data access until a later slice wires has_active_support_session into a policy.
+  const platformAgent = "e8000000-0000-4000-8000-000000000081";
+  const platformAgentTwo = "e8000000-0000-4000-8000-000000000082";
+  const platformAdmin = "e8000000-0000-4000-8000-000000000083";
+  const nonPlatformUser = "e8000000-0000-4000-8000-000000000084";
+  const platformAgentActor = "e8000000-0000-4000-8000-000000000091";
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('${platformAgent}'),('${platformAgentTwo}'),('${platformAdmin}'),('${nonPlatformUser}');
+    insert into private.platform_actors(id,user_id,platform_role,status) values
+      ('${platformAgentActor}','${platformAgent}','support_agent','active'),
+      ('e8000000-0000-4000-8000-000000000092','${platformAgentTwo}','support_agent','active'),
+      ('e8000000-0000-4000-8000-000000000093','${platformAdmin}','platform_admin','active');`);
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal1'`);
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','Investigating a billing discrepancy.',60,'support-noaal-000001')`), "MFA_STEP_UP_REQUIRED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${nonPlatformUser}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','A non-platform user must not open a session.',60,'support-notactor-01')`), "NOT_PLATFORM_ACTOR");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','   ',60,'support-noreason-01')`), "AUDIT_REASON_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','A valid support reason.',1,'support-badttl-01')`), "INVALID_SUPPORT_TTL");
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${"0".repeat(8)}-0000-4000-8000-000000009999','No such org to support here.',60,'support-noorg-01')`), "ORGANIZATION_NOT_FOUND");
+
+  const supportSession = (await db.query(`select public.start_support_session('${organization.organizationId}','Investigating a billing discrepancy.',60,'support-session-0001') as result`)).rows[0].result;
+  assert(supportSession.supportSessionId && supportSession.status === "active" && supportSession.accessScope === "read_only" && supportSession.expiresAt, "Support session did not open as a read-only, time-boxed grant.");
+  const supportSessionReplay = (await db.query(`select public.start_support_session('${organization.organizationId}','Investigating a billing discrepancy.',60,'support-session-0001') as result`)).rows[0].result;
+  assert(supportSessionReplay.supportSessionId === supportSession.supportSessionId, "Support-session replay did not return the stored session.");
+
+  await db.exec(`reset role; set request.jwt.claim.sub='${platformAgent}'`);
+  const agentHasSession = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
+  await db.exec(`set request.jwt.claim.sub='${admin}'`);
+  const memberHasSession = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
+  assert(agentHasSession === true && memberHasSession === false, "has_active_support_session did not resolve only the caller's own active session.");
+
+  // DECISIVE INERT TEST: the agent holds an active session and is NOT a member of the org; the helper
+  // is wired into no policy, so a normal tenant read still returns zero rows.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const agentMaintenance = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const agentReceivables = (await db.query("select public.get_operator_receivables_summary() as result")).rows[0].result;
+  assert(agentMaintenance.items.length === 0 && (agentReceivables.items ?? []).length === 0,
+    "An active support session leaked cross-org data — the grant must be inert until a policy wires the helper in.");
+
+  await db.exec("reset role");
+  const supportStartTrace = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where action_code='support.session_started' and actor_type='support' and organization_id='${organization.organizationId}' and resource_id='${supportSession.supportSessionId}') as audits,
+    (select count(*)::integer from private.outbox_events where event_type='support.session_started' and aggregate_id='${supportSession.supportSessionId}') as events`)).rows[0];
+  assert(supportStartTrace.audits === 1 && supportStartTrace.events === 1, "Support session start did not write a single support-typed audit + outbox trace.");
+
+  // Time-box: an 'active' row past its expiry is not honored (checked on the admin, whose only session is expired).
+  await db.exec(`insert into private.support_sessions(id,organization_id,platform_actor_id,user_id,reason,correlation_id,started_at,expires_at,created_by)
+    values ('e8000000-0000-4000-8000-0000000000a1','${organization.organizationId}','e8000000-0000-4000-8000-000000000093','${platformAdmin}','Expired session for the time-box test.',gen_random_uuid(),now()-interval '2 hours',now()-interval '1 hour','${platformAdmin}')`);
+  await db.exec(`set request.jwt.claim.sub='${platformAdmin}'`);
+  const adminExpiredHasSession = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
+  assert(adminExpiredHasSession === false, "An expired support session was still honored — the time-box is not enforced.");
+
+  // Lifecycle: a second agent cannot end another's session; the owner ends their own; re-end fails.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgentTwo}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.end_support_session('${organization.organizationId}','${supportSession.supportSessionId}','ended','support-forbidden-01')`), "SUPPORT_SESSION_FORBIDDEN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const supportEnd = (await db.query(`select public.end_support_session('${organization.organizationId}','${supportSession.supportSessionId}','ended','support-end-0001') as result`)).rows[0].result;
+  assert(supportEnd.status === "ended", "Ending a support session did not close it.");
+  const supportEndReplay = (await db.query(`select public.end_support_session('${organization.organizationId}','${supportSession.supportSessionId}','ended','support-end-0001') as result`)).rows[0].result;
+  assert(supportEndReplay.status === "ended", "End-support-session replay did not return the stored response.");
+  await expectDatabaseError(() => db.query(`select public.end_support_session('${organization.organizationId}','${supportSession.supportSessionId}','revoked','support-reend-0001')`), "SUPPORT_SESSION_NOT_ACTIVE");
+  await db.exec(`reset role; set request.jwt.claim.sub='${platformAgent}'`);
+  const agentHasSessionAfterEnd = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as has`)).rows[0].has;
+  assert(agentHasSessionAfterEnd === false, "The agent still held an active session after it was ended.");
+
+  // ── Sanitized support-query surface (phase_8_platform_support_queries) ────────────────────────
+  // Support access is served ONLY by definer support-query RPCs gated on (active platform actor)
+  // AND (active, unexpired session for the exact org). Tenant RLS is untouched.
+
+  // GUARD: no tenant base-table policy ORs the support gate in — support must not bypass tenant RLS.
+  await db.exec("reset role");
+  const supportPolicyLeak = (await db.query(`select count(*)::integer as c from pg_policies
+    where schemaname in ('public','reporting') and (coalesce(qual,'')||coalesce(with_check,'')) ilike '%has_active_support_session%'`)).rows[0].c;
+  assert(supportPolicyLeak === 0, "A tenant RLS policy references has_active_support_session — support access must not bypass tenant RLS.");
+
+  // (A) A platform actor with NO active session gets zero org data.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_organization_overview('${organization.organizationId}')`), "SUPPORT_SESSION_REQUIRED");
+  // (B) A non-platform user cannot touch the support surface at all.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${nonPlatformUser}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_lookup_organizations(null,25)`), "NOT_PLATFORM_ACTOR");
+
+  // (C) Open a fresh session; sanitized reads now work and are audited. Set a member email first so
+  // the masking is provable (test users otherwise have null emails).
+  await db.exec(`reset role; update auth.users set email='jane.doe@example.com' where id='${admin}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const investigateSession = (await db.query(`select public.start_support_session('${organization.organizationId}','Investigating why a resident cannot see their tenancy.',60,'support-investigate-01') as r`)).rows[0].r;
+  const overview = (await db.query(`select public.support_get_organization_overview('${organization.organizationId}') as r`)).rows[0].r;
+  assert(overview.organizationId === organization.organizationId && typeof overview.propertyCount === "number" && typeof overview.activeMemberCount === "number",
+    "Support overview did not return sanitized org counts.");
+  assert(!Object.keys(overview).some((k) => /email|phone|secret|token|storage|balance|amount|before|after|password|provider|reason/i.test(k)),
+    "Support overview DTO exposed a prohibited field.");
+  const members = (await db.query(`select public.support_list_organization_members('${organization.organizationId}',50) as r`)).rows[0].r;
+  assert(!JSON.stringify(members).includes("jane.doe@example.com"), "Support member list exposed a raw email address.");
+  assert(members.members.length >= 1 && members.members[0].maskedEmail && members.members[0].maskedEmail.includes("***"), "Support member email was not masked.");
+  assert(!members.members.some((m) => "beforeData" in m || "afterData" in m || "phone" in m || "phoneE164" in m), "Support member DTO exposed a prohibited field.");
+  const activity = (await db.query(`select public.support_list_recent_activity('${organization.organizationId}',50) as r`)).rows[0].r;
+  assert(Array.isArray(activity.activity) && activity.activity.every((a) => !("beforeData" in a) && !("afterData" in a) && !("reason" in a) && !("ipHash" in a)),
+    "Support activity feed leaked raw before/after payloads or a reason.");
+
+  // (D) Each investigation is audited with the support session id.
+  await db.exec("reset role");
+  const investigateAudit = (await db.query(`select count(*)::integer as c from audit.audit_events
+    where actor_type='support' and organization_id='${organization.organizationId}'
+      and action_code in ('support.viewed_overview','support.viewed_members','support.viewed_activity')
+      and after_data->>'supportSessionId'='${investigateSession.supportSessionId}'`)).rows[0].c;
+  assert(investigateAudit === 3, "Support investigations were not each audited with the support session id.");
+
+  // (E) Org-scoping: the session is for this org only; any other org id is denied.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_organization_overview('${"0".repeat(8)}-0000-4000-8000-0000000000e2')`), "SUPPORT_SESSION_REQUIRED");
+
+  // (F) The support session gate is active, yet a domain WRITE command is still denied — a session
+  // never lets the actor mutate tenant data (write commands gate on membership, not on the session).
+  // (has_active_support_session is definer-internal to schema private; call it as superuser — the uid
+  // still resolves from the sub GUC — then attempt the write back as the authenticated agent.)
+  await db.exec("reset role");
+  const agentSupportGate = (await db.query(`select private.has_active_support_session('${organization.organizationId}') as support`)).rows[0].support;
+  assert(agentSupportGate === true, "The support session gate was not active during the investigation.");
+  await db.exec(`set role authenticated; set request.jwt.claim.aal='aal2'`);
+  let supportWroteTenantData = false;
+  try {
+    await db.query(`select public.create_operating_entity_and_book('${organization.organizationId}','Support Co','Support','US','company','USD','Support Book','support-write-attempt-1')`);
+    supportWroteTenantData = true;
+  } catch { /* expected: the support actor is not a member, so the command's authorization denies it */ }
+  assert(supportWroteTenantData === false, "A support session let the actor run a domain write command.");
+
+  // (G) Suspending the platform actor revokes access immediately.
+  await db.exec(`reset role; update private.platform_actors set status='suspended' where id='${platformAgentActor}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_organization_overview('${organization.organizationId}')`), "NOT_PLATFORM_ACTOR");
+  await db.exec(`reset role; update private.platform_actors set status='active' where id='${platformAgentActor}'`);
+
+  // (H) An 'active'-status session past its expiry yields no data (expiry authoritative at query time).
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAdmin}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_organization_overview('${organization.organizationId}')`), "SUPPORT_SESSION_REQUIRED");
+
+  // (I) Provisioning lifecycle: only a platform_admin at AAL2 provisions/suspends actors; no lockout.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.provision_platform_actor('${nonPlatformUser}','support_agent','New agent','provision-notadmin-1')`), "NOT_PLATFORM_ADMIN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAdmin}'; set request.jwt.claim.aal='aal1'`);
+  await expectDatabaseError(() => db.query(`select public.provision_platform_actor('${nonPlatformUser}','support_agent','New agent','provision-noaal-1')`), "MFA_STEP_UP_REQUIRED");
+  await db.exec(`set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.provision_platform_actor('${"0".repeat(8)}-0000-4000-8000-0000000000ff','support_agent','Ghost','provision-nouser-1')`), "PLATFORM_USER_NOT_FOUND");
+  const provisioned = (await db.query(`select public.provision_platform_actor('${nonPlatformUser}','support_agent','Provisioned agent','provision-ok-1') as r`)).rows[0].r;
+  assert(provisioned.platformActorId && provisioned.status === "active", "Platform-admin provisioning did not create an active actor.");
+  await expectDatabaseError(() => db.query(`select public.provision_platform_actor('${nonPlatformUser}','support_agent','Dup','provision-dup-1')`), "PLATFORM_ACTOR_EXISTS");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.set_platform_actor_status('${provisioned.platformActorId}','suspended','suspend-notadmin-1')`), "NOT_PLATFORM_ADMIN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAdmin}'; set request.jwt.claim.aal='aal2'`);
+  const suspendedActor = (await db.query(`select public.set_platform_actor_status('${provisioned.platformActorId}','suspended','suspend-ok-1') as r`)).rows[0].r;
+  assert(suspendedActor.status === "suspended", "Suspend did not change the platform actor status.");
+  await expectDatabaseError(() => db.query(`select public.set_platform_actor_status('e8000000-0000-4000-8000-000000000093','suspended','suspend-lastadmin-1')`), "CANNOT_SUSPEND_LAST_ADMIN");
+  await db.exec("reset role");
+
+  // ── Correction A/B/C: control-plane hardening (phase_8_platform_control_plane_hardening) ─────────
+  // PGlite is single-connection, so a literal two-transaction race cannot execute here. These tests
+  // prove the SERIALIZED outcome the transaction-scoped advisory lock guarantees, and additionally
+  // assert the static presence of that lock and of the storage-layer partial unique index — the two
+  // mechanisms that make the losing concurrent outcome impossible even under true parallelism.
+
+  // (A) Last-admin cardinality is race-free. Provision a SECOND active admin, then suspend the two in
+  // sequence: the first suspend succeeds (2 active → 1); suspending the now-last admin is refused. Under
+  // real concurrency the advisory lock forces exactly this serialization, so at most one suspend commits.
+  const platformAdminTwo = "e8000000-0000-4000-8000-000000000085";
+  await db.exec(`reset role; insert into auth.users(id) values ('${platformAdminTwo}')`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAdmin}'; set request.jwt.claim.aal='aal2'`);
+  const provisionedAdminTwo = (await db.query(`select public.provision_platform_actor('${platformAdminTwo}','platform_admin','Second admin','provision-admintwo-1') as r`)).rows[0].r;
+  assert(provisionedAdminTwo.platformActorId && provisionedAdminTwo.status === "active", "Provisioning a second platform admin did not create an active actor.");
+  await db.exec("reset role");
+  const twoAdmins = (await db.query(`select count(*)::integer as c from private.platform_actors where status='active' and platform_role='platform_admin'`)).rows[0].c;
+  assert(twoAdmins === 2, "Expected exactly two active platform admins before the cardinality test.");
+  // The second admin (085) suspends the first (093): 2 active → 1, allowed.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAdminTwo}'; set request.jwt.claim.aal='aal2'`);
+  const suspendFirstAdmin = (await db.query(`select public.set_platform_actor_status('e8000000-0000-4000-8000-000000000093','suspended','suspend-admin-a-1') as r`)).rows[0].r;
+  assert(suspendFirstAdmin.status === "suspended", "Suspending the first of two admins did not succeed.");
+  // 085 is now the last active admin; suspending it is refused — the invariant re-read holds under lock.
+  await expectDatabaseError(() => db.query(`select public.set_platform_actor_status('${provisionedAdminTwo.platformActorId}','suspended','suspend-admin-b-1')`), "CANNOT_SUSPEND_LAST_ADMIN");
+  await db.exec("reset role");
+  const oneAdminLeft = (await db.query(`select count(*)::integer as c from private.platform_actors where status='active' and platform_role='platform_admin'`)).rows[0].c;
+  assert(oneAdminLeft === 1, "After the serialized suspends exactly one active admin must remain.");
+  // The advisory lock that serializes every cardinality change is present in both commands.
+  const provisionDef = (await db.query(`select pg_get_functiondef('public.provision_platform_actor(uuid,text,text,text)'::regprocedure) as d`)).rows[0].d;
+  const statusDef = (await db.query(`select pg_get_functiondef('public.set_platform_actor_status(uuid,text,text)'::regprocedure) as d`)).rows[0].d;
+  assert(provisionDef.includes("pg_advisory_xact_lock") && statusDef.includes("pg_advisory_xact_lock"), "The admin-cardinality commands must serialize on a transaction-scoped advisory lock.");
+  // Reactivate 093 (the activate path also runs under the lock) to leave a clean two-admin state.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAdminTwo}'; set request.jwt.claim.aal='aal2'`);
+  await db.query(`select public.set_platform_actor_status('e8000000-0000-4000-8000-000000000093','active','reactivate-admin-a-1')`);
+
+  // (B) One active, unexpired support session per platform ACTOR, GLOBALLY. The agent already holds an
+  // active session (support-investigate-01, opened in the sanitized-query tests and never ended).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  // Same org, different key → refused (not silently duplicated).
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${organization.organizationId}','A second concurrent session for the same org.',60,'support-second-same-1')`), "SUPPORT_SESSION_ALREADY_ACTIVE");
+  // A genuinely different, open organization for the cross-org refusal.
+  const orgTwoOwner = "e8000000-0000-4000-8000-000000000086";
+  await db.exec(`reset role; insert into auth.users(id) values ('${orgTwoOwner}')`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${orgTwoOwner}'; set request.jwt.claim.aal='aal2'`);
+  const orgTwo = (await db.query(`select public.create_organization('Beacon Realty','beacon-realty','property_manager','US','en-US','America/New_York','2026-07-20','beacon-org-0001') as result`)).rows[0].result;
+  // The single active session must block a session for a DIFFERENT org too — the invariant is global.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.start_support_session('${orgTwo.organizationId}','A concurrent session for a different org.',60,'support-second-diff-1')`), "SUPPORT_SESSION_ALREADY_ACTIVE");
+  // Storage-layer defense-in-depth: the partial unique index enforcing one active session per actor.
+  await db.exec("reset role");
+  const activeSessionIndex = (await db.query(`select count(*)::integer as c from pg_indexes where schemaname='private' and indexname='support_sessions_active_per_actor_unique'`)).rows[0].c;
+  assert(activeSessionIndex === 1, "The one-active-session-per-actor partial unique index is missing.");
+  // An EXPIRED prior session does NOT block a new one: force the agent's active session past its TTL,
+  // then a fresh start succeeds (start_support_session materializes the lapsed row to 'expired' first).
+  await db.exec(`reset role; update private.support_sessions set started_at=now()-interval '2 hours', expires_at=now()-interval '1 hour' where user_id='${platformAgent}' and status='active'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const reopened = (await db.query(`select public.start_support_session('${organization.organizationId}','Reopening after the prior session lapsed at its TTL.',60,'support-reopen-after-expiry-1') as r`)).rows[0].r;
+  assert(reopened.status === "active" && reopened.supportSessionId, "A new session was not allowed after the prior one lapsed at its TTL.");
+  // The lapsed session was materialized to 'expired'; exactly one active session exists for the actor.
+  await db.exec("reset role");
+  const agentActiveCount = (await db.query(`select count(*)::integer as c from private.support_sessions where user_id='${platformAgent}' and status='active'`)).rows[0].c;
+  assert(agentActiveCount === 1, "After reopening, the actor must have exactly one active session.");
+  // True idempotent replay of the reopened session returns the SAME session (short-circuit before the
+  // ALREADY_ACTIVE guard), never a spurious conflict.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const reopenedReplay = (await db.query(`select public.start_support_session('${organization.organizationId}','Reopening after the prior session lapsed at its TTL.',60,'support-reopen-after-expiry-1') as r`)).rows[0].r;
+  assert(reopenedReplay.supportSessionId === reopened.supportSessionId, "Idempotent replay of the reopened session did not return the stored session.");
+
+  // (C) Deterministic current-subscription selection: a historical CANCELED Starter must never mask the
+  // current Growth trial. Insert an older canceled Starter alongside the seeded Growth/trialing row.
+  await db.exec("reset role");
+  await db.exec(`insert into public.organization_subscriptions(organization_id,plan_code,country_price_book,status,created_at)
+    values ('${organization.organizationId}','starter','US','canceled',now()-interval '400 days')`);
+  const subRows = (await db.query(`select count(*)::integer as c from public.organization_subscriptions where organization_id='${organization.organizationId}'`)).rows[0].c;
+  assert(subRows === 2, "Expected a current + a historical subscription row for the determinism test.");
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const overviewDeterministic = (await db.query(`select public.support_get_organization_overview('${organization.organizationId}') as r`)).rows[0].r;
+  assert(overviewDeterministic.subscriptionPlanCode === "growth" && overviewDeterministic.subscriptionStatus === "trialing",
+    "The overview did not deterministically report the current Growth trial over the historical canceled Starter.");
+  await db.exec("reset role");
+
+  // Document delivery & acknowledgement (phase_2_document_delivery). Operator delivers a finalized,
+  // clean document version to a portal recipient identified by their active user_relationship; the
+  // recipient records an append-only acknowledgement. Covers RLS isolation, replay, and the per-type
+  // acknowledgement guard.
+  const deliveryDoc = "e9000000-0000-4000-8000-0000000000d1";
+  const deliveryVersion = "e9000000-0000-4000-8000-0000000000d2";
+  const deliveryQuarantineDoc = "e9000000-0000-4000-8000-0000000000d5";
+  const deliveryQuarantineVersion = "e9000000-0000-4000-8000-0000000000d6";
+  const deliveryOutsider = "e9000000-0000-4000-8000-0000000000d4";
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('${deliveryOutsider}');
+    insert into public.documents(id,organization_id,property_id,document_type,title,source,status,created_by)
+      select '${deliveryDoc}','${organization.organizationId}',p.id,'notice','Quiet hours notice','operator_supplied','active','${admin}' from public.properties p where p.organization_id='${organization.organizationId}' limit 1;
+    insert into public.documents(id,organization_id,property_id,document_type,title,source,status,created_by)
+      select '${deliveryQuarantineDoc}','${organization.organizationId}',p.id,'notice','Unscanned notice','operator_supplied','active','${admin}' from public.properties p where p.organization_id='${organization.organizationId}' limit 1;
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status) values
+      ('${deliveryVersion}','${organization.organizationId}','${deliveryDoc}',1,'documents','org/notice-v1.pdf','application/pdf',2048,'${"a".repeat(64)}','notice.pdf','${admin}','clean'),
+      ('${deliveryQuarantineVersion}','${organization.organizationId}','${deliveryQuarantineDoc}',1,'documents','org/notice-q.pdf','application/pdf',2048,'${"b".repeat(64)}','notice-q.pdf','${admin}','quarantined');`);
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email','doc-deliver-email-01')`), "UNSUPPORTED_DELIVERY_CHANNEL");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}',null,null,'portal','doc-deliver-norecip-1')`), "INVALID_DELIVERY_RECIPIENT");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','e9000000-0000-4000-8000-0000000000ff','resident_person','${invitedResidentPerson}','portal','doc-deliver-noverr-1')`), "DOCUMENT_VERSION_NOT_FOUND");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryQuarantineVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-quar-01')`), "DOCUMENT_NOT_DELIVERABLE");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','00000000-0000-4000-8000-0000000000fe','portal','doc-deliver-norel-1')`), "DELIVERY_RECIPIENT_NOT_FOUND");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${deliveryOutsider}'`);
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-outsid-1')`), "PROPERTY_SCOPE_DENIED");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const documentDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-0001') as result`)).rows[0].result;
+  assert(documentDelivery.documentDeliveryId && documentDelivery.status === "delivered" && documentDelivery.recipientUserId === invitedResidentUser, "Document delivery did not create a portal delivery addressed to the resident.");
+  const documentDeliveryReplay = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-0001') as result`)).rows[0].result;
+  assert(documentDeliveryReplay.documentDeliveryId === documentDelivery.documentDeliveryId, "Document delivery replay returned a different delivery.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${deliveryOutsider}'`);
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','${"e".repeat(40)}',null,'doc-ack-forbid-01')`), "DOCUMENT_DELIVERY_FORBIDDEN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','signed','${"e".repeat(40)}',null,'doc-ack-badtype-1')`), "INVALID_ACKNOWLEDGEMENT_TYPE");
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','short',null,'doc-ack-badhash-1')`), "INVALID_EVIDENCE_HASH");
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','e9000000-0000-4000-8000-0000000000fd','received','${"e".repeat(40)}',null,'doc-ack-nodel-01')`), "DOCUMENT_DELIVERY_NOT_FOUND");
+  const documentAck = (await db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','${"e".repeat(40)}','lease-v3','doc-ack-0001') as result`)).rows[0].result;
+  assert(documentAck.acknowledgementId && documentAck.acknowledgementType === "received", "Recipient acknowledgement did not record.");
+  const documentAckReplay = (await db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','${"e".repeat(40)}','lease-v3','doc-ack-0001') as result`)).rows[0].result;
+  assert(documentAckReplay.acknowledgementId === documentAck.acknowledgementId, "Acknowledgement replay returned a different ack.");
+  await expectDatabaseError(() => db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','received','${"e".repeat(40)}','lease-v3','doc-ack-dup-0001')`), "DOCUMENT_DELIVERY_ALREADY_ACKNOWLEDGED");
+  const documentAckViewed = (await db.query(`select public.acknowledge_document_delivery('${organization.organizationId}','${documentDelivery.documentDeliveryId}','viewed','${"e".repeat(40)}',null,'doc-ack-viewed-01') as result`)).rows[0].result;
+  assert(documentAckViewed.acknowledgementId && documentAckViewed.acknowledgementId !== documentAck.acknowledgementId, "A distinct acknowledgement type did not create a separate ack.");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  const residentDocReads = (await db.query(`select (select count(*)::integer from public.document_deliveries where id='${documentDelivery.documentDeliveryId}') as deliveries,(select count(*)::integer from public.document_acknowledgements where document_delivery_id='${documentDelivery.documentDeliveryId}') as acks`)).rows[0];
+  assert(residentDocReads.deliveries === 1 && residentDocReads.acks === 2, "Recipient could not read their own delivery and acknowledgements.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${deliveryOutsider}'`);
+  const outsiderDocReads = (await db.query(`select (select count(*)::integer from public.document_deliveries where id='${documentDelivery.documentDeliveryId}') as deliveries,(select count(*)::integer from public.document_acknowledgements where document_delivery_id='${documentDelivery.documentDeliveryId}') as acks`)).rows[0];
+  assert(outsiderDocReads.deliveries === 0 && outsiderDocReads.acks === 0, "An outsider read another member's document delivery or acknowledgements.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const managerDocReads = (await db.query(`select (select count(*)::integer from public.document_deliveries where id='${documentDelivery.documentDeliveryId}') as deliveries,(select count(*)::integer from public.document_acknowledgements where document_delivery_id='${documentDelivery.documentDeliveryId}') as acks`)).rows[0];
+  assert(managerDocReads.deliveries === 1 && managerDocReads.acks === 2, "The managing operator could not read the delivery and acknowledgements.");
+
+  // The delivery grants its recipient read on the (property-scoped) delivered document + version via
+  // the documents_scoped_read "delivered to me" clause — but not on documents never delivered to them,
+  // and never to an outsider. deliveryDoc/deliveryQuarantineDoc are both property-scoped with no tenancy.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  const recipientDocVisibility = (await db.query(`select
+    (select count(*)::integer from public.documents where id='${deliveryDoc}') as delivered_doc,
+    (select count(*)::integer from public.document_versions where id='${deliveryVersion}') as delivered_version,
+    (select count(*)::integer from public.documents where id='${deliveryQuarantineDoc}') as undelivered_doc`)).rows[0];
+  assert(recipientDocVisibility.delivered_doc === 1 && recipientDocVisibility.delivered_version === 1 && recipientDocVisibility.undelivered_doc === 0,
+    "Delivery did not grant the recipient read on exactly the delivered document.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${deliveryOutsider}'`);
+  const outsiderDocVisibility = (await db.query(`select (select count(*)::integer from public.documents where id='${deliveryDoc}') as delivered_doc`)).rows[0];
+  assert(outsiderDocVisibility.delivered_doc === 0, "An outsider read a document delivered to another recipient.");
+
+  await db.exec("reset role");
+  const documentDeliveryTrace = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where action_code='document.delivered' and actor_type='user' and resource_id='${documentDelivery.documentDeliveryId}') as delivered_audits,
+    (select count(*)::integer from audit.audit_events where action_code='document.acknowledged' and actor_type='user' and organization_id='${organization.organizationId}') as acknowledged_audits,
+    (select count(*)::integer from private.outbox_events where event_type='document.delivered' and aggregate_id='${documentDelivery.documentDeliveryId}') as delivered_events,
+    (select count(*)::integer from private.outbox_events where event_type='document.acknowledged' and organization_id='${organization.organizationId}') as acknowledged_events`)).rows[0];
+  assert(documentDeliveryTrace.delivered_audits === 1 && documentDeliveryTrace.acknowledged_audits === 2 && documentDeliveryTrace.delivered_events === 1 && documentDeliveryTrace.acknowledged_events === 2, "Document delivery/acknowledgement trace counts are wrong.");
+
+  // ── §3 Occupied-portfolio import — occupied-lease leg (phase_3_occupied_lease_import) ────────────
+  // An operator imports an OCCUPIED unit against an already-imported unit: one row activates a lease —
+  // household + tenancy + rent schedule + a balanced opening receivable — so the tenancy is operational
+  // (its next recurring charge is generatable) and the opening ledger balances (1100 DR / 3900 CR).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const occUnit = (await db.query(`select public.create_unit('${organization.organizationId}','${property.propertyId}',null,'201','Apartment',2,1,900,'finance-occ-unit-0001') as result`)).rows[0].result;
+  const occSourceDoc = "ea000000-0000-4000-8000-0000000000f1";
+  const occSourceVersion = "ea000000-0000-4000-8000-0000000000f2";
+  await db.exec(`reset role;
+    insert into public.documents(id,organization_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${occSourceDoc}','${organization.organizationId}','portfolio_import','Occupied roster','operator_supplied','active',true,'${admin}');
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${occSourceVersion}','${organization.organizationId}','${occSourceDoc}',1,'private-documents','organizations/${organization.organizationId}/organization/${organization.organizationId}/${occSourceVersion}/occupied.csv','text/csv',256,'${"d".repeat(64)}','occupied.csv','${admin}','clean');
+    set role authenticated; set request.jwt.claim.sub='${admin}';`);
+
+  const occHeaders = ["Property","Address","City","Country","Unit","First","Last","Email","Start","Rent","Freq","Currency","Opening"];
+  const occRows = [{ Property: "Maple Court", Address: "100 Main Street", City: "Richmond", Country: "US", Unit: "201", First: "Dana", Last: "Rivera", Email: "dana.rivera@example.test", Start: "2026-08-01", Rent: "120000", Freq: "monthly", Currency: "USD", Opening: "150000" }];
+  const occMapping = { propertyName: "Property", addressLine1: "Address", locality: "City", countryCode: "Country", unitCode: "Unit", primaryFirstName: "First", primaryLastName: "Last", primaryEmail: "Email", leaseStartDate: "Start", rentAmountMinor: "Rent", rentFrequency: "Freq", currencyCode: "Currency", openingBalanceMinor: "Opening" };
+  const occOptions = { dedupeMode: "strict", dateLocale: "en-US" };
+
+  const occJob = (await db.query(`select public.create_import_job('${organization.organizationId}','leases','${occSourceDoc}','${occSourceVersion}','${JSON.stringify(occHeaders)}'::jsonb,'${JSON.stringify(occRows)}'::jsonb,'occupied-import-0001') as result`)).rows[0].result.importJobId;
+  const occJobReplay = (await db.query(`select public.create_import_job('${organization.organizationId}','leases','${occSourceDoc}','${occSourceVersion}','${JSON.stringify(occHeaders)}'::jsonb,'${JSON.stringify(occRows)}'::jsonb,'occupied-import-0001') as result`)).rows[0].result.importJobId;
+  assert(occJob === occJobReplay, "Occupied-import create replay returned a different job.");
+  const occValidation = (await db.query(`select public.validate_occupied_import('${occJob}','${JSON.stringify(occMapping)}'::jsonb,'${JSON.stringify(occOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(occValidation.status === "ready" && occValidation.totals.creates === 1 && occValidation.totals.errors === 0, "Valid occupied-lease row did not reach ready with one create.");
+  const occCommitted = (await db.query(`select public.commit_occupied_import('${occJob}','${occValidation.validationHash}') as result`)).rows[0].result;
+  assert(occCommitted.status === "completed" && occCommitted.committed.tenancies === 1 && occCommitted.committed.openingBalances === 1, "Occupied import did not activate exactly one tenancy with an opening balance.");
+  const occCommitReplay = (await db.query(`select public.commit_occupied_import('${occJob}','${occValidation.validationHash}') as result`)).rows[0].result;
+  assert(occCommitReplay.reportDocumentId === occCommitted.reportDocumentId, "Occupied-import commit replay returned a different report document.");
+
+  await db.exec("reset role");
+  const occTenancy = (await db.query(`select t.id, t.status, cs.id as schedule_id
+    from public.tenancies t join public.charge_schedules cs on cs.tenancy_id=t.id
+    where t.unit_id='${occUnit.unitId}' and t.status='active'`)).rows[0];
+  assert(occTenancy && occTenancy.status === "active" && occTenancy.schedule_id, "Occupied import did not create an active tenancy with a rent schedule.");
+  const occLedger = (await db.query(`select
+    coalesce(sum(je.debit_minor) filter (where la.account_code='1100'),0)::bigint as ar_debit,
+    coalesce(sum(je.credit_minor) filter (where la.account_code='3900'),0)::bigint as equity_credit,
+    coalesce(sum(je.debit_minor),0)::bigint as total_debit,
+    coalesce(sum(je.credit_minor),0)::bigint as total_credit
+    from public.journal_transactions jt
+    join public.journal_entries je on je.journal_transaction_id=jt.id
+    join public.ledger_accounts la on la.id=je.ledger_account_id
+    where jt.source_type='tenancy' and jt.source_id='${occTenancy.id}' and jt.transaction_type='opening_balance'`)).rows[0];
+  assert(Number(occLedger.ar_debit) === 150000 && Number(occLedger.equity_credit) === 150000, "Opening receivable did not post 150000 to 1100 DR / 3900 CR.");
+  assert(Number(occLedger.total_debit) === Number(occLedger.total_credit), "Occupied-import opening journal is unbalanced.");
+
+  // The tenancy is operational: its next recurring rent charge is generatable (service_role worker).
+  await db.exec("reset role; set role service_role");
+  const occCharge = (await db.query(`select public.generate_recurring_charges('2026-08-01',array['${occTenancy.schedule_id}']::uuid[],'occupied-charge-gen-0001') as result`)).rows[0].result;
+  assert(occCharge.generatedCount >= 1, "The imported tenancy could not generate its first recurring rent charge.");
+
+  // A row referencing an unknown property is a per-row error and blocks commit (no partial writes).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const occBadRows = [{ Property: "Nonexistent Manor", Address: "999 Nowhere Rd", City: "Richmond", Country: "US", Unit: "999", First: "Sam", Last: "Doe", Email: "", Start: "2026-08-01", Rent: "100000", Freq: "monthly", Currency: "USD", Opening: "0" }];
+  const occBadJob = (await db.query(`select public.create_import_job('${organization.organizationId}','leases','${occSourceDoc}','${occSourceVersion}','${JSON.stringify(occHeaders)}'::jsonb,'${JSON.stringify(occBadRows)}'::jsonb,'occupied-import-bad-1') as result`)).rows[0].result.importJobId;
+  const occBadValidation = (await db.query(`select public.validate_occupied_import('${occBadJob}','${JSON.stringify(occMapping)}'::jsonb,'${JSON.stringify(occOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(occBadValidation.status === "mapping" && occBadValidation.totals.errors === 1, "Unknown-property occupied row was not flagged as an error.");
+  await expectDatabaseError(() => db.query(`select public.commit_occupied_import('${occBadJob}','${occBadValidation.validationHash}')`), "IMPORT_NOT_READY");
+  await db.exec("reset role");
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits };
 }
 
 try {

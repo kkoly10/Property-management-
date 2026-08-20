@@ -1185,6 +1185,40 @@ create table private.outbox_events (
 );
 create index outbox_pending_idx on private.outbox_events(available_at,occurred_at) where processed_at is null;
 
+-- Platform control plane (cross-org support). Foundation only: the audited, time-boxed grant record
+-- and its lifecycle. private.has_active_support_session() reads support_sessions but is wired into no
+-- tenant policy — an active session grants zero cross-org access until a later slice ORs it in.
+create table private.platform_actors (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete restrict,
+  platform_role text not null check (platform_role in ('support_agent','platform_admin')),
+  status text not null default 'active' check (status in ('active','suspended')),
+  display_name text,
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete restrict,
+  unique (user_id)
+);
+create table private.support_sessions (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  platform_actor_id uuid not null references private.platform_actors(id) on delete restrict,
+  user_id uuid not null references auth.users(id) on delete restrict,
+  reason text not null check (length(trim(reason)) between 8 and 500),
+  access_scope text not null default 'read_only' check (access_scope in ('read_only')),
+  status text not null default 'active' check (status in ('active','ended','revoked','expired')),
+  correlation_id uuid not null,
+  started_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  ended_at timestamptz,
+  ended_reason text,
+  created_by uuid not null references auth.users(id) on delete restrict,
+  check (expires_at > started_at),
+  check ((status = 'active' and ended_at is null)
+      or (status in ('ended','revoked','expired') and ended_at is not null))
+);
+create index support_sessions_actor_active_idx on private.support_sessions(user_id,organization_id,status,expires_at);
+create index support_sessions_org_idx on private.support_sessions(organization_id,started_at desc);
+
 create table public.plan_catalog (
   code text primary key check (code in ('free','starter','growth','pro')),
   display_name text not null,

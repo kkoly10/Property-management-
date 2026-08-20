@@ -25,6 +25,78 @@ export type DocumentCenterState = {
   requestId?: string;
 };
 
+export type RecipientDocumentDelivery = {
+  deliveryId: string;
+  organizationId: string;
+  documentId: string | null;
+  title: string;
+  documentType: string;
+  versionNumber: number | null;
+  sha256Hex: string | null;
+  deliveredAt: string | null;
+  status: string;
+  acknowledgements: Array<{ type: string; acknowledgedAt: string }>;
+};
+
+export type RecipientDocumentDeliveriesState = {
+  mode: "setup" | "ready" | "error";
+  items: RecipientDocumentDelivery[];
+  requestId?: string;
+};
+
+function firstOf<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
+export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumentDeliveriesState> {
+  if (!getPublicSupabaseConfig()) {
+    return {
+      mode: "setup",
+      items: [{
+        deliveryId: "preview-delivery", organizationId: "20000000-0000-4000-8000-000000000002",
+        documentId: "preview-document", title: "Signed lease — Unit 101", documentType: "signed_lease",
+        versionNumber: 1, sha256Hex: "a".repeat(64), deliveredAt: new Date().toISOString(), status: "delivered",
+        acknowledgements: [],
+      }],
+    };
+  }
+
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("document_deliveries")
+      // document_versions has two FKs to documents (a single-column document_id FK and a
+      // composite organization_id+document_id FK), so the embed must name the FK explicitly
+      // or PostgREST returns PGRST201 ("more than one relationship was found").
+      .select("id,organization_id,delivered_at,status,document_version_id,document_versions(version_number,sha256_hex,document_id,documents!document_versions_document_id_fkey(id,title,document_type)),document_acknowledgements(acknowledgement_type,acknowledged_at)")
+      .order("delivered_at", { ascending: false });
+    if (error) throw error;
+
+    const items: RecipientDocumentDelivery[] = (data ?? []).map((delivery) => {
+      const version = firstOf(delivery.document_versions as never);
+      const document = version ? firstOf((version as { documents?: unknown }).documents as never) : null;
+      const acknowledgements = (Array.isArray(delivery.document_acknowledgements) ? delivery.document_acknowledgements : [])
+        .map((ack: { acknowledgement_type: string; acknowledged_at: string }) => ({ type: ack.acknowledgement_type, acknowledgedAt: ack.acknowledged_at }));
+      return {
+        deliveryId: delivery.id as string,
+        organizationId: delivery.organization_id as string,
+        documentId: (document as { id?: string } | null)?.id ?? null,
+        title: (document as { title?: string } | null)?.title ?? "Delivered document",
+        documentType: (document as { document_type?: string } | null)?.document_type ?? "document",
+        versionNumber: (version as { version_number?: number } | null)?.version_number ?? null,
+        sha256Hex: (version as { sha256_hex?: string } | null)?.sha256_hex ?? null,
+        deliveredAt: (delivery.delivered_at as string | null) ?? null,
+        status: delivery.status as string,
+        acknowledgements,
+      };
+    });
+    return { mode: "ready", items };
+  } catch {
+    return { mode: "error", items: [], requestId: crypto.randomUUID() };
+  }
+}
+
 export async function getDocumentCenterState(): Promise<DocumentCenterState> {
   if (!getPublicSupabaseConfig()) {
     return {
