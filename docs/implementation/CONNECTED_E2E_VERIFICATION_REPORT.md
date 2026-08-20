@@ -143,10 +143,36 @@ naming the FK in the embed (`documents!document_versions_document_id_fkey(...)`)
 invisible to `test:db` (PGlite runs raw SQL, not PostgREST embeds) and to demo mode (preview data,
 no query) — only the connected E2E exercised the real PostgREST path.
 
+## Operations coverage — maintenance, announcements, messaging
+
+A fourth pass drives operational features on top of the base tenant:
+
+| Spec | Browser-driven | Verified in the live DB |
+| --- | --- | --- |
+| `maintenance.spec.ts` | resident submits a request; operator creates+assigns a work order, runs it accept → schedule → start → complete, then posts the cost | request + work order → `completed`; `maintenance_cost` journal **6200 DR / 2000 CR** $250 (repairs / AP), balanced |
+| `announcements.spec.ts` | operator publishes a property-resident announcement; resident sees it on `/home` | 1 published announcement + **1 `announcement_deliveries`** row fanned out to the resident |
+| `messaging.spec.ts` | resident messages the operator; operator reads it and replies; resident sees the reply | 3 `messages` rows (operator + resident) in the auto-provisioned conversation |
+
+Fixture seeded out of band (no in-app command / storage/scan pipeline): one active `vendors` row and
+`organizations.settings.work_order_completion_evidence_required='false'` (so completion needs no
+scanned photo). The maintenance work-order transitions each dead-end on a client success alert, so
+the spec reloads between steps to advance the state machine.
+
+**Note on a flake, not a bug:** an earlier messaging run showed a false pass because the assertion
+matched the retained textarea after a transient send failure. The spec was hardened to require the
+textarea to clear (which only happens on a persisted send) plus the rendered bubble; the operator RPC
+was independently confirmed to authorize the operator, and the retry persisted correctly.
+
+**Staff invitation is environment-blocked** (not a code issue): `POST /api/v1/staff/invitations`
+requires `SUPABASE_SECRET_KEY` (admin client, 503 without it) and a working email transport
+(`signInWithOtp`, 502 on send failure) — neither is configured here, same class of blocker as Stripe.
+The *acceptance* half is reachable but needs an invite seeded with a known token; deferred.
+
 ## Scope boundary
 
 Covered end-to-end against the live schema: auth, onboarding, lease activation, recurring-charge
 generation, manual payment, receivable write-off, payment reversal, owner-statement finalization,
-document delivery + acknowledgement, the double-entry ledger for all of them, and the resident +
-owner portal reads. Not exercised here: provider (Stripe) refund/payout flows (blocked on external
-provider config).
+document delivery + acknowledgement, the maintenance lifecycle + cost posting, announcements, and
+resident↔operator messaging — with the double-entry ledger verified for every financial step and the
+resident + owner portal reads. Not exercised here: provider (Stripe) refund/payout flows and staff
+invitation invite delivery (both blocked on external config — server secret key + email transport).
