@@ -37,6 +37,8 @@ const staticRoutes: Array<{ path: string; expect?: RegExp }> = [
   { path: "/settings/privacy" },
   { path: "/settings/security/mfa" },
   { path: "/settings/team" },
+  // Platform support console
+  { path: "/platform", expect: /Support console/i },
   // NOTE: /settings/team/accept and /invitations/accept call createClient() directly
   // (requirePublicSupabaseConfig throws without env), so they are connected-mode-only
   // and intentionally excluded from this demo-mode suite.
@@ -52,6 +54,7 @@ const dynamicRoutes = [
   "/app/properties/preview-property",
   "/app/maintenance/preview-request",
   "/app/owner-statements/preview-owner",
+  "/platform/preview-org",
 ];
 
 async function assertNoServerError(page: Page) {
