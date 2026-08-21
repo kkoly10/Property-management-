@@ -41,7 +41,7 @@ export const finalizeDocumentSchema = z.object({
   sha256Hex: z.string().regex(/^[0-9a-f]{64}$/i),
 });
 
-export const documentDeliveryChannels = ["portal"] as const;
+export const documentDeliveryChannels = ["portal", "email", "secure_link"] as const;
 export const documentRecipientRelationshipTypes = ["resident_person", "owner_entity"] as const;
 export const documentAcknowledgementTypes = ["viewed", "received", "accepted", "declined", "signed_external"] as const;
 
@@ -51,6 +51,8 @@ export const deliverDocumentSchema = z.object({
   recipientRelationshipType: z.enum(documentRecipientRelationshipTypes),
   recipientRelationshipId: z.uuid(),
   deliveryChannel: z.enum(documentDeliveryChannels).default("portal"),
+  /** Hours a secure link stays redeemable. Ignored by the portal and email channels. */
+  secureLinkTtlHours: z.number().int().min(1).max(720).default(72),
 });
 export type DeliverDocumentInput = z.infer<typeof deliverDocumentSchema>;
 

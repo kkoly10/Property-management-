@@ -42,13 +42,22 @@ describe("document delivery validation", () => {
   it("defaults the delivery channel to portal and requires a relationship recipient", () => {
     const parsed = deliverDocumentSchema.parse({ organizationId: orgId, documentVersionId: versionId, recipientRelationshipType: "resident_person", recipientRelationshipId: relationshipId });
     expect(parsed.deliveryChannel).toBe("portal");
+    expect(parsed.secureLinkTtlHours).toBe(72);
   });
 
-  it("rejects unsupported channels, recipient types, and non-uuid ids", () => {
+  it("accepts the off-portal channels the notification worker can now drain", () => {
     const base = { organizationId: orgId, documentVersionId: versionId, recipientRelationshipType: "resident_person" as const, recipientRelationshipId: relationshipId };
-    expect(deliverDocumentSchema.safeParse({ ...base, deliveryChannel: "email" }).success).toBe(false);
+    expect(deliverDocumentSchema.safeParse({ ...base, deliveryChannel: "email" }).success).toBe(true);
+    expect(deliverDocumentSchema.safeParse({ ...base, deliveryChannel: "secure_link", secureLinkTtlHours: 24 }).success).toBe(true);
+  });
+
+  it("rejects unsupported channels, recipient types, non-uuid ids, and out-of-range link expiries", () => {
+    const base = { organizationId: orgId, documentVersionId: versionId, recipientRelationshipType: "resident_person" as const, recipientRelationshipId: relationshipId };
+    expect(deliverDocumentSchema.safeParse({ ...base, deliveryChannel: "carrier_pigeon" }).success).toBe(false);
     expect(deliverDocumentSchema.safeParse({ ...base, recipientRelationshipType: "vendor_contact" }).success).toBe(false);
     expect(deliverDocumentSchema.safeParse({ ...base, recipientRelationshipId: "not-a-uuid" }).success).toBe(false);
+    expect(deliverDocumentSchema.safeParse({ ...base, deliveryChannel: "secure_link", secureLinkTtlHours: 0 }).success).toBe(false);
+    expect(deliverDocumentSchema.safeParse({ ...base, deliveryChannel: "secure_link", secureLinkTtlHours: 1000 }).success).toBe(false);
   });
 });
 

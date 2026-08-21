@@ -52,6 +52,7 @@ const platformSupportQueriesSql = await readFile(resolve(root, "supabase/migrati
 const platformControlPlaneHardeningSql = await readFile(resolve(root, "supabase/migrations/20260727110000_phase_8_platform_control_plane_hardening.sql"), "utf8");
 const occupiedLeaseImportSql = await readFile(resolve(root, "supabase/migrations/20260727120000_phase_3_occupied_lease_import.sql"), "utf8");
 const notificationWorkerSql = await readFile(resolve(root, "supabase/migrations/20260728100000_phase_4_notification_worker.sql"), "utf8");
+const documentDeliveryChannelsSql = await readFile(resolve(root, "supabase/migrations/20260728110000_phase_4_document_delivery_channels.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -803,6 +804,7 @@ async function validateRecurringCharges() {
   await db.exec(platformControlPlaneHardeningSql);
   await db.exec(occupiedLeaseImportSql);
   await db.exec(notificationWorkerSql);
+  await db.exec(documentDeliveryChannelsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3709,7 +3711,7 @@ async function validateRecurringCharges() {
       ('${deliveryQuarantineVersion}','${organization.organizationId}','${deliveryQuarantineDoc}',1,'documents','org/notice-q.pdf','application/pdf',2048,'${"b".repeat(64)}','notice-q.pdf','${admin}','quarantined');`);
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email','doc-deliver-email-01')`), "UNSUPPORTED_DELIVERY_CHANNEL");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','carrier_pigeon','doc-deliver-badchan-1')`), "UNSUPPORTED_DELIVERY_CHANNEL");
   await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}',null,null,'portal','doc-deliver-norecip-1')`), "INVALID_DELIVERY_RECIPIENT");
   await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','e9000000-0000-4000-8000-0000000000ff','resident_person','${invitedResidentPerson}','portal','doc-deliver-noverr-1')`), "DOCUMENT_VERSION_NOT_FOUND");
   await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryQuarantineVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-quar-01')`), "DOCUMENT_NOT_DELIVERABLE");
@@ -3973,6 +3975,124 @@ async function validateRecurringCharges() {
     (select count(*)::integer from private.notification_jobs where status='canceled' and idempotency_key like 'worker-test:%') as canceled`)).rows[0];
   assert(notificationWorkerTrace.sent === 1 && notificationWorkerTrace.dead === 3 && notificationWorkerTrace.canceled === 1,
     "The notification worker did not leave the expected terminal job states.");
+
+  // ── Document delivery over email and secure_link (phase_4_document_delivery_channels) ───────────
+  // Off-portal delivery is only real once the worker can drain the queue. These assertions prove the
+  // delivery row tracks what ACTUALLY happened rather than optimistically claiming success.
+  await db.exec(`reset role; update auth.users set email='resident.recipient@example.com' where id='${invitedResidentUser}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+
+  // Channel/parameter guards.
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','secure_link',0,'doc-secure-badttl-1')`), "INVALID_SECURE_LINK_TTL");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',72,'doc-email-ttl-1')`), "SECURE_LINK_TTL_NOT_APPLICABLE");
+
+  // EMAIL: the delivery is queued, not "delivered", and a notification job is enqueued for it.
+  const emailDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',null,'doc-deliver-email-0001') as r`)).rows[0].r;
+  assert(emailDelivery.deliveryChannel === "email" && emailDelivery.status === "queued" && emailDelivery.deliveredAt === null,
+    "An email delivery must start queued — claiming 'delivered' before the worker sends is a lie to the operator.");
+  const emailDeliveryReplay = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',null,'doc-deliver-email-0001') as r`)).rows[0].r;
+  assert(emailDeliveryReplay.documentDeliveryId === emailDelivery.documentDeliveryId, "Email delivery replay returned a different delivery.");
+  await db.exec("reset role");
+  const emailJob = (await db.query(`select id,template_code,channel,recipient_address,payload->>'documentDeliveryId' as delivery_id
+    from private.notification_jobs where idempotency_key='document-delivery:${emailDelivery.documentDeliveryId}'`)).rows[0];
+  assert(emailJob && emailJob.template_code === "document_delivered" && emailJob.channel === "email"
+    && emailJob.recipient_address === "resident.recipient@example.com" && emailJob.delivery_id === emailDelivery.documentDeliveryId,
+    "The email delivery did not enqueue a document_delivered job addressed to the recipient.");
+  assert(!JSON.stringify(emailJob.payload ?? {}).includes("Token") , "The notification payload must never carry a secret token.");
+
+  // Draining the queue advances the delivery to 'sent' — the worker's outcome drives the delivery row.
+  await db.exec("set role service_role");
+  const docClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-docdeliver-01') as r`)).rows[0].r;
+  assert(docClaim.claimed === 1 && docClaim.jobs[0].templateCode === "document_delivered", "The document-delivery email was not claimable by the worker.");
+  await db.query(`select public.complete_notification_job('${docClaim.jobs[0].notificationJobId}','relay','relay-msg-doc-1')`);
+  await db.exec("reset role");
+  const emailDeliveryRow = (await db.query(`select status,last_error from public.document_deliveries where id='${emailDelivery.documentDeliveryId}'`)).rows[0];
+  assert(emailDeliveryRow.status === "sent", "A sent notification did not advance its document delivery to 'sent'.");
+
+  // A dead letter must mark the delivery FAILED — an operator must never see 'queued' for a message
+  // the system already gave up on.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const failedDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',null,'doc-deliver-email-0002') as r`)).rows[0].r;
+  await db.exec("reset role; set role service_role");
+  const failClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-docdeliver-02') as r`)).rows[0].r;
+  assert(failClaim.claimed === 1, "The second document-delivery email was not claimable.");
+  await db.query(`select public.fail_notification_job('${failClaim.jobs[0].notificationJobId}','INVALID_RECIPIENT_ADDRESS',false)`);
+  await db.exec("reset role");
+  const failedDeliveryRow = (await db.query(`select status,last_error from public.document_deliveries where id='${failedDelivery.documentDeliveryId}'`)).rows[0];
+  assert(failedDeliveryRow.status === "failed" && failedDeliveryRow.last_error === "INVALID_RECIPIENT_ADDRESS",
+    "A dead-lettered notification did not mark its document delivery failed.");
+
+  // SECURE_LINK: the database mints the token, persists only its hash, and returns the plaintext once.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const secureDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','secure_link',72,'doc-deliver-secure-0001') as r`)).rows[0].r;
+  assert(secureDelivery.deliveryChannel === "secure_link" && secureDelivery.status === "queued" && secureDelivery.expiresAt, "The secure-link delivery did not mint a time-boxed, queued delivery.");
+  assert(typeof secureDelivery.secureLinkToken === "string" && secureDelivery.secureLinkToken.length >= 32, "The command did not return a one-time secure-link token.");
+  const secureTokenRaw = secureDelivery.secureLinkToken;
+  await db.exec("reset role");
+  const secureRow = (await db.query(`select secure_link_token_hash,expires_at from public.document_deliveries where id='${secureDelivery.documentDeliveryId}'`)).rows[0];
+  const expectedHash = (await db.query(`select encode(sha256(convert_to('${secureTokenRaw}','UTF8')),'hex') as h`)).rows[0].h;
+  assert(secureRow.secure_link_token_hash === expectedHash, "The delivery row must store the token hash, never the token.");
+  assert(secureRow.secure_link_token_hash !== secureTokenRaw, "The plaintext token was persisted on the delivery row.");
+
+  // Replaying the idempotency key must NOT re-issue the one-time secret.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const secureReplay = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','secure_link',72,'doc-deliver-secure-0001') as r`)).rows[0].r;
+  assert(secureReplay.documentDeliveryId === secureDelivery.documentDeliveryId, "Secure-link replay returned a different delivery.");
+  assert(!secureReplay.secureLinkToken, "An idempotent replay re-read a one-time secure-link token.");
+
+  // The worker needs the token in flight; once the job terminates it must be scrubbed from the queue.
+  await db.exec("reset role");
+  const inFlightToken = (await db.query(`select payload->>'secureLinkToken' as t from private.notification_jobs where idempotency_key='document-delivery:${secureDelivery.documentDeliveryId}'`)).rows[0].t;
+  assert(inFlightToken === secureTokenRaw, "The worker cannot build the link: the in-flight job carries no token.");
+  await db.exec("set role service_role");
+  const secureClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-secure-0001') as r`)).rows[0].r;
+  assert(secureClaim.claimed === 1 && secureClaim.jobs[0].payload.secureLinkToken === secureTokenRaw, "The claimed secure-link job did not expose the token to the worker.");
+  await db.query(`select public.complete_notification_job('${secureClaim.jobs[0].notificationJobId}','relay','relay-msg-secure-1')`);
+  await db.exec("reset role");
+  const scrubbed = (await db.query(`select payload ? 'secureLinkToken' as still_there from private.notification_jobs where idempotency_key='document-delivery:${secureDelivery.documentDeliveryId}'`)).rows[0].still_there;
+  assert(scrubbed === false, "A terminal job still holds the plaintext secure-link token.");
+
+  // Redemption is anonymous by necessity; every rejection returns one sentinel so the token space
+  // cannot be probed for which hashes exist.
+  await db.exec("set role anon");
+  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('not-a-hash')`), "SECURE_LINK_NOT_REDEEMABLE");
+  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('${"e".repeat(64)}')`), "SECURE_LINK_NOT_REDEEMABLE");
+  const redeemed = (await db.query(`select public.redeem_document_secure_link('${expectedHash}') as r`)).rows[0].r;
+  assert(redeemed.storageBucket === "documents" && redeemed.storagePath && redeemed.documentTitle === "Quiet hours notice",
+    "Redeeming a secure link did not return the document's storage coordinates.");
+  assert(!Object.keys(redeemed).some((k) => /token|recipient|email|user/i.test(k)), "The secure-link DTO leaked a token or recipient identity.");
+  await db.exec("reset role");
+  const redeemedRow = (await db.query(`select status,redeemed_at from public.document_deliveries where id='${secureDelivery.documentDeliveryId}'`)).rows[0];
+  assert(redeemedRow.status === "delivered" && redeemedRow.redeemed_at !== null, "Redemption did not mark the delivery delivered.");
+
+  // An expired link is dead even though its row still exists.
+  await db.exec(`update public.document_deliveries set expires_at=now()-interval '1 hour' where id='${secureDelivery.documentDeliveryId}'`);
+  await db.exec("set role anon");
+  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('${expectedHash}')`), "SECURE_LINK_NOT_REDEEMABLE");
+  await db.exec("reset role");
+
+  // A recipient who switched OFF document emails must not silently lose the delivery: the job is
+  // canceled and the delivery is marked failed, so the operator can see it never went out and follow
+  // up another way. (A legally-significant document quietly vanishing is the failure mode here.)
+  await db.exec(`reset role; insert into public.notification_preferences(user_id,category,channel,enabled)
+    values ('${invitedResidentUser}','documents','email',false)
+    on conflict (user_id,category,channel) do update set enabled=false`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const optedOutDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',null,'doc-deliver-email-0003') as r`)).rows[0].r;
+  await db.exec("reset role; set role service_role");
+  const optOutClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-optout-0001') as r`)).rows[0].r;
+  assert(optOutClaim.suppressed === 1 && optOutClaim.claimed === 0, "The opted-out document email was not suppressed at claim time.");
+  await db.exec("reset role");
+  const optedOutRow = (await db.query(`select status,last_error from public.document_deliveries where id='${optedOutDelivery.documentDeliveryId}'`)).rows[0];
+  assert(optedOutRow.status === "failed" && optedOutRow.last_error === "RECIPIENT_OPTED_OUT",
+    "A preference-suppressed document email left its delivery looking queued — the operator would never know it did not go out.");
+  await db.exec(`update public.notification_preferences set enabled=true where user_id='${invitedResidentUser}' and category='documents' and channel='email'`);
+
+  // The legacy 6-argument signature still works and is still portal-only.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const legacyPortal = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-legacy-0001') as r`)).rows[0].r;
+  assert(legacyPortal.deliveryChannel === "portal" && legacyPortal.status === "delivered", "The legacy 6-argument deliver_document signature regressed.");
+  await db.exec("reset role");
 
   await db.close();
   return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits };

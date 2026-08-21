@@ -46,6 +46,24 @@ function link(path: string): string {
   return origin ? `${origin}${path}` : path;
 }
 
+/**
+ * A secure_link delivery points at a one-time tokenized URL the recipient can open without an account;
+ * every other channel points at the portal. `secureLinkUrl` is injected by the worker at send time —
+ * it is never persisted with the job beyond the send.
+ */
+function documentAccessLine(p: Record<string, unknown>, language: NotificationLanguage): string {
+  const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\/|^\//.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
+  const expires = typeof p.expiresAt === "string" ? p.expiresAt.slice(0, 10) : null;
+  if (secure) {
+    if (language === "es") return `Ábrelo con este enlace seguro: ${secure}${expires ? `\n\nEste enlace vence el ${expires}.` : ""}`;
+    if (language === "fr") return `Ouvrez-le avec ce lien sécurisé : ${secure}${expires ? `\n\nCe lien expire le ${expires}.` : ""}`;
+    return `Open it with this secure link: ${secure}${expires ? `\n\nThis link expires on ${expires}.` : ""}`;
+  }
+  if (language === "es") return `Ábrelo en tu portal: ${link("/documents")}`;
+  if (language === "fr") return `Ouvrez-le dans votre portail : ${link("/documents")}`;
+  return `Open it in your portal: ${link("/documents")}`;
+}
+
 type TemplateBuilder = (payload: Record<string, unknown>) => RenderedNotification;
 
 const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> = {
@@ -94,15 +112,15 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
   document_delivered: {
     en: (p) => ({
       subject: `A new document is available: ${text(p.documentTitle, "your document")}`,
-      body: `${text(p.organizationName, "Your property manager")} shared a document with you: ${text(p.documentTitle, "your document")}.\n\nOpen it in your portal: ${link("/documents")}\n\nSome documents ask you to confirm you have read them.`,
+      body: `${text(p.organizationName, "Your property manager")} shared a document with you: ${text(p.documentTitle, "your document")}.\n\n${documentAccessLine(p, "en")}\n\nSome documents ask you to confirm you have read them.`,
     }),
     es: (p) => ({
       subject: `Hay un documento nuevo disponible: ${text(p.documentTitle, "tu documento")}`,
-      body: `${text(p.organizationName, "Tu administrador")} compartió un documento contigo: ${text(p.documentTitle, "tu documento")}.\n\nÁbrelo en tu portal: ${link("/documents")}\n\nAlgunos documentos te piden confirmar que los leíste.`,
+      body: `${text(p.organizationName, "Tu administrador")} compartió un documento contigo: ${text(p.documentTitle, "tu documento")}.\n\n${documentAccessLine(p, "es")}\n\nAlgunos documentos te piden confirmar que los leíste.`,
     }),
     fr: (p) => ({
       subject: `Un nouveau document est disponible : ${text(p.documentTitle, "votre document")}`,
-      body: `${text(p.organizationName, "Votre gestionnaire")} a partagé un document avec vous : ${text(p.documentTitle, "votre document")}.\n\nOuvrez-le dans votre portail : ${link("/documents")}\n\nCertains documents demandent une confirmation de lecture.`,
+      body: `${text(p.organizationName, "Votre gestionnaire")} a partagé un document avec vous : ${text(p.documentTitle, "votre document")}.\n\n${documentAccessLine(p, "fr")}\n\nCertains documents demandent une confirmation de lecture.`,
     }),
   },
   announcement_published: {

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getNotificationTransport } from "@/lib/notifications/transport";
 import { hasTemplate, renderNotification } from "@/lib/notifications/templates";
+import { secureLinkUrl } from "@/lib/notifications/secure-link";
 import { claimedNotificationJobSchema, dispatchNotificationsSchema } from "@/lib/validation/notification-worker";
 
 export const runtime = "nodejs";
@@ -79,7 +80,11 @@ export async function POST(request: Request) {
     } else if (!hasTemplate(job.templateCode)) {
       outcome = { ok: false, errorCode: "UNKNOWN_TEMPLATE_CODE", retryable: false };
     } else {
-      const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload: job.payload });
+      // A secure-link delivery ships the token to the worker so the URL can be built here; the queue
+      // row is scrubbed of it as soon as this job reaches a terminal state.
+      const token = typeof job.payload.secureLinkToken === "string" ? job.payload.secureLinkToken : null;
+      const payload = token ? { ...job.payload, secureLinkUrl: secureLinkUrl(token) } : job.payload;
+      const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload });
       outcome = rendered
         ? await transport.send({
             notificationJobId: job.notificationJobId,
