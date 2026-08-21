@@ -10,6 +10,8 @@ export const importCommandsByType = {
   portfolio: { validate: "validate_portfolio_import", commit: "commit_portfolio_import" },
   leases: { validate: "validate_occupied_import", commit: "commit_occupied_import" },
   combined: { validate: "validate_combined_import", commit: "commit_combined_import" },
+  residents: { validate: "validate_resident_import", commit: "commit_resident_import" },
+  opening_balances: { validate: "validate_opening_balance_import", commit: "commit_opening_balance_import" },
 } as const;
 
 export type ImportCommandType = keyof typeof importCommandsByType;

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const importTypes = ["portfolio", "leases", "combined"] as const;
+export const importTypes = ["portfolio", "leases", "combined", "residents", "opening_balances"] as const;
 export type ImportType = (typeof importTypes)[number];
 
 export const createImportJobSchema = z.object({

@@ -54,6 +54,7 @@ const occupiedLeaseImportSql = await readFile(resolve(root, "supabase/migrations
 const notificationWorkerSql = await readFile(resolve(root, "supabase/migrations/20260728100000_phase_4_notification_worker.sql"), "utf8");
 const documentDeliveryChannelsSql = await readFile(resolve(root, "supabase/migrations/20260728110000_phase_4_document_delivery_channels.sql"), "utf8");
 const combinedImportSql = await readFile(resolve(root, "supabase/migrations/20260729100000_phase_3_combined_import.sql"), "utf8");
+const residentBalanceImportSql = await readFile(resolve(root, "supabase/migrations/20260729110000_phase_3_resident_and_balance_imports.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -807,6 +808,7 @@ async function validateRecurringCharges() {
   await db.exec(notificationWorkerSql);
   await db.exec(documentDeliveryChannelsSql);
   await db.exec(combinedImportSql);
+  await db.exec(residentBalanceImportSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3886,11 +3888,16 @@ async function validateRecurringCharges() {
   assert(cmbUnits === 2, "The combined import did not create both units under the shared property.");
 
   // Each row is fully operational: active tenancy, household with a primary member, armed rent schedule.
-  const cmbTenancies = (await db.query(`select t.id, t.status, cs.id as schedule_id, cs.next_run_on, hm.is_primary_contact
+  // Keyed by unit code, not array position: both rows share a possession_start, so ordering by date
+  // would not deterministically identify which tenancy is A1 and which is A2.
+  const cmbTenancies = (await db.query(`select u.unit_code, t.id, t.status, cs.id as schedule_id, cs.next_run_on, hm.is_primary_contact
     from public.tenancies t
+    join public.units u on u.id=t.unit_id
     join public.charge_schedules cs on cs.tenancy_id=t.id
     join public.household_members hm on hm.household_id=t.household_id
-    where t.property_id='${cmbProperty[0].id}' order by t.possession_start, t.id`)).rows;
+    where t.property_id='${cmbProperty[0].id}' order by u.unit_code`)).rows;
+  const cmbTenancyByUnit = Object.fromEntries(cmbTenancies.map((t) => [t.unit_code, t]));
+  assert(cmbTenancyByUnit.A1 && cmbTenancyByUnit.A2, "The combined import did not produce a tenancy for each imported unit.");
   assert(cmbTenancies.length === 2 && cmbTenancies.every((t) => t.status === "active" && t.schedule_id && t.is_primary_contact === true),
     "A combined-imported row did not yield an active tenancy with a rent schedule and a primary household member.");
 
@@ -3911,7 +3918,7 @@ async function validateRecurringCharges() {
 
   // Operational end state: the imported tenancy generates its first recurring rent charge.
   await db.exec("reset role; set role service_role");
-  const cmbCharge = (await db.query(`select public.generate_recurring_charges('2026-08-01',array['${cmbTenancies[0].schedule_id}']::uuid[],'combined-charge-gen-0001') as result`)).rows[0].result;
+  const cmbCharge = (await db.query(`select public.generate_recurring_charges('2026-08-01',array['${cmbTenancyByUnit.A1.schedule_id}']::uuid[],'combined-charge-gen-0001') as result`)).rows[0].result;
   assert(cmbCharge.generatedCount >= 1, "A combined-imported tenancy could not generate its first recurring rent charge.");
 
   // Two rows for the same unit would activate overlapping tenancies; that is always an error.
@@ -3973,6 +3980,108 @@ async function validateRecurringCharges() {
   assert(overLimitUnits === 0, "A refused over-limit import still wrote a unit — the commit is not atomic.");
   await db.exec(`update public.plan_entitlements set limit_value=50 where plan_code='growth' and feature_code='core.unit'`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+
+  // ── Residents leg: multi-member households (phase_3_resident_and_balance_imports) ───────────────
+  // The lease-bearing legs create a household with exactly ONE member. Real households have
+  // co-residents; this leg adds them to a tenancy that already exists.
+  const resHeaders = ["Property","Address","City","Country","Unit","First","Last","Email","Phone","Responsible","Starts"];
+  const resRows = [
+    { Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "A1", First: "Sam", Last: "Haddad", Email: "sam.haddad@example.test", Phone: "+14155550188", Responsible: "true", Starts: "2026-08-01" },
+    { Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "A1", First: "Kai", Last: "Haddad", Email: "kai.haddad@example.test", Phone: "", Responsible: "false", Starts: "2026-08-01" },
+  ];
+  const resMapping = { propertyName: "Property", addressLine1: "Address", locality: "City", countryCode: "Country", unitCode: "Unit", firstName: "First", lastName: "Last", email: "Email", phone: "Phone", financiallyResponsible: "Responsible", startsOn: "Starts" };
+  const resJob = (await db.query(`select public.create_import_job('${organization.organizationId}','residents','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(resHeaders)}'::jsonb,'${JSON.stringify(resRows)}'::jsonb,'resident-import-0001') as result`)).rows[0].result.importJobId;
+  const resValidation = (await db.query(`select public.validate_resident_import('${resJob}','${JSON.stringify(resMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(resValidation.status === "ready" && resValidation.totals.creates === 2, "Two co-resident rows did not validate against the existing tenancy.");
+  const resCommitted = (await db.query(`select public.commit_resident_import('${resJob}','${resValidation.validationHash}') as result`)).rows[0].result;
+  assert(resCommitted.status === "completed" && resCommitted.committed.householdMembers === 2 && resCommitted.committed.people === 2,
+    "The residents import did not add both co-residents.");
+
+  await db.exec("reset role");
+  const householdRoster = (await db.query(`select
+    count(*)::integer as members,
+    count(*) filter (where hm.is_primary_contact)::integer as primaries,
+    count(*) filter (where hm.is_financially_responsible)::integer as responsible
+    from public.household_members hm
+    join public.tenancies t on t.household_id=hm.household_id
+    where t.id='${cmbTenancyByUnit.A1.id}'`)).rows[0];
+  assert(householdRoster.members === 3, "The household did not end with the primary resident plus two co-residents.");
+  assert(householdRoster.primaries === 1, "A co-resident was made a second primary contact — notification routing would be ambiguous.");
+  assert(householdRoster.responsible === 2, "The financially-responsible flag was not carried from the roster.");
+
+  // Re-running the same roster must not duplicate people: the existing person is matched by email and
+  // the row is flagged as already a member.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const resRerunJob = (await db.query(`select public.create_import_job('${organization.organizationId}','residents','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(resHeaders)}'::jsonb,'${JSON.stringify(resRows)}'::jsonb,'resident-import-rerun-1') as result`)).rows[0].result.importJobId;
+  const resRerunValidation = (await db.query(`select public.validate_resident_import('${resRerunJob}','${JSON.stringify(resMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(resRerunValidation.status === "mapping" && resRerunValidation.totals.errors === 2, "Re-running the roster did not flag both rows as already-members.");
+  assert(JSON.stringify(resRerunValidation.errors).includes("ALREADY_A_MEMBER"), "The re-run rows did not raise ALREADY_A_MEMBER.");
+  await db.exec("reset role");
+  const peopleAfterRerun = (await db.query(`select count(*)::integer as c from public.people
+    where organization_id='${organization.organizationId}' and email='sam.haddad@example.test'`)).rows[0].c;
+  assert(peopleAfterRerun === 1, "Re-running the roster duplicated a person record.");
+
+  // A roster row for a unit with no tenancy is a per-row error, not a silent skip.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const resOrphanRows = [{ Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "Z9", First: "Ola", Last: "Vex", Email: "ola.vex@example.test", Phone: "", Responsible: "false", Starts: "2026-08-01" }];
+  const resOrphanJob = (await db.query(`select public.create_import_job('${organization.organizationId}','residents','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(resHeaders)}'::jsonb,'${JSON.stringify(resOrphanRows)}'::jsonb,'resident-import-orphan-1') as result`)).rows[0].result.importJobId;
+  const resOrphanValidation = (await db.query(`select public.validate_resident_import('${resOrphanJob}','${JSON.stringify(resMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(resOrphanValidation.status === "mapping" && JSON.stringify(resOrphanValidation.errors).includes("TENANCY_NOT_FOUND"), "A roster row with no tenancy was not rejected.");
+  await expectDatabaseError(() => db.query(`select public.commit_resident_import('${resOrphanJob}','${resOrphanValidation.validationHash}')`), "IMPORT_NOT_READY");
+
+  // ── Opening-balances leg ────────────────────────────────────────────────────────────────────────
+  // Balances usually arrive as a separate export from the rent roll. Unit A2 was imported with a zero
+  // opening balance, so it has no opening journal yet and is the legitimate target.
+  const balHeaders = ["Property","Address","City","Country","Unit","Balance","Effective","Memo"];
+  const balRows = [{ Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "A2", Balance: "47500", Effective: "2026-08-01", Memo: "Migrated balance" }];
+  const balMapping = { propertyName: "Property", addressLine1: "Address", locality: "City", countryCode: "Country", unitCode: "Unit", openingBalanceMinor: "Balance", effectiveDate: "Effective", memo: "Memo" };
+  const balJob = (await db.query(`select public.create_import_job('${organization.organizationId}','opening_balances','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(balHeaders)}'::jsonb,'${JSON.stringify(balRows)}'::jsonb,'balance-import-0001') as result`)).rows[0].result.importJobId;
+  const balValidation = (await db.query(`select public.validate_opening_balance_import('${balJob}','${JSON.stringify(balMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(balValidation.status === "ready" && Number(balValidation.totals.netOpeningBalanceMinor) === 47500, "The opening-balance file did not validate to its net total.");
+  const balCommitted = (await db.query(`select public.commit_opening_balance_import('${balJob}','${balValidation.validationHash}') as result`)).rows[0].result;
+  assert(balCommitted.status === "completed" && balCommitted.committed.openingBalances === 1, "The opening-balance import did not post exactly one balance.");
+
+  await db.exec("reset role");
+  const balLedger = (await db.query(`select
+    coalesce(sum(je.debit_minor) filter (where la.account_code='1100'),0)::bigint as ar_debit,
+    coalesce(sum(je.credit_minor) filter (where la.account_code='3900'),0)::bigint as equity_credit,
+    coalesce(sum(je.debit_minor),0)::bigint as total_debit,
+    coalesce(sum(je.credit_minor),0)::bigint as total_credit
+    from public.journal_transactions jt
+    join public.journal_entries je on je.journal_transaction_id=jt.id
+    join public.ledger_accounts la on la.id=je.ledger_account_id
+    where jt.transaction_type='opening_balance' and jt.metadata->>'importJobId'='${balJob}'`)).rows[0];
+  assert(Number(balLedger.ar_debit) === 47500 && Number(balLedger.equity_credit) === 47500, "The imported opening balance did not post 47500 to 1100 DR / 3900 CR.");
+  assert(Number(balLedger.total_debit) === Number(balLedger.total_credit), "The imported opening-balance journal is unbalanced.");
+
+  // Re-importing the same balance must be refused: doubling a receivable is a financial defect.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const balRerunJob = (await db.query(`select public.create_import_job('${organization.organizationId}','opening_balances','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(balHeaders)}'::jsonb,'${JSON.stringify(balRows)}'::jsonb,'balance-import-rerun-1') as result`)).rows[0].result.importJobId;
+  const balRerunValidation = (await db.query(`select public.validate_opening_balance_import('${balRerunJob}','${JSON.stringify(balMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(balRerunValidation.status === "mapping" && JSON.stringify(balRerunValidation.errors).includes("OPENING_BALANCE_EXISTS"), "Re-importing an opening balance was not refused.");
+  await db.exec("reset role");
+  const balTotalAfterRerun = (await db.query(`select coalesce(sum(je.debit_minor),0)::bigint as ar
+    from public.journal_transactions jt
+    join public.journal_entries je on je.journal_transaction_id=jt.id
+    join public.ledger_accounts la on la.id=je.ledger_account_id
+    where jt.source_type='tenancy' and jt.source_id='${cmbTenancyByUnit.A2.id}' and la.account_code='1100'`)).rows[0].ar;
+  assert(Number(balTotalAfterRerun) === 47500, "The receivable was doubled by a repeated opening-balance import.");
+
+  // A zero balance has nothing to post, and a row for an unknown unit is an error.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const balBadRows = [
+    { Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "A1", Balance: "0", Effective: "2026-08-01", Memo: "" },
+    { Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "Q7", Balance: "1000", Effective: "2026-08-01", Memo: "" },
+  ];
+  const balBadJob = (await db.query(`select public.create_import_job('${organization.organizationId}','opening_balances','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(balHeaders)}'::jsonb,'${JSON.stringify(balBadRows)}'::jsonb,'balance-import-bad-1') as result`)).rows[0].result.importJobId;
+  const balBadValidation = (await db.query(`select public.validate_opening_balance_import('${balBadJob}','${JSON.stringify(balMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(balBadValidation.totals.errors === 2, "The zero-balance and unknown-unit rows were not both rejected.");
+  assert(JSON.stringify(balBadValidation.errors).includes("ZERO_OPENING_BALANCE") && JSON.stringify(balBadValidation.errors).includes("TENANCY_NOT_FOUND"),
+    "The opening-balance validator did not raise the expected per-row codes.");
+
+  // Each leg refuses a job belonging to another leg.
+  await expectDatabaseError(() => db.query(`select public.validate_resident_import('${balBadJob}','${JSON.stringify(resMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb)`), "IMPORT_TYPE_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.validate_opening_balance_import('${resOrphanJob}','${JSON.stringify(balMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb)`), "IMPORT_TYPE_MISMATCH");
 
   // A combined job cannot be driven by the occupied-lease commands, and vice versa.
   await expectDatabaseError(() => db.query(`select public.validate_occupied_import('${cmbOverlapJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb)`), "IMPORT_TYPE_MISMATCH");
