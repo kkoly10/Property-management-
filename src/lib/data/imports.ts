@@ -1,6 +1,7 @@
 import "server-only";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
+import { importSourceMimeTypes } from "@/lib/imports/source-mime";
 
 export type ImportTotals = { rows: number; valid: number; warnings: number; errors: number; creates: number; updates: number; skips: number };
 export type ImportError = { row: number; field?: string; code: string; message: string };
@@ -39,7 +40,7 @@ export async function getImportCenterState(): Promise<ImportCenterState> {
     if (organizationError || jobError || documentError) throw organizationError ?? jobError ?? documentError;
     const documentIds = (documents ?? []).map((document) => document.id);
     const versions = documentIds.length
-      ? await supabase.from("document_versions").select("document_id,original_filename,upload_status,mime_type,version_number").in("document_id", documentIds).eq("upload_status", "clean").in("mime_type", ["text/csv", "application/vnd.ms-excel"]).order("version_number", { ascending: false })
+      ? await supabase.from("document_versions").select("document_id,original_filename,upload_status,mime_type,version_number").in("document_id", documentIds).eq("upload_status", "clean").in("mime_type", [...importSourceMimeTypes]).order("version_number", { ascending: false })
       : { data: [], error: null };
     if (versions.error) throw versions.error;
     const cleanVersionByDocument = new Map<string, NonNullable<typeof versions.data>[number]>();

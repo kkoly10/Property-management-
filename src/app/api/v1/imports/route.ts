@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { CsvImportError, parseCsv } from "@/lib/imports/csv";
+import { importSourceMimeTypes, XLSX_MIME_TYPE } from "@/lib/imports/source-mime";
 import { parseXlsx, XlsxImportError } from "@/lib/imports/xlsx";
 import { createClient } from "@/lib/supabase/server";
 import { createImportJobSchema } from "@/lib/validation/imports";
-
-const XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
@@ -27,7 +26,7 @@ export async function POST(request: Request) {
     .select("id,storage_bucket,storage_path,mime_type,upload_status")
     .eq("document_id", sourceDocument.id)
     .eq("upload_status", "clean")
-    .in("mime_type", ["text/csv", "application/vnd.ms-excel", XLSX_MIME_TYPE])
+    .in("mime_type", [...importSourceMimeTypes])
     .order("version_number", { ascending: false }).limit(1).maybeSingle();
   if (versionError || !sourceVersion) return errorResponse("The source file must pass malware scanning before import.", 422);
 
