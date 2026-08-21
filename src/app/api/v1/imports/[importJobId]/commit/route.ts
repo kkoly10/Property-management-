@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { importCommandsFor } from "@/lib/imports/commands";
 import { commitImportSchema } from "@/lib/validation/imports";
 
 export async function POST(request: Request, context: { params: Promise<{ importJobId: string }> }) {
@@ -10,8 +11,9 @@ export async function POST(request: Request, context: { params: Promise<{ import
   const { data: auth, error: authError } = await supabase.auth.getUser();
   if (authError || !auth.user) return NextResponse.json({ error: "Sign in to commit imports." }, { status: 401 });
   const { data: job } = await supabase.from("import_jobs").select("import_type").eq("id", importJobId).maybeSingle();
-  const rpc = job?.import_type === "leases" ? "commit_occupied_import" : "commit_portfolio_import";
-  const result = await supabase.rpc(rpc, {
+  const commands = importCommandsFor(job?.import_type);
+  if (!commands) return NextResponse.json({ error: "That import type cannot be committed." }, { status: 422 });
+  const result = await supabase.rpc(commands.commit, {
     p_import_job_id: importJobId,
     p_expected_validation_hash: parsed.data.expectedValidationHash,
   });

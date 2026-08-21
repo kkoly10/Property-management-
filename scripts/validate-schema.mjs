@@ -53,6 +53,7 @@ const platformControlPlaneHardeningSql = await readFile(resolve(root, "supabase/
 const occupiedLeaseImportSql = await readFile(resolve(root, "supabase/migrations/20260727120000_phase_3_occupied_lease_import.sql"), "utf8");
 const notificationWorkerSql = await readFile(resolve(root, "supabase/migrations/20260728100000_phase_4_notification_worker.sql"), "utf8");
 const documentDeliveryChannelsSql = await readFile(resolve(root, "supabase/migrations/20260728110000_phase_4_document_delivery_channels.sql"), "utf8");
+const combinedImportSql = await readFile(resolve(root, "supabase/migrations/20260729100000_phase_3_combined_import.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -805,6 +806,7 @@ async function validateRecurringCharges() {
   await db.exec(occupiedLeaseImportSql);
   await db.exec(notificationWorkerSql);
   await db.exec(documentDeliveryChannelsSql);
+  await db.exec(combinedImportSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3830,6 +3832,152 @@ async function validateRecurringCharges() {
   const occBadValidation = (await db.query(`select public.validate_occupied_import('${occBadJob}','${JSON.stringify(occMapping)}'::jsonb,'${JSON.stringify(occOptions)}'::jsonb) as result`)).rows[0].result;
   assert(occBadValidation.status === "mapping" && occBadValidation.totals.errors === 1, "Unknown-property occupied row was not flagged as an error.");
   await expectDatabaseError(() => db.query(`select public.commit_occupied_import('${occBadJob}','${occBadValidation.validationHash}')`), "IMPORT_NOT_READY");
+
+  // ── Single-pass combined import (phase_3_combined_import) ───────────────────────────────────────
+  // The real onboarding artifact is ONE spreadsheet: unit, resident, rent, balance. This leg creates
+  // the property and unit AND activates the tenancy from a single row, so the portfolio is operational
+  // after one commit. Both rows below name a property that does NOT exist yet.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const cmbSourceDoc = "ea000000-0000-4000-8000-0000000000c1";
+  const cmbSourceVersion = "ea000000-0000-4000-8000-0000000000c2";
+  await db.exec(`reset role;
+    insert into public.documents(id,organization_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${cmbSourceDoc}','${organization.organizationId}','portfolio_import','Combined roster','operator_supplied','active',true,'${admin}');
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${cmbSourceVersion}','${organization.organizationId}','${cmbSourceDoc}',1,'private-documents','organizations/${organization.organizationId}/organization/${organization.organizationId}/${cmbSourceVersion}/combined.csv','text/csv',512,'${"f".repeat(64)}','combined.csv','${admin}','clean');
+    set role authenticated; set request.jwt.claim.sub='${admin}';`);
+
+  const cmbHeaders = ["Property","Type","Address","City","State","Postal","Country","TZ","Unit","UnitType","Beds","Baths","Sqft","First","Last","Email","Start","Rent","Freq","Currency","Opening"];
+  const cmbRow = (unit, first, last, opening) => ({
+    Property: "Birch Terrace", Type: "multifamily", Address: "500 Birch Avenue", City: "Norfolk", State: "VA", Postal: "23510",
+    Country: "US", TZ: "America/New_York", Unit: unit, UnitType: "Apartment", Beds: "2", Baths: "1", Sqft: "780",
+    First: first, Last: last, Email: `${first.toLowerCase()}.${last.toLowerCase()}@example.test`,
+    Start: "2026-08-01", Rent: "135000", Freq: "monthly", Currency: "USD", Opening: opening,
+  });
+  const cmbMapping = {
+    propertyName: "Property", propertyType: "Type", addressLine1: "Address", locality: "City", subdivisionCode: "State",
+    postalCode: "Postal", countryCode: "Country", timeZone: "TZ", unitCode: "Unit", unitType: "UnitType",
+    bedrooms: "Beds", bathrooms: "Baths", squareFeet: "Sqft", primaryFirstName: "First", primaryLastName: "Last",
+    primaryEmail: "Email", leaseStartDate: "Start", rentAmountMinor: "Rent", rentFrequency: "Freq",
+    currencyCode: "Currency", openingBalanceMinor: "Opening",
+  };
+  const cmbOptions = { dedupeMode: "strict", dateLocale: "en-US" };
+  const cmbRows = [cmbRow("A1", "Noor", "Haddad", "90000"), cmbRow("A2", "Iris", "Okafor", "0")];
+
+  const cmbJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbRows)}'::jsonb,'combined-import-0001') as result`)).rows[0].result.importJobId;
+  const cmbValidation = (await db.query(`select public.validate_combined_import('${cmbJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbValidation.status === "ready" && cmbValidation.totals.creates === 2 && cmbValidation.totals.errors === 0, "Two valid combined rows did not reach ready.");
+  assert(cmbValidation.totals.newUnits === 2, "The combined validation did not count both units as new seats.");
+  await expectDatabaseError(() => db.query(`select public.commit_combined_import('${cmbJob}','${"0".repeat(64)}')`), "VALIDATION_HASH_CONFLICT");
+  const cmbCommitted = (await db.query(`select public.commit_combined_import('${cmbJob}','${cmbValidation.validationHash}') as result`)).rows[0].result;
+  assert(cmbCommitted.status === "completed", "The combined import did not complete.");
+  assert(cmbCommitted.committed.properties === 1 && cmbCommitted.committed.units === 2 && cmbCommitted.committed.tenancies === 2 && cmbCommitted.committed.openingBalances === 1,
+    "The combined commit did not create one property, two units, two tenancies, and one opening balance.");
+  const cmbReplay = (await db.query(`select public.commit_combined_import('${cmbJob}','${cmbValidation.validationHash}') as result`)).rows[0].result;
+  assert(cmbReplay.reportDocumentId === cmbCommitted.reportDocumentId, "Combined-import commit replay returned a different report document.");
+
+  // Both rows named one property, so exactly ONE property exists — the second row reused the first
+  // row's freshly created property rather than duplicating it.
+  await db.exec("reset role");
+  const cmbProperty = (await db.query(`select id,status from public.properties
+    where organization_id='${organization.organizationId}' and lower(name)='birch terrace'`)).rows;
+  assert(cmbProperty.length === 1, "The combined import duplicated the property across rows.");
+  const cmbUnits = (await db.query(`select count(*)::integer as c from public.units where property_id='${cmbProperty[0].id}'`)).rows[0].c;
+  assert(cmbUnits === 2, "The combined import did not create both units under the shared property.");
+
+  // Each row is fully operational: active tenancy, household with a primary member, armed rent schedule.
+  const cmbTenancies = (await db.query(`select t.id, t.status, cs.id as schedule_id, cs.next_run_on, hm.is_primary_contact
+    from public.tenancies t
+    join public.charge_schedules cs on cs.tenancy_id=t.id
+    join public.household_members hm on hm.household_id=t.household_id
+    where t.property_id='${cmbProperty[0].id}' order by t.possession_start, t.id`)).rows;
+  assert(cmbTenancies.length === 2 && cmbTenancies.every((t) => t.status === "active" && t.schedule_id && t.is_primary_contact === true),
+    "A combined-imported row did not yield an active tenancy with a rent schedule and a primary household member.");
+
+  // The opening receivable is balanced 1100 DR / 3900 CR, and the zero-balance row posts NO journal.
+  const cmbLedger = (await db.query(`select
+    coalesce(sum(je.debit_minor) filter (where la.account_code='1100'),0)::bigint as ar_debit,
+    coalesce(sum(je.credit_minor) filter (where la.account_code='3900'),0)::bigint as equity_credit,
+    coalesce(sum(je.debit_minor),0)::bigint as total_debit,
+    coalesce(sum(je.credit_minor),0)::bigint as total_credit,
+    count(distinct jt.id)::integer as transactions
+    from public.journal_transactions jt
+    join public.journal_entries je on je.journal_transaction_id=jt.id
+    join public.ledger_accounts la on la.id=je.ledger_account_id
+    where jt.transaction_type='opening_balance' and jt.metadata->>'importJobId'='${cmbJob}'`)).rows[0];
+  assert(Number(cmbLedger.ar_debit) === 90000 && Number(cmbLedger.equity_credit) === 90000, "The combined opening receivable did not post 90000 to 1100 DR / 3900 CR.");
+  assert(Number(cmbLedger.total_debit) === Number(cmbLedger.total_credit), "The combined opening journal is unbalanced.");
+  assert(cmbLedger.transactions === 1, "A zero opening balance still posted a journal transaction.");
+
+  // Operational end state: the imported tenancy generates its first recurring rent charge.
+  await db.exec("reset role; set role service_role");
+  const cmbCharge = (await db.query(`select public.generate_recurring_charges('2026-08-01',array['${cmbTenancies[0].schedule_id}']::uuid[],'combined-charge-gen-0001') as result`)).rows[0].result;
+  assert(cmbCharge.generatedCount >= 1, "A combined-imported tenancy could not generate its first recurring rent charge.");
+
+  // Two rows for the same unit would activate overlapping tenancies; that is always an error.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const cmbDupRows = [cmbRow("B1", "Ada", "Stone", "0"), cmbRow("B1", "Leo", "Stone", "0")];
+  const cmbDupJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbDupRows)}'::jsonb,'combined-import-dup-1') as result`)).rows[0].result.importJobId;
+  const cmbDupValidation = (await db.query(`select public.validate_combined_import('${cmbDupJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbDupValidation.status === "mapping" && cmbDupValidation.totals.errors === 1, "A repeated unit in one combined file was not rejected.");
+  assert(JSON.stringify(cmbDupValidation.errors).includes("DUPLICATE_UNIT"), "The repeated-unit row did not raise DUPLICATE_UNIT.");
+  await expectDatabaseError(() => db.query(`select public.commit_combined_import('${cmbDupJob}','${cmbDupValidation.validationHash}')`), "IMPORT_NOT_READY");
+
+  // Re-importing a unit that is ALREADY occupied is rejected rather than double-booked.
+  const cmbOverlapRows = [cmbRow("A1", "Mona", "Vale", "0")];
+  const cmbOverlapJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbOverlapRows)}'::jsonb,'combined-import-overlap-1') as result`)).rows[0].result.importJobId;
+  const cmbOverlapValidation = (await db.query(`select public.validate_combined_import('${cmbOverlapJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbOverlapValidation.status === "mapping" && JSON.stringify(cmbOverlapValidation.errors).includes("TENANCY_OVERLAP"),
+    "Importing into an already-occupied unit was not rejected.");
+
+  // Seat accounting: a row that REUSES an existing unit must consume no new unit seat. Pinned at the
+  // plan boundary, because with headroom an over-count is invisible — and an over-count would refuse a
+  // perfectly legal import with PLAN_LIMIT_EXCEEDED.
+  const reuseUnit = (await db.query(`select public.create_unit('${organization.organizationId}','${property.propertyId}',null,'301','Apartment',1,1,600,'finance-reuse-unit-0001') as result`)).rows[0].result;
+  const cmbReuseRows = [{
+    Property: "Maple Court", Type: "multifamily", Address: "100 Main Street", City: "Richmond", State: "VA", Postal: "23220",
+    Country: "US", TZ: "America/New_York", Unit: "301", UnitType: "Apartment", Beds: "1", Baths: "1", Sqft: "600",
+    First: "Rae", Last: "Kimura", Email: "rae.kimura@example.test",
+    Start: "2026-08-01", Rent: "99000", Freq: "monthly", Currency: "USD", Opening: "0",
+  }];
+  const cmbReuseJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbReuseRows)}'::jsonb,'combined-import-reuse-1') as result`)).rows[0].result.importJobId;
+  const cmbReuseValidation = (await db.query(`select public.validate_combined_import('${cmbReuseJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbReuseValidation.status === "ready" && cmbReuseValidation.totals.newUnits === 0, "A row reusing an existing unit was counted as a new unit seat.");
+
+  // Squeeze the plan limit to exactly the units that already exist: a zero-new-seat import must still
+  // commit, and any genuinely new unit must be refused.
+  await db.exec("reset role");
+  const unitsNow = (await db.query(`select count(*)::integer as c from public.units
+    where organization_id='${organization.organizationId}' and operational_status<>'retired' and archived_at is null`)).rows[0].c;
+  await db.exec(`update public.plan_entitlements set limit_value=${unitsNow} where plan_code='growth' and feature_code='core.unit'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const cmbReuseCommitted = (await db.query(`select public.commit_combined_import('${cmbReuseJob}','${cmbReuseValidation.validationHash}') as result`)).rows[0].result;
+  assert(cmbReuseCommitted.status === "completed" && cmbReuseCommitted.committed.units === 0 && cmbReuseCommitted.committed.tenancies === 1,
+    "Reusing an existing unit at the exact plan limit was refused — new-unit seats are being over-counted.");
+  await db.exec("reset role");
+  const reuseTenancy = (await db.query(`select count(*)::integer as c from public.tenancies where unit_id='${reuseUnit.unitId}' and status='active'`)).rows[0].c;
+  assert(reuseTenancy === 1, "The reuse row did not activate a tenancy on the existing unit.");
+
+  // Same limit, but this row needs a genuinely new unit: refused, and nothing is written.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const cmbOverLimitRows = [cmbRow("C9", "Zed", "Marsh", "0")];
+  const cmbOverLimitJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbOverLimitRows)}'::jsonb,'combined-import-overlimit-1') as result`)).rows[0].result.importJobId;
+  const cmbOverLimitValidation = (await db.query(`select public.validate_combined_import('${cmbOverLimitJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbOverLimitValidation.status === "ready", "The over-limit fixture did not validate.");
+  const cmbOverLimitCommit = (await db.query(`select public.commit_combined_import('${cmbOverLimitJob}','${cmbOverLimitValidation.validationHash}') as result`)).rows[0].result;
+  assert(cmbOverLimitCommit.status === "failed" && cmbOverLimitCommit.error === "PLAN_LIMIT_EXCEEDED", "A combined import past the unit limit was not refused.");
+  await db.exec("reset role");
+  const overLimitUnits = (await db.query(`select count(*)::integer as c from public.units u
+    join public.properties p on p.id=u.property_id
+    where p.organization_id='${organization.organizationId}' and lower(u.unit_code)='c9'`)).rows[0].c;
+  assert(overLimitUnits === 0, "A refused over-limit import still wrote a unit — the commit is not atomic.");
+  await db.exec(`update public.plan_entitlements set limit_value=50 where plan_code='growth' and feature_code='core.unit'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+
+  // A combined job cannot be driven by the occupied-lease commands, and vice versa.
+  await expectDatabaseError(() => db.query(`select public.validate_occupied_import('${cmbOverlapJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb)`), "IMPORT_TYPE_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.validate_combined_import('${occJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb)`), "IMPORT_TYPE_MISMATCH");
+  await db.exec("reset role");
   await db.exec("reset role");
 
   // ── Transactional notification worker (phase_4_notification_worker) ─────────────────────────────
