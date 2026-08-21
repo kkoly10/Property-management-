@@ -1,5 +1,4 @@
 import "server-only";
-import { createHash } from "node:crypto";
 
 /**
  * Secure-link helpers for off-portal document delivery.
@@ -8,12 +7,9 @@ import { createHash } from "node:crypto";
  * the invitation precedent (public.staff_invitations.token_hash): a database read can never mint a
  * working link. The plaintext token travels in the command response (to the operator) and in the
  * in-flight notification job (so the worker can build the URL), and is scrubbed from that job the
- * moment it terminates. Redemption hashes the token from the URL and matches on the hash.
+ * moment it terminates. Redemption passes the plaintext token to the database, which hashes it
+ * internally — so the stored hash is not itself a credential for the anon-callable redeem command.
  */
-export function hashSecureLinkToken(rawToken: string): string {
-  return createHash("sha256").update(rawToken).digest("hex");
-}
-
 export function secureLinkPath(rawToken: string): string {
   return `/documents/secure/${encodeURIComponent(rawToken)}`;
 }

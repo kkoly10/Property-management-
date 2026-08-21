@@ -56,6 +56,7 @@ const documentDeliveryChannelsSql = await readFile(resolve(root, "supabase/migra
 const combinedImportSql = await readFile(resolve(root, "supabase/migrations/20260729100000_phase_3_combined_import.sql"), "utf8");
 const residentBalanceImportSql = await readFile(resolve(root, "supabase/migrations/20260729110000_phase_3_resident_and_balance_imports.sql"), "utf8");
 const xlsxSourceDocumentsSql = await readFile(resolve(root, "supabase/migrations/20260729120000_phase_3_xlsx_source_documents.sql"), "utf8");
+const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/20260729130000_phase_4_secure_link_raw_token.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -811,6 +812,7 @@ async function validateRecurringCharges() {
   await db.exec(combinedImportSql);
   await db.exec(residentBalanceImportSql);
   await db.exec(xlsxSourceDocumentsSql);
+  await db.exec(secureLinkRawTokenSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -4340,9 +4342,12 @@ async function validateRecurringCharges() {
   // Redemption is anonymous by necessity; every rejection returns one sentinel so the token space
   // cannot be probed for which hashes exist.
   await db.exec("set role anon");
-  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('not-a-hash')`), "SECURE_LINK_NOT_REDEEMABLE");
+  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('short')`), "SECURE_LINK_NOT_REDEEMABLE");
   await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('${"e".repeat(64)}')`), "SECURE_LINK_NOT_REDEEMABLE");
-  const redeemed = (await db.query(`select public.redeem_document_secure_link('${expectedHash}') as r`)).rows[0].r;
+  // DECISIVE: the STORED HASH must not redeem. Only the plaintext token does, so the column is not a
+  // bearer credential for this anon-callable command.
+  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('${expectedHash}')`), "SECURE_LINK_NOT_REDEEMABLE");
+  const redeemed = (await db.query(`select public.redeem_document_secure_link('${secureTokenRaw}') as r`)).rows[0].r;
   assert(redeemed.storageBucket === "documents" && redeemed.storagePath && redeemed.documentTitle === "Quiet hours notice",
     "Redeeming a secure link did not return the document's storage coordinates.");
   assert(!Object.keys(redeemed).some((k) => /token|recipient|email|user/i.test(k)), "The secure-link DTO leaked a token or recipient identity.");

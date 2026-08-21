@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
-import { hashSecureLinkToken } from "@/lib/notifications/secure-link";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,8 +34,10 @@ export async function GET(_request: Request, context: { params: Promise<{ token:
     );
   }
 
+  // The token itself goes to the database, which hashes it internally: the stored hash is therefore
+  // not a credential, so surfacing it anywhere later cannot become a way in.
   const { data, error } = await admin.rpc("redeem_document_secure_link", {
-    p_token_hash: hashSecureLinkToken(rawToken),
+    p_secure_link_token: rawToken,
   });
   if (error || !data) return notRedeemable();
 

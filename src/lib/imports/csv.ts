@@ -70,6 +70,30 @@ const columnAliases: Record<string, string[]> = {
   bedrooms: ["bedrooms", "beds"],
   bathrooms: ["bathrooms", "baths"],
   squareFeet: ["square feet", "sq ft", "sqft"],
+  // Occupied-lease and combined legs.
+  householdName: ["household", "household name"],
+  primaryFirstName: ["first name", "first", "resident first name", "tenant first name"],
+  primaryLastName: ["last name", "last", "resident last name", "tenant last name"],
+  primaryEmail: ["email", "email address", "resident email", "tenant email"],
+  primaryPhone: ["phone", "phone number", "resident phone", "tenant phone"],
+  leaseStartDate: ["lease start", "lease start date", "start date", "start"],
+  leaseEndDate: ["lease end", "lease end date", "end date", "end"],
+  rentAmountMinor: ["rent", "rent amount", "monthly rent", "rent amount minor"],
+  rentFrequency: ["rent frequency", "frequency", "cadence"],
+  currencyCode: ["currency", "currency code"],
+  externalReference: ["external reference", "reference", "lease id"],
+  openingBalanceMinor: ["opening balance", "balance", "opening balance minor"],
+  firstChargeDueDate: ["first charge due", "first due date", "due date"],
+  // Residents leg uses unprefixed person columns.
+  firstName: ["first name", "first"],
+  lastName: ["last name", "last"],
+  email: ["email", "email address"],
+  phone: ["phone", "phone number"],
+  financiallyResponsible: ["financially responsible", "responsible", "on the lease"],
+  startsOn: ["starts on", "member since", "start date"],
+  // Opening-balances leg.
+  effectiveDate: ["effective date", "as of", "as of date"],
+  memo: ["memo", "note", "description"],
 };
 
 export function autoMapImportColumns(headers: string[]) {
