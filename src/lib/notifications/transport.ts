@@ -37,14 +37,22 @@ export function getNotificationRelayConfig(): { url: string; secret: string } | 
 }
 
 /**
- * A 4xx is the relay telling us the request itself is wrong (bad address, unknown template) — retrying
- * an identical request cannot fix that, so it dead-letters. 408/429 and 5xx are transient by
- * definition, as is any network error, so those go back on the queue behind the backoff.
+ * Retryable means "a later identical attempt could succeed", which turns on WHOSE fault the status is.
+ *
+ * The distinction matters more than it looks: a non-retryable verdict dead-letters the job, and there
+ * is no command to revive a dead letter. So a status that actually reflects OUR configuration must
+ * never be non-retryable — otherwise one wrong relay secret (401) or one stale relay URL (404) would
+ * permanently destroy every message in the queue while the operator was still fixing the setting.
+ *
+ *   * 401 / 403 / 404 / 407 / 408 / 429 and every 5xx — our credential, our endpoint, or the relay's
+ *     own state. Retry behind the backoff; they resolve when the operator or the relay recovers.
+ *   * every other 4xx (400, 413, 422, ...) — the relay is rejecting THIS message: bad address,
+ *     oversized payload, unknown template. Retrying an identical request cannot fix it.
  */
-function classifyStatus(status: number): TransportFailure {
-  if (status === 408 || status === 429) return { ok: false, errorCode: `RELAY_HTTP_${status}`, retryable: true };
-  if (status >= 400 && status < 500) return { ok: false, errorCode: `RELAY_HTTP_${status}`, retryable: false };
-  return { ok: false, errorCode: `RELAY_HTTP_${status}`, retryable: true };
+export function classifyRelayStatus(status: number): TransportFailure {
+  const configurationOrTransient = status === 401 || status === 403 || status === 404
+    || status === 407 || status === 408 || status === 429 || status >= 500;
+  return { ok: false, errorCode: `RELAY_HTTP_${status}`, retryable: configurationOrTransient };
 }
 
 export function getNotificationTransport(): NotificationTransport | null {
@@ -74,7 +82,7 @@ export function getNotificationTransport(): NotificationTransport | null {
           }),
           signal: controller.signal,
         });
-        if (!response.ok) return classifyStatus(response.status);
+        if (!response.ok) return classifyRelayStatus(response.status);
         const receipt = (await response.json().catch(() => null)) as { messageId?: unknown } | null;
         const messageId = typeof receipt?.messageId === "string" ? receipt.messageId.slice(0, 200) : null;
         return { ok: true, providerCode: "relay", providerMessageId: messageId };

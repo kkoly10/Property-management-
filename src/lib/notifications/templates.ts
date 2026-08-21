@@ -52,7 +52,8 @@ function link(path: string): string {
  * it is never persisted with the job beyond the send.
  */
 function documentAccessLine(p: Record<string, unknown>, language: NotificationLanguage): string {
-  const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\/|^\//.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
+  // Absolute only: a relative path is a dead link in an email, so fall through to the portal wording.
+  const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\//i.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
   const expires = typeof p.expiresAt === "string" ? p.expiresAt.slice(0, 10) : null;
   if (secure) {
     if (language === "es") return `Ábrelo con este enlace seguro: ${secure}${expires ? `\n\nEste enlace vence el ${expires}.` : ""}`;

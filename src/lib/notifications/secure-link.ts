@@ -14,8 +14,17 @@ export function secureLinkPath(rawToken: string): string {
   return `/documents/secure/${encodeURIComponent(rawToken)}`;
 }
 
-export function secureLinkUrl(rawToken: string): string {
+/**
+ * Absolute URL for the link, or null when no canonical origin is configured.
+ *
+ * Null rather than a relative path on purpose: this URL's only destination is an email body, where a
+ * bare "/documents/secure/..." is a dead link. Callers fall back to the portal wording instead of
+ * sending something that cannot be clicked.
+ */
+export function secureLinkUrl(rawToken: string): string | null {
   const configured = process.env.NEXT_PUBLIC_SITE_URL;
-  const origin = !configured || configured.includes("replace_me") ? "" : configured.replace(/\/+$/, "");
+  if (!configured || configured.includes("replace_me")) return null;
+  const origin = configured.replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(origin)) return null;
   return `${origin}${secureLinkPath(rawToken)}`;
 }

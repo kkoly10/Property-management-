@@ -81,6 +81,14 @@ suite on exactly its own assertion:
 covered in embedded Postgres. End-to-end send certification needs a relay endpoint plus
 `SUPABASE_SECRET_KEY`, the same class of external configuration as Stripe Connect.
 
+## Known gap: dead letters are terminal
+
+There is no command to revive a dead-lettered job. That is why the relay's status classification is
+deliberately conservative about whose fault a failure is — 401/403/404/407 reflect OUR credential or
+endpoint, so they retry rather than dead-letter; only a rejection of the message itself (400, 413,
+422, ...) is terminal. A `requeue_dead_letter_notifications` command is the natural follow-up if
+operations ever needs to replay a batch after fixing a provider-side problem.
+
 ## Live application
 
 All six migrations of this batch are applied to the connected Supabase project

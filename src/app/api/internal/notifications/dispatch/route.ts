@@ -83,7 +83,8 @@ export async function POST(request: Request) {
       // A secure-link delivery ships the token to the worker so the URL can be built here; the queue
       // row is scrubbed of it as soon as this job reaches a terminal state.
       const token = typeof job.payload.secureLinkToken === "string" ? job.payload.secureLinkToken : null;
-      const payload = token ? { ...job.payload, secureLinkUrl: secureLinkUrl(token) } : job.payload;
+      const link = token ? secureLinkUrl(token) : null;
+      const payload = link ? { ...job.payload, secureLinkUrl: link } : job.payload;
       const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload });
       outcome = rendered
         ? await transport.send({
