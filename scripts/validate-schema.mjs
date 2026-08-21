@@ -55,6 +55,7 @@ const notificationWorkerSql = await readFile(resolve(root, "supabase/migrations/
 const documentDeliveryChannelsSql = await readFile(resolve(root, "supabase/migrations/20260728110000_phase_4_document_delivery_channels.sql"), "utf8");
 const combinedImportSql = await readFile(resolve(root, "supabase/migrations/20260729100000_phase_3_combined_import.sql"), "utf8");
 const residentBalanceImportSql = await readFile(resolve(root, "supabase/migrations/20260729110000_phase_3_resident_and_balance_imports.sql"), "utf8");
+const xlsxSourceDocumentsSql = await readFile(resolve(root, "supabase/migrations/20260729120000_phase_3_xlsx_source_documents.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -809,6 +810,7 @@ async function validateRecurringCharges() {
   await db.exec(documentDeliveryChannelsSql);
   await db.exec(combinedImportSql);
   await db.exec(residentBalanceImportSql);
+  await db.exec(xlsxSourceDocumentsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3980,6 +3982,32 @@ async function validateRecurringCharges() {
   assert(overLimitUnits === 0, "A refused over-limit import still wrote a unit — the commit is not atomic.");
   await db.exec(`update public.plan_entitlements set limit_value=50 where plan_code='growth' and feature_code='core.unit'`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+
+  // ── True .xlsx sources (phase_3_xlsx_source_documents) ──────────────────────────────────────────
+  // The mime allowlist is enforced in five places; these assertions cover the two SQL gates, without
+  // which an operator could upload nothing and create_import_job would reject the version anyway.
+  const xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  const xlsxGrant = (await db.query(`select public.create_document_upload_grant(
+    '${organization.organizationId}','organization','${organization.organizationId}','portfolio_import','Roster workbook','roster.xlsx','${xlsxMime}',4096,'xlsx-upload-grant-0001'
+  ) as result`)).rows[0].result;
+  assert(xlsxGrant.grantId && xlsxGrant.storagePath, "An .xlsx upload grant was refused by the mime allowlist.");
+  await expectDatabaseError(() => db.query(`select public.create_document_upload_grant(
+    '${organization.organizationId}','organization','${organization.organizationId}','portfolio_import','Executable','payload.exe','application/x-msdownload',4096,'xlsx-upload-grant-bad-1'
+  )`), "MIME_TYPE_NOT_ALLOWED");
+  await db.exec("reset role");
+  const bucketMimes = (await db.query(`select allowed_mime_types from storage.buckets where id='private-documents'`)).rows[0].allowed_mime_types;
+  assert(Array.isArray(bucketMimes) && bucketMimes.includes(xlsxMime), "The storage bucket still rejects .xlsx uploads.");
+
+  // An .xlsx source document is accepted by create_import_job exactly like a CSV one.
+  const xlsxDoc = "ea000000-0000-4000-8000-0000000000e1";
+  const xlsxVersion = "ea000000-0000-4000-8000-0000000000e2";
+  await db.exec(`insert into public.documents(id,organization_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${xlsxDoc}','${organization.organizationId}','portfolio_import','Roster workbook','operator_supplied','active',true,'${admin}');
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${xlsxVersion}','${organization.organizationId}','${xlsxDoc}',1,'private-documents','organizations/${organization.organizationId}/organization/${organization.organizationId}/${xlsxVersion}/roster.xlsx','${xlsxMime}',4096,'${"9".repeat(64)}','roster.xlsx','${admin}','clean');`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const xlsxJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${xlsxDoc}','${xlsxVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify([cmbRow("X1", "Ivy", "Nakamura", "0")])}'::jsonb,'xlsx-import-0001') as result`)).rows[0].result;
+  assert(xlsxJob.importJobId && xlsxJob.status === "mapping", "An .xlsx-backed import job was refused by create_import_job.");
 
   // ── Residents leg: multi-member households (phase_3_resident_and_balance_imports) ───────────────
   // The lease-bearing legs create a household with exactly ONE member. Real households have
