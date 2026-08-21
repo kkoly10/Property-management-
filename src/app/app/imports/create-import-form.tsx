@@ -12,7 +12,7 @@ import { importTypes, type ImportType } from "@/lib/validation/imports";
 
 
 /** One label and one plain-language consequence per leg, so the operator picks by outcome. */
-const IMPORT_TYPE_LABELS: Record<ImportType, string> = {
+export const IMPORT_TYPE_LABELS: Record<ImportType, string> = {
   portfolio: "Properties and units",
   combined: "Everything in one file (properties, units, and occupied leases)",
   leases: "Occupied leases onto imported units",
@@ -20,7 +20,7 @@ const IMPORT_TYPE_LABELS: Record<ImportType, string> = {
   opening_balances: "Opening balances for existing tenancies",
 };
 
-const IMPORT_TYPE_HINTS: Record<ImportType, string> = {
+export const IMPORT_TYPE_HINTS: Record<ImportType, string> = {
   portfolio: "Creates empty properties and units. Import occupied leases afterward.",
   combined: "One row per occupied unit: creates the property and unit if they are new, then activates the lease with its household, tenancy, rent schedule, and balanced opening receivable.",
   leases: "Activates a lease per row on an already-imported unit: household, tenancy, rent schedule, and a balanced opening receivable.",

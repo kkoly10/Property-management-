@@ -32,12 +32,24 @@ export async function getImportCenterState(): Promise<ImportCenterState> {
   };
   try {
     const supabase = await createClient();
-    const [{ data: organizations, error: organizationError }, { data: jobs, error: jobError }, { data: documents, error: documentError }] = await Promise.all([
-      supabase.from("organizations").select("id").order("created_at").limit(1),
-      supabase.from("import_jobs").select("id,import_type,status,source_document_id,summary,created_at,committed_at").order("created_at", { ascending: false }),
-      supabase.from("documents").select("id,title,property_id").is("property_id", null).order("created_at", { ascending: false }),
+    // Resolve the acting organization FIRST, then scope everything to it. An operator may belong to
+    // several organizations — that is the property-manager model — and RLS lets them read documents
+    // from all of them. Listing unscoped sources offered a document from one organization while the
+    // form posted a different organizationId, which the API then refused as not available. Scoping
+    // here keeps the page's offer and its action talking about the same tenant.
+    const { data: organizations, error: organizationError } = await supabase
+      .from("organizations").select("id").order("created_at").limit(1);
+    if (organizationError) throw organizationError;
+    const organizationId = organizations?.[0]?.id ?? null;
+    if (!organizationId) return { mode: "ready", organizationId: null, jobs: [], sourceDocuments: [] };
+
+    const [{ data: jobs, error: jobError }, { data: documents, error: documentError }] = await Promise.all([
+      supabase.from("import_jobs").select("id,import_type,status,source_document_id,summary,created_at,committed_at")
+        .eq("organization_id", organizationId).order("created_at", { ascending: false }),
+      supabase.from("documents").select("id,title,property_id")
+        .eq("organization_id", organizationId).is("property_id", null).order("created_at", { ascending: false }),
     ]);
-    if (organizationError || jobError || documentError) throw organizationError ?? jobError ?? documentError;
+    if (jobError || documentError) throw jobError ?? documentError;
     const documentIds = (documents ?? []).map((document) => document.id);
     const versions = documentIds.length
       ? await supabase.from("document_versions").select("document_id,original_filename,upload_status,mime_type,version_number").in("document_id", documentIds).eq("upload_status", "clean").in("mime_type", [...importSourceMimeTypes]).order("version_number", { ascending: false })
@@ -47,7 +59,7 @@ export async function getImportCenterState(): Promise<ImportCenterState> {
     for (const version of versions.data ?? []) if (!cleanVersionByDocument.has(version.document_id)) cleanVersionByDocument.set(version.document_id, version);
     const titles = new Map((documents ?? []).map((document) => [document.id, document.title]));
     return {
-      mode: "ready", organizationId: organizations?.[0]?.id ?? null,
+      mode: "ready", organizationId,
       sourceDocuments: (documents ?? []).flatMap((document) => {
         const version = cleanVersionByDocument.get(document.id);
         return version ? [{ id: document.id, title: document.title, filename: version.original_filename }] : [];
