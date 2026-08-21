@@ -51,6 +51,7 @@ const documentDeliveryRecipientReadSql = await readFile(resolve(root, "supabase/
 const platformSupportQueriesSql = await readFile(resolve(root, "supabase/migrations/20260727100000_phase_8_platform_support_queries.sql"), "utf8");
 const platformControlPlaneHardeningSql = await readFile(resolve(root, "supabase/migrations/20260727110000_phase_8_platform_control_plane_hardening.sql"), "utf8");
 const occupiedLeaseImportSql = await readFile(resolve(root, "supabase/migrations/20260727120000_phase_3_occupied_lease_import.sql"), "utf8");
+const notificationWorkerSql = await readFile(resolve(root, "supabase/migrations/20260728100000_phase_4_notification_worker.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -801,6 +802,7 @@ async function validateRecurringCharges() {
   await db.exec(platformSupportQueriesSql);
   await db.exec(platformControlPlaneHardeningSql);
   await db.exec(occupiedLeaseImportSql);
+  await db.exec(notificationWorkerSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3827,6 +3829,150 @@ async function validateRecurringCharges() {
   assert(occBadValidation.status === "mapping" && occBadValidation.totals.errors === 1, "Unknown-property occupied row was not flagged as an error.");
   await expectDatabaseError(() => db.query(`select public.commit_occupied_import('${occBadJob}','${occBadValidation.validationHash}')`), "IMPORT_NOT_READY");
   await db.exec("reset role");
+
+  // ── Transactional notification worker (phase_4_notification_worker) ─────────────────────────────
+  // Commands enqueue private.notification_jobs everywhere; this is the drain half. Park every job
+  // queued by the earlier slices so this block's assertions are deterministic (and prove available_at
+  // gating on the way), then drive the worker against jobs enqueued here.
+  await db.exec("reset role");
+  await db.exec(`update private.notification_jobs set available_at=now()+interval '30 days' where status='queued'`);
+  const parkedClaim = (await db.query(`select public.claim_notification_jobs('email',50,'worker-run-parked-01') as r`)).rows[0].r;
+  assert(parkedClaim.claimed === 0, "Jobs scheduled into the future must not be claimable — available_at is not gating the queue.");
+
+  // Only the service role may drive the worker; the browser role cannot touch the queue at all.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.claim_notification_jobs('email',10,'worker-run-forbidden-1')`), "permission denied");
+  await expectDatabaseError(() => db.query(`select public.complete_notification_job('${"0".repeat(8)}-0000-4000-8000-00000000f001','smtp','msg-1')`), "permission denied");
+  await expectDatabaseError(() => db.query(`select public.fail_notification_job('${"0".repeat(8)}-0000-4000-8000-00000000f001','ERR',true)`), "permission denied");
+
+  // Input validation.
+  await db.exec("reset role; set role service_role");
+  await expectDatabaseError(() => db.query(`select public.claim_notification_jobs('carrier_pigeon',10,'worker-run-badchan-1')`), "INVALID_NOTIFICATION_CHANNEL");
+  await expectDatabaseError(() => db.query(`select public.claim_notification_jobs('email',0,'worker-run-badsize-1')`), "INVALID_NOTIFICATION_BATCH_SIZE");
+  await expectDatabaseError(() => db.query(`select public.claim_notification_jobs('email',10,'short')`), "INVALID_WORKER_RUN_ID");
+  await expectDatabaseError(() => db.query(`select public.requeue_stalled_notification_jobs(0)`), "INVALID_STALL_WINDOW");
+
+  // Enqueue a deterministic batch: two sendable transactional emails plus one category email whose
+  // recipient has switched that category off.
+  await db.exec("reset role");
+  await db.exec(`update auth.users set email='worker.recipient@example.com' where id='${admin}'`);
+  await db.exec(`insert into public.notification_preferences(user_id,category,channel,enabled)
+    values ('${admin}','documents','email',false)
+    on conflict (user_id,category,channel) do update set enabled=false`);
+  await db.exec(`insert into private.notification_jobs(organization_id,template_code,locale,channel,recipient_user_id,recipient_address,payload,idempotency_key)
+    values
+      ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w1"}'::jsonb,'worker-test:transactional-1'),
+      ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w2"}'::jsonb,'worker-test:transactional-2'),
+      ('${organization.organizationId}','document_delivered','en-US','email','${admin}','worker.recipient@example.com','{"documentId":"w3"}'::jsonb,'worker-test:category-optout-1')`);
+
+  // Claim: the opted-out category job is suppressed terminally; the two transactional ones are claimed.
+  // An invitation must never be silenced by a preference row — that would lock a user out of the product.
+  await db.exec("reset role; set role service_role");
+  const claimOne = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0001') as r`)).rows[0].r;
+  assert(claimOne.claimed === 2 && claimOne.suppressed === 1, "The worker did not claim both transactional emails while suppressing the opted-out category email.");
+  assert(claimOne.jobs.every((j) => j.channel === "email" && j.recipientAddress === "worker.recipient@example.com" && j.attempt === 1), "Claimed job DTOs are missing a resolved recipient address or a first-attempt counter.");
+  assert(claimOne.jobs.every((j) => j.category === null), "A transactional invitation must map to a null preference category.");
+  await db.exec("reset role");
+  const notifSuppressedRow = (await db.query(`select status,last_error from private.notification_jobs where idempotency_key='worker-test:category-optout-1'`)).rows[0];
+  assert(notifSuppressedRow.status === "canceled" && notifSuppressedRow.last_error === "RECIPIENT_OPTED_OUT", "The opted-out job was not terminally canceled.");
+
+  // A claimed job is no longer visible to the next claim — this is what SKIP LOCKED buys under true concurrency.
+  await db.exec("reset role; set role service_role");
+  const claimTwo = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0002') as r`)).rows[0].r;
+  assert(claimTwo.claimed === 0, "A second worker re-claimed jobs that were already in flight.");
+
+  // Success path: complete → 'sent' + an 'accepted' provider receipt; a duplicate completion is idempotent.
+  const sentJobId = claimOne.jobs[0].notificationJobId;
+  const retryJobId = claimOne.jobs[1].notificationJobId;
+  const notifCompleted = (await db.query(`select public.complete_notification_job('${sentJobId}','smtp','provider-msg-0001') as r`)).rows[0].r;
+  assert(notifCompleted.status === "sent" && notifCompleted.duplicate === false, "Completing a claimed job did not mark it sent.");
+  const notifCompletedReplay = (await db.query(`select public.complete_notification_job('${sentJobId}','smtp','provider-msg-0001') as r`)).rows[0].r;
+  assert(notifCompletedReplay.duplicate === true && notifCompletedReplay.status === "sent", "A duplicate completion was not idempotent.");
+  await expectDatabaseError(() => db.query(`select public.complete_notification_job('${"0".repeat(8)}-0000-4000-8000-00000000f0ff','smtp','x')`), "NOTIFICATION_JOB_NOT_FOUND");
+
+  // Retryable failure: back to 'queued' behind a backoff, so it is not immediately re-claimable.
+  const failedOnce = (await db.query(`select public.fail_notification_job('${retryJobId}','SMTP_TIMEOUT',true) as r`)).rows[0].r;
+  assert(failedOnce.status === "queued" && failedOnce.attempts === 1, "A retryable send failure did not return the job to the queue.");
+  const claimThree = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0003') as r`)).rows[0].r;
+  assert(claimThree.claimed === 0, "A backed-off job was re-claimed before its retry delay elapsed.");
+  await db.exec("reset role");
+  const notifBackoffRow = (await db.query(`select available_at > now() as backed_off, last_error from private.notification_jobs where id='${retryJobId}'`)).rows[0];
+  assert(notifBackoffRow.backed_off === true && notifBackoffRow.last_error === "SMTP_TIMEOUT", "The retry backoff or the recorded error is wrong.");
+
+  // Completing a job that is not currently claimed is refused — bookkeeping cannot skip the queue.
+  await db.exec("reset role; set role service_role");
+  await expectDatabaseError(() => db.query(`select public.complete_notification_job('${retryJobId}','smtp','msg')`), "NOTIFICATION_JOB_NOT_CLAIMED");
+
+  // Non-retryable verdict (hard bounce) dead-letters immediately and leaves an audit trail.
+  await db.exec(`reset role; update private.notification_jobs set available_at=now() where id='${retryJobId}'`);
+  await db.exec("set role service_role");
+  const notifReclaimed = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0004') as r`)).rows[0].r;
+  assert(notifReclaimed.claimed === 1 && notifReclaimed.jobs[0].attempt === 2, "The backed-off job did not become claimable again with an incremented attempt.");
+  const deadLettered = (await db.query(`select public.fail_notification_job('${retryJobId}','INVALID_RECIPIENT_ADDRESS',false) as r`)).rows[0].r;
+  assert(deadLettered.status === "dead_letter", "A non-retryable failure did not dead-letter the job.");
+  await db.exec("reset role");
+  const deadLetterAudit = (await db.query(`select count(*)::integer as c from audit.audit_events
+    where action_code='notification.deadLettered' and actor_type='system' and resource_id='${retryJobId}'`)).rows[0].c;
+  assert(deadLetterAudit === 1, "A dead-lettered notification did not write exactly one system audit event.");
+
+  // Exhausting the retry budget dead-letters even when the provider says the error is retryable.
+  await db.exec(`insert into private.notification_jobs(organization_id,template_code,locale,channel,recipient_user_id,recipient_address,payload,idempotency_key,attempts,max_attempts)
+    values ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w4"}'::jsonb,'worker-test:notifExhausted-1',2,3)`);
+  await db.exec("set role service_role");
+  const lastAttempt = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0005') as r`)).rows[0].r;
+  assert(lastAttempt.claimed === 1 && lastAttempt.jobs[0].attempt === 3 && lastAttempt.jobs[0].maxAttempts === 3, "The notifExhausted-budget fixture did not reach its final attempt.");
+  const notifExhausted = (await db.query(`select public.fail_notification_job('${lastAttempt.jobs[0].notificationJobId}','SMTP_TIMEOUT',true) as r`)).rows[0].r;
+  assert(notifExhausted.status === "dead_letter", "A retryable failure on the final attempt did not dead-letter the job.");
+
+  // A crashed worker's claim is recovered by the stall sweep rather than being lost forever.
+  await db.exec("reset role");
+  await db.exec(`insert into private.notification_jobs(organization_id,template_code,locale,channel,recipient_user_id,recipient_address,payload,idempotency_key)
+    values ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w5"}'::jsonb,'worker-test:stalled-1')`);
+  await db.exec("set role service_role");
+  const stalledClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0006') as r`)).rows[0].r;
+  assert(stalledClaim.claimed === 1, "The stall fixture was not claimed.");
+  const stalledJobId = stalledClaim.jobs[0].notificationJobId;
+  await db.exec(`reset role; update private.notification_jobs set claimed_at=now()-interval '2 hours' where id='${stalledJobId}'`);
+  await db.exec("set role service_role");
+  const notifSwept = (await db.query(`select public.requeue_stalled_notification_jobs(30) as r`)).rows[0].r;
+  assert(notifSwept.requeued === 1, "The stall sweep did not recover the crashed worker's claim.");
+  await db.exec("reset role");
+  const notifSweptRow = (await db.query(`select status,claimed_at,last_error from private.notification_jobs where id='${stalledJobId}'`)).rows[0];
+  assert(notifSweptRow.status === "queued" && notifSweptRow.claimed_at === null && notifSweptRow.last_error === "WORKER_STALLED", "A swept job was not returned to the queue cleanly.");
+
+  // A stall that exhausts the retry budget is a dead letter too: it must be counted for THIS sweep only
+  // and audited exactly like a provider-reported dead letter, not silently dropped.
+  await db.exec(`reset role; insert into private.notification_jobs(organization_id,template_code,locale,channel,recipient_user_id,recipient_address,payload,idempotency_key,attempts,max_attempts,status,claimed_at)
+    values ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w6"}'::jsonb,'worker-test:stalled-exhausted-1',4,4,'processing',now()-interval '3 hours')`);
+  const stalledDeadId = (await db.query(`select id from private.notification_jobs where idempotency_key='worker-test:stalled-exhausted-1'`)).rows[0].id;
+  await db.exec("set role service_role");
+  const sweepTwo = (await db.query(`select public.requeue_stalled_notification_jobs(30) as r`)).rows[0].r;
+  assert(sweepTwo.requeued === 1 && sweepTwo.deadLettered === 1, "The stall sweep did not report exactly this run's dead letters.");
+  const sweepThree = (await db.query(`select public.requeue_stalled_notification_jobs(30) as r`)).rows[0].r;
+  assert(sweepThree.requeued === 0 && sweepThree.deadLettered === 0, "The stall sweep reported dead letters from an earlier run - the counter is cumulative, not per-run.");
+  await db.exec("reset role");
+  const stallDeadAudit = (await db.query(`select count(*)::integer as c from audit.audit_events
+    where action_code='notification.deadLettered' and actor_type='system' and resource_id='${stalledDeadId}'`)).rows[0].c;
+  assert(stallDeadAudit === 1, "A stall-induced dead letter was not audited like a provider-reported one.");
+
+  // Provider notifReceipts are recorded per attempt for both outcomes.
+  const notifReceipts = (await db.query(`select
+    (select count(*)::integer from private.notification_deliveries where notification_job_id='${sentJobId}' and status='accepted') as accepted,
+    (select count(*)::integer from private.notification_deliveries where notification_job_id='${retryJobId}' and status='failed') as failed`)).rows[0];
+  assert(notifReceipts.accepted === 1 && notifReceipts.failed === 2, "Provider notifReceipts were not recorded once per send attempt.");
+
+  // in_app jobs are never preference-suppressed (the preference table's own check excludes in_app).
+  await db.exec("reset role; set role service_role");
+  const inAppBatch = (await db.query(`select public.claim_notification_jobs('in_app',5,'worker-run-inapp-0001') as r`)).rows[0].r;
+  assert(inAppBatch.suppressed === 0, "The worker attempted preference suppression on the in_app channel.");
+  await db.exec("reset role");
+
+  const notificationWorkerTrace = (await db.query(`select
+    (select count(*)::integer from private.notification_jobs where status='sent' and idempotency_key like 'worker-test:%') as sent,
+    (select count(*)::integer from private.notification_jobs where status='dead_letter' and idempotency_key like 'worker-test:%') as dead,
+    (select count(*)::integer from private.notification_jobs where status='canceled' and idempotency_key like 'worker-test:%') as canceled`)).rows[0];
+  assert(notificationWorkerTrace.sent === 1 && notificationWorkerTrace.dead === 3 && notificationWorkerTrace.canceled === 1,
+    "The notification worker did not leave the expected terminal job states.");
 
   await db.close();
   return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits };
