@@ -80,3 +80,31 @@ suite on exactly its own assertion:
 **Implemented; environment-blocked for connected certification.** The queue mechanics are exhaustively
 covered in embedded Postgres. End-to-end send certification needs a relay endpoint plus
 `SUPABASE_SECRET_KEY`, the same class of external configuration as Stripe Connect.
+
+## Live application
+
+All six migrations of this batch are applied to the connected Supabase project
+(`apply_migration` → `{"success":true}` each). Verified on the live schema afterward: 11/11 new
+commands present, `deliver_document` carries both overloads, `create_import_job` accepts all five
+legs, the upload grant and the storage bucket both allow `spreadsheetml`,
+`redeem_document_secure_link` takes `p_secure_link_token text` (not a hash), the
+`sync_document_delivery_on_notification` trigger exists, and — the invariant that must not regress —
+**zero** `public`/`reporting` policies reference `has_active_support_session`.
+
+`create_document_upload_grant` was patched on the live database from its own `pg_get_functiondef`
+output rather than restated, so every line other than the mime allowlist is byte-identical to what was
+already running; the migration raises if its anchor is absent and returns early if already applied.
+
+### Security advisor after the DDL
+
+**0 ERROR-level issues.** 97 WARNs, of which 95 are the by-design
+`authenticated_security_definer_function_executable` notice every command RPC in this codebase raises
+(internal auth gates are the boundary) and 1 is the pre-existing `extension_in_public`.
+
+One WARN is **new and intentional**: `anon_security_definer_function_executable` for
+`public.redeem_document_secure_link(p_secure_link_token text)`. That grant is the feature — a
+secure-link recipient may have no portal account, so the token is the entire credential. It is why the
+command takes the plaintext token rather than the stored hash, matches on a unique index, returns one
+identical sentinel for every rejection class, exposes no recipient identity, and hands back storage
+coordinates that are useless without a separately signed URL. Recorded here so a future reviewer sees
+it was a decision, not an oversight.
