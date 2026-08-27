@@ -1,33 +1,36 @@
-# Crecy Senior Engineering Specification — v4 Gate 0 Complete
+# Crecy Senior Engineering Specification — v4.2 Launch-Layer Correction
 
 **Status:** Authoritative implementation package  
 **Product:** Crecy global rental operating system  
-**Authority date:** 2026-07-19
+**Original authority date:** 2026-07-19  
+**Launch-layer correction date:** 2026-08-27  
 **Commercial launch family:** United States, Canada, Mexico  
 **First controlled pilot:** United States with Virginia-based operators, without jurisdiction-certified legal automation
 
-## v4.1.1 authority
+## v4.2 authority
 
-This directory is the authoritative **Crecy v4.1.1** implementation package. v4.1.1 supersedes v4 wherever they conflict. Files `12` through `17` are normal repository files and must exist before implementation. No bootstrap or GitHub Action is required.
+This directory is the authoritative **Crecy v4.2** implementation package. v4.2 preserves the strong v4.1.1 product-engine contracts and adds a binding Launch Layer / Runtime Readiness correction in `27_LAUNCH_LAYER_AND_RUNTIME_READINESS_SPEC.md`.
 
-The v4.1.1 correction pass closes persistence, command/schema traceability, property-scoped authorization, relationship-user data minimization, and the final Crecy naming contradiction.
+The correction exists because feature/pilot implementation had advanced much farther than public marketing, unattended runtime operation, legal publication/version binding, and launch certification. Coding agents must no longer treat product implementation completion as equivalent to runtime, pilot, beta, or public-launch completion.
 
 ## 1. Authority and supersession
 
-This folder is the only authoritative implementation source. It supersedes every earlier v1, v2, or v3 ZIP, extracted folder, questionnaire, and generated-image caption.
+This folder is the only authoritative implementation source. It supersedes every earlier v1, v2, or v3 ZIP, extracted folder, questionnaire, chat prompt, and generated-image caption.
 
 When statements conflict, use this order:
 
-1. Executable SQL and exact v4 contracts
+1. Executable migrations / shipped code for current runtime truth
 2. `07_FOUNDER_DECISION_REGISTER.md`
-3. `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md`
-4. `11_PRICING_ENTITLEMENTS_AND_BILLING_SPEC.md`
-5. `14_P0_COMMAND_API_EVENT_CONTRACTS.md`
-6. `15_P0_SCREEN_AND_STATE_SPECIFICATIONS.md`
-7. Target architecture specifications
-8. Reference images
+3. `27_LAUNCH_LAYER_AND_RUNTIME_READINESS_SPEC.md` for launch/runtime/public-surface readiness
+4. `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md`
+5. `11_PRICING_ENTITLEMENTS_AND_BILLING_SPEC.md`
+6. `14_P0_COMMAND_API_EVENT_CONTRACTS.md`
+7. `15_P0_SCREEN_AND_STATE_SPECIFICATIONS.md`
+8. `18_MARKETING_CLAIMS_AND_EVIDENCE_POLICY.md`
+9. Target architecture specifications
+10. Reference images
 
-Reference images never override security, finance, permissions, pricing, accessibility, or written behavior.
+Reference images never override security, finance, permissions, pricing, accessibility, claims, launch gates, or written behavior.
 
 ## 2. Product definition
 
@@ -40,7 +43,25 @@ Crecy is a B2B2C property-management SaaS platform.
 
 Operators supply and control their leases, addenda, notices, property rules, fees, deposits, applicant decisions, and legal documents. Crecy stores, versions, delivers, signs when enabled, and operationalizes those documents, but does not certify their legal sufficiency.
 
-## 3. Gate 0 status
+## 3. Three-system launch model
+
+Crecy is evaluated as three systems:
+
+1. **Product Layer** — OS/Living/Owner, ledger, payments, maintenance, imports, documents, communications, support.
+2. **Runtime Layer** — schedulers, document scanning, workers, provider connectivity, canonical organization context, observability, deployment, backup/restore.
+3. **Launch Layer** — public website, pricing, product story, trust, SEO, signup conversion, legal publishing/version binding, commercial claims, and production launch posture.
+
+The five completion states in file 27 are binding and must be reported separately:
+
+- product implementation complete;
+- runtime operationally complete;
+- public launch surface complete;
+- provider configured/certified;
+- launch certified.
+
+No agent may collapse these states into one completion percentage or use `complete` without naming the layer.
+
+## 4. Gate 0 status
 
 Founder-controlled product decisions are closed in `07_FOUNDER_DECISION_REGISTER.md`.
 
@@ -54,11 +75,14 @@ Gate 0 permits:
 - sandbox Stripe Connect integration;
 - automated tests;
 - accessibility and localization implementation;
+- marketing/public-site implementation;
+- legal-publication infrastructure;
+- scheduler/scanner/runtime infrastructure;
 - staging deployment.
 
-Professional evidence remains required before production activation of specific regulated behaviors. The checklist is a production gate, not a blocker to building the product.
+Professional evidence remains required before production activation of specific regulated behaviors. The checklist is a production gate, not a blocker to building the product or its launch infrastructure.
 
-## 4. Pilot MVP boundary
+## 5. Pilot MVP boundary
 
 The pilot is intentionally smaller than the target platform. P0 includes:
 
@@ -66,57 +90,62 @@ The pilot is intentionally smaller than the target platform. P0 includes:
 - operating entities and single-currency accounting books;
 - property/unit setup and bulk import;
 - resident, household, tenancy, and existing-lease records;
-- operator-supplied document import, versioning, delivery, and acknowledgement;
-- recurring rent schedules, charges, double-entry ledger, receipts;
+- operator-supplied document import, versioning, delivery, acknowledgement, and a real scan lifecycle;
+- recurring rent schedules, charges, double-entry ledger, receipts, and unattended generation orchestration;
 - manual cash/external-transfer recording with controls;
 - Stripe-connected operator onboarding and direct-charge sandbox flows;
 - resident portal for balance, payment, receipts, documents, messages, and maintenance;
 - operator maintenance triage and private vendor/contact assignment;
 - basic owner portal, statement snapshots, property performance, and approvals;
 - audit log, consent records, outbox/jobs, privacy export/delete scaffolding;
+- canonical multi-organization operator context;
 - English, Spanish, and French architecture; English and Spanish P0 content complete, French complete before broad Canadian public launch.
 
-See `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` for exclusions.
+Public launch additionally requires the Launch Layer and Runtime Layer gates in file 27.
 
-## 5. Build order
+See `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` for product exclusions and file 27 for runtime/public-launch requirements.
 
-1. Run repository reconnaissance and map all existing code.
-2. Adopt design tokens and application shells.
-3. Apply P0 schema in reviewable migrations; do not paste the entire SQL into one production migration without decomposition.
-4. Implement and test RLS before feature UI.
-5. Deliver one vertical journey at a time.
-6. Use sandbox providers only until production gates pass.
-7. Run adversarial security, financial-integrity, accessibility, and UX reviews after each sensitive phase.
+## 6. Corrected build order
 
-## 6. File map
+1. Run repository reconnaissance and map existing code before modifying a sensitive vertical.
+2. Preserve/refactor strong shipped product-engine work rather than rewriting it.
+3. Complete **Batch A** from file 27: document scan lifecycle, scheduler/orchestrator, canonical active-organization context, legal publication/version binding.
+4. Complete **Batch B** from file 27: homepage, product, pricing, Crecy Living marketing, security/trust, pilot, legal center shell, SEO/navigation/host behavior.
+5. Complete **Batch C** from file 27: transactional mail activation, Stripe certification, Vercel deployment/cron/domain configuration, observability, restore drill.
+6. Maintain forward-only migrations and RLS/adversarial tests.
+7. Run the launch certification journey beginning with an anonymous prospective customer, not only authenticated command tests.
+8. Only designated human owners may approve production launch.
+
+## 7. File map
 
 - `01_PRODUCT_AND_SYSTEM_ARCHITECTURE_SPEC.md` — target architecture
 - `02_CANONICAL_DATA_MODEL_AND_RLS_SPEC.md` — relational and authorization model
 - `03_FINANCIAL_PAYMENT_API_EVENT_SECURITY_SPEC.md` — financial/security target contracts
 - `04_UI_UX_PRODUCT_IMPLEMENTATION_SPEC.md` — target UX architecture
-- `05_DELIVERY_PLAN_TESTS_AND_ACCEPTANCE_GATES.md` — full target delivery sequence
+- `05_DELIVERY_PLAN_TESTS_AND_ACCEPTANCE_GATES.md` — target delivery sequence and service objectives
 - `07_FOUNDER_DECISION_REGISTER.md` — closed founder decisions
 - `08_GLOBAL_COUNTRY_PROFILE_AND_PAYMENT_ORCHESTRATION_SPEC.md` — global/country/payment architecture
 - `09_PRIVACY_SECURITY_COMPLIANCE_AND_LEGAL_DOCUMENT_SPEC.md` — platform compliance baseline
-- `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` — binding lean MVP
+- `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` — binding lean product MVP
 - `11_PRICING_ENTITLEMENTS_AND_BILLING_SPEC.md` — binding prices and feature limits
 - `12_P0_EXECUTABLE_SCHEMA.sql` — executable schema baseline
 - `13_P0_RLS_POLICIES_AND_TEST_MATRIX.md` — exact policies, sanitized projections, and attack cases
 - `14_P0_COMMAND_API_EVENT_CONTRACTS.md` — exact P0 commands, errors, persistence, and events
-- `15_P0_SCREEN_AND_STATE_SPECIFICATIONS.md` — route-level UX contracts
+- `15_P0_SCREEN_AND_STATE_SPECIFICATIONS.md` — route-level product UX contracts
 - `16_BRAND_FIGMA_COMPONENT_VISUAL_DIRECTION.md` — locked Crecy brand/system decisions
 - `17_P0_DATA_CONTRACT_TRACEABILITY_MATRIX.md` — route-to-table-to-policy-to-event traceability
-- `18_MARKETING_CLAIMS_AND_EVIDENCE_POLICY.md` — safe claims
-- `20_COUNSEL_AND_COMPLIANCE_LAUNCH_CHECKLIST.md` — production evidence
-- `21_GATE_0_COMPLETION_REPORT.md` — Gate 0 resolution record
-- `22_CODEX_CLAUDE_EXECUTION_PROMPT.md` — implementation instruction
+- `18_MARKETING_CLAIMS_AND_EVIDENCE_POLICY.md` — safe claims and prohibited unsupported claims
+- `20_COUNSEL_AND_COMPLIANCE_LAUNCH_CHECKLIST.md` — professional production evidence
+- `21_GATE_0_COMPLETION_REPORT.md` — original Gate 0 resolution record
+- `22_CODEX_CLAUDE_EXECUTION_PROMPT.md` — historical implementation instruction
 - `23_V4_1_CORRECTION_REPORT.md` — v4.1 correction history
 - `24_CODEX_APPLY_V4_1_PROMPT.md` — historical v4.1 application prompt
 - `25_V4_1_1_CORRECTION_REPORT.md` — targeted v4.1.1 correction history
-- `26_CODEX_APPLY_V4_1_1_PROMPT.md` — current application and validation prompt
+- `26_CODEX_APPLY_V4_1_1_PROMPT.md` — historical v4.1.1 application/validation prompt
+- `27_LAUNCH_LAYER_AND_RUNTIME_READINESS_SPEC.md` — **binding launch/runtime/public-surface recovery program**
 - `AGENTS.md` — repository agent rules
 
-## 7. Non-negotiable invariants
+## 8. Non-negotiable invariants
 
 - One organization may have many operating entities and accounting books.
 - Each accounting book has one immutable functional currency after posting begins.
@@ -131,4 +160,10 @@ See `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` for exclusions.
 - No public marketplace or public vendor network in P0.
 - No tenant screening in P0.
 - No automated owner payouts in P0.
-- No claim of SOC 2 compliance, customer traction, performance, or country readiness without evidence.
+- No claim of SOC 2 compliance, customer traction, performance, country readiness, or other unsupported evidence.
+- Quarantined/scanning/rejected documents never become usable merely to make an E2E pass.
+- A worker without a real caller is not runtime-complete.
+- An implicit first organization is not a valid multi-organization context model.
+- Consent evidence must point to an actual published artifact/version shown to the user.
+- A successful build is not proof of deployment.
+- A restore runbook is not proof of recoverability until a restore drill is executed.
