@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Button } from "@/components/ui/button";
-import { Eyebrow, FeatureGrid, FeatureItem, ProductComposition, Section, SectionHeading } from "@/components/marketing/sections";
+import { FeatureGrid, FeatureItem, ProductComposition, Section, SectionHeading } from "@/components/marketing/sections";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 import { GROWTH_TRIAL_COPY, PLAN_ORDER, PLAN_LABELS, PRICE_BOOKS, formatPrice } from "@/lib/marketing/pricing";
 
@@ -18,14 +18,13 @@ export default function HomePage() {
   return (
     <>
       {/* 1 — Hero + a real product composition. */}
-      <Section className="!pb-12 lg:!pb-16">
-        <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_1fr] lg:gap-16">
+      <Section className="!pt-16 !pb-16 sm:!pt-20 lg:!pt-28 lg:!pb-24">
+        <div className="grid items-center gap-12 lg:grid-cols-[1.08fr_1fr] lg:gap-14">
           <div>
-            <Eyebrow>Crecy</Eyebrow>
-            <h1 className="mt-4 text-4xl font-semibold leading-[1.08] tracking-[-0.04em] text-balance sm:text-5xl lg:text-6xl">
+            <h1 className="text-[2.5rem] font-semibold leading-[1.06] tracking-[-0.04em] text-balance sm:text-[3.25rem] lg:text-[3.5rem]">
               Rental operations, finally connected.
             </h1>
-            <p className="mt-6 max-w-xl text-lg leading-8 text-muted-foreground text-pretty">
+            <p className="mt-7 max-w-xl text-lg leading-8 text-muted-foreground text-pretty">
               Properties, residents, rent, maintenance, documents and owner visibility stop living in
               separate tools. Crecy holds them in one system, so a payment, a work order and an owner
               statement are the same set of facts seen from three sides.
@@ -34,7 +33,7 @@ export default function HomePage() {
               <Button asChild size="lg"><Link href="/signup">Start free</Link></Button>
               <Button asChild size="lg" variant="outline"><Link href="/product">See the platform</Link></Button>
             </div>
-            <p className="mt-5 text-sm text-muted-foreground">
+            <p className="mt-6 max-w-md text-sm text-muted-foreground">
               {GROWTH_TRIAL_COPY}. Designed for the United States, Canada and Mexico.
             </p>
           </div>
@@ -54,9 +53,10 @@ export default function HomePage() {
             </div>
             <div className="mt-4 space-y-2">
               {[
-                { unit: "Maple Court · 101", detail: "Rent posted · due Sep 1", state: "Open" },
-                { unit: "Maple Court · 204", detail: "Payment received · check", state: "Allocated" },
-                { unit: "Harbour Row · 3B", detail: "Kitchen sink leak", state: "Assigned" },
+                { unit: "Maple Court · 101", detail: "September rent posted · due Sep 1", state: "Open" },
+                { unit: "Maple Court · 204", detail: "Payment received · check #2214", state: "Allocated" },
+                { unit: "Harbour Row · 3B", detail: "Kitchen sink leak · vendor assigned", state: "In progress" },
+                { unit: "Harbour Row · 12", detail: "Lease renewal sent · awaiting signature", state: "Delivered" },
               ].map((row) => (
                 <div key={row.unit} className="flex items-center justify-between gap-3 rounded-lg border bg-background px-3 py-2.5">
                   <div className="min-w-0">
@@ -66,6 +66,10 @@ export default function HomePage() {
                   <span className="shrink-0 rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">{row.state}</span>
                 </div>
               ))}
+            </div>
+            <div className="mt-4 flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
+              <span>Owner statement · Aug 2026</span>
+              <span className="font-mono tabular-nums">Net to owner $5,384.00</span>
             </div>
           </ProductComposition>
         </div>
@@ -99,8 +103,7 @@ export default function HomePage() {
         <div className="grid items-center gap-14 lg:grid-cols-2">
           <div>
             <SectionHeading
-              eyebrow="Rent and accounting"
-              title="Rent that posts itself, on the date the property actually keeps."
+                  title="Rent that posts itself, on the date the property actually keeps."
               lede="Recurring charges generate against each property's own time zone, so a Los Angeles building is never charged on a date that has not happened there. Every charge, payment and correction posts to a balanced double-entry ledger."
             />
             <ul className="mt-8 space-y-3 text-sm leading-6 text-muted-foreground">
@@ -129,7 +132,7 @@ export default function HomePage() {
       </Section>
 
       {/* 4 — Maintenance. */}
-      <Section tone="surface">
+      <Section className="!border-t">
         <div className="grid items-center gap-14 lg:grid-cols-2">
           <ProductComposition label="Crecy OS · Work order" className="order-last lg:order-first">
             <div className="space-y-3">
@@ -171,9 +174,8 @@ export default function HomePage() {
       </Section>
 
       {/* 5 — Documents and leasing. */}
-      <Section>
+      <Section className="!border-t">
         <SectionHeading
-          eyebrow="Documents and leasing"
           title="Leases and notices that stay where they belong."
           lede="Upload an existing signed lease and activate the tenancy against it. Deliver a notice to a resident or owner and keep the acknowledgement. Documents live in private storage, scoped to the property and the relationship."
         />
@@ -194,12 +196,11 @@ export default function HomePage() {
       </Section>
 
       {/* 6 — Owner visibility. */}
-      <Section tone="surface">
+      <Section className="!border-t">
         <div className="grid items-center gap-14 lg:grid-cols-2">
           <div>
             <SectionHeading
-              eyebrow="Owner visibility"
-              title="Owners see the property, not a spreadsheet you rebuilt for them."
+                  title="Owners see the property, not a spreadsheet you rebuilt for them."
               lede="Statements are generated from the same postings the operator made, for exactly the properties an owner holds an interest in. Where approvals are configured, an owner decides in the product and the decision is recorded."
             />
           </div>
@@ -225,9 +226,8 @@ export default function HomePage() {
       </Section>
 
       {/* 7 — Migration. */}
-      <Section>
+      <Section className="!border-t">
         <SectionHeading
-          eyebrow="Getting your portfolio in"
           title="Start with the portfolio you already have."
           lede="Crecy imports occupied buildings, not just empty ones. A single row can create the property and unit and activate the lease on it, so an operator's first day is their real portfolio rather than a demo."
         />
@@ -248,9 +248,8 @@ export default function HomePage() {
       </Section>
 
       {/* 8 — North America, in evidence-safe wording. */}
-      <Section tone="surface">
+      <Section className="!border-t">
         <SectionHeading
-          eyebrow="North America"
           title="Designed for the United States, Canada and Mexico."
           lede="Country profiles, localized price books in USD, CAD and MXN, and English, Spanish and French locales are built into the data model rather than bolted on."
         />
@@ -262,9 +261,8 @@ export default function HomePage() {
       </Section>
 
       {/* 9 — Pricing preview. */}
-      <Section>
+      <Section tone="surface">
         <SectionHeading
-          eyebrow="Pricing"
           title="Priced per active unit, in your own currency."
           lede="Localized price books rather than a converted figure. Crecy subscription billing is separate from rent collection, and Crecy charges no transaction fee on resident rent."
         />
@@ -289,9 +287,8 @@ export default function HomePage() {
       </Section>
 
       {/* 10 — Trust and security architecture. */}
-      <Section tone="surface">
+      <Section>
         <SectionHeading
-          eyebrow="Trust"
           title="Built with tenant isolation, scoped access and audit history."
           lede="Security here is an architecture, not a badge. Every tenant table carries its organization, every write goes through a command that authorizes first, and privileged actions are recorded."
         />
@@ -316,7 +313,7 @@ export default function HomePage() {
       </Section>
 
       {/* 11 — Final CTA. */}
-      <Section>
+      <Section tone="surface">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl font-semibold tracking-[-0.035em] text-balance sm:text-4xl">
             Bring your portfolio in and see it connected.

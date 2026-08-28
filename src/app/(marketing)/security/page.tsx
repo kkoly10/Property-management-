@@ -25,8 +25,7 @@ export default function SecurityPage() {
     <>
       <Section className="!pb-10 lg:!pb-14">
         <div className="max-w-3xl">
-          <Eyebrow>Security</Eyebrow>
-          <h1 className="mt-4 text-4xl font-semibold leading-[1.1] tracking-[-0.04em] text-balance sm:text-5xl">
+          <h1 className="text-4xl font-semibold leading-[1.1] tracking-[-0.04em] text-balance sm:text-5xl">
             Access is decided by your relationship to a property.
           </h1>
           <p className="mt-6 text-lg leading-8 text-muted-foreground text-pretty">
@@ -38,9 +37,8 @@ export default function SecurityPage() {
         </div>
       </Section>
 
-      <Section tone="surface" className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <SectionHeading
-          eyebrow="Tenant isolation"
           title="One organization cannot read another's rows."
           lede="Every record belongs to an organization, and that ownership is enforced by the database itself — not by application code remembering to add a filter."
         />
@@ -73,9 +71,8 @@ export default function SecurityPage() {
         </FeatureGrid>
       </Section>
 
-      <Section className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <SectionHeading
-          eyebrow="Roles and scope"
           title="A leasing agent should not be able to move money."
           lede="Staff access is a role plus, optionally, a set of properties. Permissions are granular — read and manage, per domain — and every command checks the specific permission it needs against the specific property it is touching."
         />
@@ -106,9 +103,8 @@ export default function SecurityPage() {
         </FeatureGrid>
       </Section>
 
-      <Section tone="surface" className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <SectionHeading
-          eyebrow="History and evidence"
           title="Financial records are append-only, and actions are recorded."
           lede="The most useful security property of a rental ledger is that nobody can quietly change what it said last month."
         />
@@ -128,9 +124,8 @@ export default function SecurityPage() {
         </FeatureGrid>
       </Section>
 
-      <Section className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <SectionHeading
-          eyebrow="Documents"
           title="Private storage, scanned before release, reached by short-lived links."
           lede="A lease is one of the most sensitive things an operator holds. Crecy never puts one behind a guessable public URL."
         />
@@ -161,7 +156,7 @@ export default function SecurityPage() {
         </FeatureGrid>
       </Section>
 
-      <Section tone="surface" className="!py-16 lg:!py-20">
+      <Section tone="surface">
         <div className="grid items-start gap-14 lg:grid-cols-2">
           <div>
             <SectionHeading
@@ -191,9 +186,8 @@ export default function SecurityPage() {
         </div>
       </Section>
 
-      <Section className="!py-16 lg:!py-20">
+      <Section>
         <SectionHeading
-          eyebrow="Data minimization"
           title="Collect what the job needs; keep it where it belongs."
           lede="Crecy is a rental operations system, so it holds names, contact details, tenancies and payment history. It is designed not to accumulate more than that."
         />

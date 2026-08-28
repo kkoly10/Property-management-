@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Button } from "@/components/ui/button";
-import { Eyebrow, Section, SectionHeading } from "@/components/marketing/sections";
+import { Section, SectionHeading, StatementList } from "@/components/marketing/sections";
 import { PricingExplorer } from "@/components/marketing/pricing-explorer";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 import { GROWTH_TRIAL_COPY, PAYMENT_DISCLOSURE } from "@/lib/marketing/pricing";
@@ -56,10 +56,9 @@ const FAQ: { question: string; answer: string }[] = [
 export default function PricingPage() {
   return (
     <>
-      <Section className="!pb-10 lg:!pb-12">
+      <Section className="!pb-0 lg:!pb-0">
         <div className="max-w-3xl">
-          <Eyebrow>Pricing</Eyebrow>
-          <h1 className="mt-4 text-4xl font-semibold leading-[1.1] tracking-[-0.04em] text-balance sm:text-5xl">
+          <h1 className="text-4xl font-semibold leading-[1.1] tracking-[-0.04em] text-balance sm:text-5xl">
             Priced by the units you actually operate.
           </h1>
           <p className="mt-6 text-lg leading-8 text-muted-foreground text-pretty">
@@ -69,7 +68,7 @@ export default function PricingPage() {
         </div>
       </Section>
 
-      <Section className="!pt-0 !pb-16 lg:!pt-0 lg:!pb-20">
+      <Section className="!pt-12 lg:!pt-14">
         <PricingExplorer />
       </Section>
 
@@ -79,11 +78,7 @@ export default function PricingPage() {
           title="How rent money moves, stated plainly."
           lede="Subscription billing and rent collection are two different things, and it matters that you know which one Crecy is involved in."
         />
-        <ul className="mt-10 grid gap-4 sm:grid-cols-2">
-          {PAYMENT_DISCLOSURE.map((line) => (
-            <li key={line} className="rounded-xl border bg-background p-5 text-sm leading-6">{line}</li>
-          ))}
-        </ul>
+        <StatementList items={PAYMENT_DISCLOSURE} />
       </Section>
 
       <Section>

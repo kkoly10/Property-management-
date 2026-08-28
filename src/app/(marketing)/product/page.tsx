@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Button } from "@/components/ui/button";
-import { Eyebrow, FeatureGrid, FeatureItem, ProductComposition, Section, SectionHeading } from "@/components/marketing/sections";
+import { FeatureGrid, FeatureItem, ProductComposition, Section, SectionHeading } from "@/components/marketing/sections";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 import { GROWTH_TRIAL_COPY } from "@/lib/marketing/pricing";
 
@@ -25,8 +25,7 @@ export default function ProductPage() {
     <>
       <Section className="!pb-10 lg:!pb-14">
         <div className="max-w-3xl">
-          <Eyebrow>Product</Eyebrow>
-          <h1 className="mt-4 text-4xl font-semibold leading-[1.1] tracking-[-0.04em] text-balance sm:text-5xl">
+          <h1 className="text-4xl font-semibold leading-[1.1] tracking-[-0.04em] text-balance sm:text-5xl">
             One workflow, from the first unit to the owner&rsquo;s statement.
           </h1>
           <p className="mt-6 text-lg leading-8 text-muted-foreground text-pretty">
@@ -42,7 +41,7 @@ export default function ProductPage() {
       </Section>
 
       {/* Portfolio and residents */}
-      <Section tone="surface" className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <div className="grid items-start gap-14 lg:grid-cols-2">
           <div>
             <SectionHeading
@@ -81,7 +80,7 @@ export default function ProductPage() {
       </Section>
 
       {/* Leasing and import */}
-      <Section className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <div className="grid items-start gap-14 lg:grid-cols-2">
           <ProductComposition label="Crecy OS · Import" className="lg:order-2">
             <div className="space-y-2 text-sm">
@@ -106,7 +105,6 @@ export default function ProductPage() {
           </ProductComposition>
           <div className="lg:order-1">
             <SectionHeading
-              eyebrow="Leasing and migration"
               title="Arrive with an occupied portfolio, not an empty one."
               lede="Most operators are not starting from zero. Crecy imports properties, units, active leases, additional household members and opening receivable balances from CSV or Excel — and validates the whole file before it writes anything."
             />
@@ -121,9 +119,8 @@ export default function ProductPage() {
       </Section>
 
       {/* Rent and accounting */}
-      <Section tone="surface" className="!py-16 lg:!py-20">
+      <Section tone="surface" className="!border-t">
         <SectionHeading
-          eyebrow="Rent and accounting"
           title="A real double-entry ledger under every number you see."
           lede="Crecy does not keep a balance field and hope it stays right. Charges, payments, write-offs, reversals, fees and owner remittances all post as balanced journal transactions, and the balances are read back out of them."
         />
@@ -155,11 +152,10 @@ export default function ProductPage() {
       </Section>
 
       {/* Payments and reconciliation */}
-      <Section className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <div className="grid items-start gap-14 lg:grid-cols-2">
           <div>
             <SectionHeading
-              eyebrow="Payments and reconciliation"
               title="Card, bank and the cheque that arrived in the office."
               lede="Online payments are processed through eligible operators' connected payment accounts. Cash, cheque and transfer are recorded manually with the same allocation rules — so the ledger does not care how the money arrived."
             />
@@ -195,7 +191,7 @@ export default function ProductPage() {
       </Section>
 
       {/* Maintenance */}
-      <Section tone="surface" className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <div className="grid items-start gap-14 lg:grid-cols-2">
           <ProductComposition label="Crecy OS · Work order" className="lg:order-2">
             <div className="space-y-3 text-sm">
@@ -222,7 +218,6 @@ export default function ProductPage() {
           </ProductComposition>
           <div className="lg:order-1">
             <SectionHeading
-              eyebrow="Maintenance"
               title="A request from a resident becomes a cost in the books."
               lede="Residents report from their phone. Staff triage, assign and track. When the work is done and a cost is recorded, it posts to the property's expense account — which means it appears on the owner's statement without anyone re-entering it."
             />
@@ -236,9 +231,8 @@ export default function ProductPage() {
       </Section>
 
       {/* Documents */}
-      <Section className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <SectionHeading
-          eyebrow="Documents"
           title="Leases, notices and receipts where the people who need them can find them."
           lede="Documents are stored privately and reached through short-lived, access-checked links — never a public URL. Operators upload and control their own leases, policies and legal documents."
         />
@@ -270,7 +264,7 @@ export default function ProductPage() {
       </Section>
 
       {/* Communications */}
-      <Section tone="surface" className="!py-16 lg:!py-20">
+      <Section tone="surface" className="!border-t">
         <div className="grid items-start gap-14 lg:grid-cols-2">
           <div>
             <SectionHeading
@@ -302,9 +296,8 @@ export default function ProductPage() {
       </Section>
 
       {/* Owner visibility */}
-      <Section className="!py-16 lg:!py-20">
+      <Section className="!border-t">
         <SectionHeading
-          eyebrow="Owner visibility"
           title="Owners read the operator's books, not a summary of them."
           lede="An owner statement is assembled from the journal entries tagged to their properties over the period. Revenue, expenses, management fees and remittances are the same rows the operator posted — which is why the owner's questions have answers."
         />

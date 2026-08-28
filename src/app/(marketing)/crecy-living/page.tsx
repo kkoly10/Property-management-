@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Button } from "@/components/ui/button";
-import { Eyebrow, FeatureGrid, FeatureItem, ProductComposition, Section, SectionHeading } from "@/components/marketing/sections";
+import { FeatureGrid, FeatureItem, ProductComposition, Section, SectionHeading } from "@/components/marketing/sections";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
 export const metadata: Metadata = marketingMetadata({
@@ -24,8 +24,7 @@ export default function CrecyLivingPage() {
       <Section className="!pb-12 lg:!pb-16">
         <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16">
           <div>
-            <Eyebrow>Crecy Living</Eyebrow>
-            <h1 className="mt-4 text-4xl font-semibold leading-[1.08] tracking-[-0.04em] text-balance sm:text-5xl">
+            <h1 className="text-4xl font-semibold leading-[1.08] tracking-[-0.04em] text-balance sm:text-5xl">
               Everything about your home, in one place on your phone.
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-8 text-muted-foreground text-pretty">
@@ -66,7 +65,6 @@ export default function CrecyLivingPage() {
 
       <Section tone="surface">
         <SectionHeading
-          eyebrow="What residents can do"
           title="The six things that actually come up."
           lede="Not a feature list for its own sake — these are the reasons a resident opens a portal at all."
         />

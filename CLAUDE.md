@@ -2,19 +2,64 @@
 
 Guidance for Claude Code (claude.ai/code) when working in this repository. Read [`AGENTS.md`](./AGENTS.md) and [`docs/crecy-v4/00_READ_ME_FIRST.md`](./docs/crecy-v4/00_READ_ME_FIRST.md) alongside this file — the `docs/crecy-v4` package is the authoritative product spec and supersedes anything here on questions of scope or contract.
 
-## Self-verification protocol — MANDATORY after every deliverable
+## Verification policy — tiered, not uniform
 
-A deliverable is **not done** until it has been verified against its requirement **empirically**, not from memory or optimism. This is not ceremony: on this codebase, "looks correct" SQL has shipped real defects that only an executed test caught (a `FOUND`-clobber that nulled a row id because an intervening `INSERT` reset `FOUND`; an RLS `EXISTS` subquery that resolved `id` against the wrong table and silently denied all access; a command that passed its own checks but collided with a *different* migration's trigger at runtime). Run every step, every time.
+**The project is in launch mode.** The exhaustive adversarial + mutation + full-browser-matrix workflow
+was the right call for the financial, RLS, multi-tenant, import, scheduler, scanner and legal-boundary
+foundations. Those are built. It is **not** the default workflow any more, and a higher test count is
+not itself progress.
 
-1. **Re-read the actual changed code against the requirement.** Open `git diff` and read each hunk with its surrounding context. Confirm the code does what the requirement literally says — not what you intended to write.
-2. **Run the embedded database suite for anything touching SQL.** `npm run test:db` replays the entire migration chain in in-memory Postgres and drives the real RPCs. A migration that "parses fine" is not verified; a migration whose command you actually called, with assertions on the resulting rows/traces and `expectDatabaseError` on every rejection path, is.
-3. **Enumerate ALL enforcement points when you change a default, a gate, or shared behavior.** A rule lives in more than one place here: the SQL command, its RLS policy, the zod schema, the API error ladder, and the UI. A change applied to one but not its siblings is the most common defect. List the sites you checked.
-4. **Prove claims; don't assert them.** Every factual statement about the schema, an account code, a permission, or whether X is wired must be backed by a command you ran (`grep`, a query, a test) whose output you saw. If you didn't check it, say "unverified."
-5. **Green tests are necessary, not sufficient.** Reason explicitly about the invariant the change must preserve (balanced journal, one active relationship per user, idempotent replay) and add the assertion that would have caught the specific bug this change could introduce.
-6. **Do an adversarial review scoped to THIS diff.** For anything that grants access, moves money, or writes financial history, ask "what did I change, and what class of bug could this exact change introduce?" and go looking for it — authorization bypass, cross-tenant leak, replay, unbalanced posting.
-7. **Report what you verified and how** — the commands and their results — not a vague "all good." State any part you could NOT verify and why.
+### Deep verification is still MANDATORY for
 
-Treat "the user told me to review" as already implied by every deliverable. If any step surfaces a flaw, fix it and re-run the protocol before declaring done.
+Anything touching: financial journals and ledger invariants; charges, payments, refunds, reversals,
+write-offs; Stripe webhook and idempotency behavior; RLS and cross-organization isolation;
+authentication, authorization and `service_role` boundaries; imports that can create financial or
+tenancy data; scheduled jobs and duplicate execution; malware scanning and quarantine release; legal
+consent and version evidence; security-sensitive support access; and regressions of a defect previously
+classified Critical or High.
+
+For those, the full protocol applies:
+
+1. **Re-read the changed code against the requirement** — `git diff`, hunk by hunk with surrounding
+   context. Confirm it does what the requirement literally says, not what you meant to write.
+2. **Run `npm run test:db`** for anything touching SQL. It replays the whole migration chain in
+   in-memory Postgres and drives the real RPCs. A migration that "parses fine" is not verified; one
+   whose command you actually called, with assertions on the resulting rows and traces and
+   `expectDatabaseError` on every rejection path, is.
+3. **Enumerate ALL enforcement points** when changing a default, a gate or shared behavior — the SQL
+   command, its RLS policy, the zod schema, the API error ladder, the UI. A rule applied to one but not
+   its siblings is the most common defect here. List the sites you checked.
+4. **Prove claims; don't assert them.** Back every factual statement with a command you ran and whose
+   output you saw. If you didn't check it, say "unverified."
+5. **Reason about the invariant** the change must preserve (balanced journal, one active relationship
+   per user, idempotent replay) and add the assertion that would catch the specific bug this change
+   could introduce.
+6. **Adversarial review scoped to THIS diff** — for anything that grants access, moves money or writes
+   financial history, ask what class of bug this exact change could introduce and go looking for it.
+7. **Report what you verified and how**, including what you could NOT verify and why.
+
+### Normal product work
+
+UI, copy, layout, navigation, marketing, straightforward CRUD:
+
+1. `npm run lint`
+2. `npm run typecheck`
+3. `npm run build`
+4. the smallest relevant targeted tests (`npx vitest run <path>`)
+5. one browser or visual smoke where it earns its place
+
+Do **not** write tests to raise the count, run mutation testing on ordinary UI/copy/layout changes,
+build a browser matrix for a minor feature, or re-run a full-codebase adversarial review after every
+bounded change. Marketing, layout and copy changes generally need no new database or mutation tests.
+
+**Do not delete the existing regression suite to make it smaller.** The goal is to stop adding
+unnecessary tests, not to discard protection already paid for.
+
+### Reporting
+
+At checkpoints, lead with what actually works, what is deployed, what is configured, what a real user
+can complete end to end, Critical/High defects, external gates and launch blockers. Test counts are
+supporting detail, not the headline.
 
 ## Project status
 

@@ -119,19 +119,22 @@ export function PricingExplorer() {
         })}
       </div>
 
-      <div className="mt-6 grid gap-3 text-sm leading-6 text-muted-foreground sm:grid-cols-3">
-        <p className="rounded-lg border bg-card px-4 py-3">
-          <span className="font-medium text-foreground">Above the Pro allowance:</span>{" "}
-          {formatPrice(country, country.overageMinor)} per additional active unit per month.
-        </p>
-        <p className="rounded-lg border bg-card px-4 py-3">
-          <span className="font-medium text-foreground">{CUSTOM_AGREEMENT_UNITS}+ units:</span>{" "}
-          custom agreement rather than a listed plan.
-        </p>
-        <p className="rounded-lg border bg-card px-4 py-3">
-          <span className="font-medium text-foreground">Trial:</span> {GROWTH_TRIAL_COPY}.
-        </p>
-      </div>
+      <dl className="mt-8 grid border-t text-sm leading-6 sm:grid-cols-3 sm:divide-x">
+        <div className="border-b py-4 sm:border-b-0 sm:pr-6">
+          <dt className="font-medium">Above the Pro allowance</dt>
+          <dd className="mt-1 text-muted-foreground">
+            {formatPrice(country, country.overageMinor)} per additional active unit per month.
+          </dd>
+        </div>
+        <div className="border-b py-4 sm:border-b-0 sm:px-6">
+          <dt className="font-medium">{CUSTOM_AGREEMENT_UNITS}+ units</dt>
+          <dd className="mt-1 text-muted-foreground">Custom agreement rather than a listed plan.</dd>
+        </div>
+        <div className="border-b py-4 sm:border-b-0 sm:pl-6">
+          <dt className="font-medium">Trial</dt>
+          <dd className="mt-1 text-muted-foreground">{GROWTH_TRIAL_COPY}.</dd>
+        </div>
+      </dl>
 
       <h2 id="compare" className="mt-20 text-2xl font-semibold tracking-[-0.03em] sm:text-3xl">
         What each plan includes
@@ -141,7 +144,10 @@ export function PricingExplorer() {
         capability, so a plan limit is a limit wherever the request comes from.
       </p>
 
-      <div className="mt-8 overflow-x-auto rounded-xl border">
+      <p className="mt-6 text-sm text-muted-foreground sm:hidden" aria-hidden="true">
+        Scroll the table sideways to compare all four plans.
+      </p>
+      <div className="mt-4 overflow-x-auto rounded-xl border sm:mt-8">
         <table className="w-full min-w-[44rem] border-collapse text-sm">
           <caption className="sr-only">Feature comparison across the Free, Starter, Growth and Pro plans</caption>
           <thead>
