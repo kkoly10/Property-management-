@@ -5,11 +5,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getImportCenterState } from "@/lib/data/imports";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewImportPage() {
-  const center = await getImportCenterState();
+  const organizationId = await getActiveOrganizationId();
+  const center = await getImportCenterState(organizationId);
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <Button asChild variant="ghost" size="sm"><Link href="/app/imports"><ArrowLeft className="h-4 w-4" />Import center</Link></Button>

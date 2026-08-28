@@ -90,11 +90,11 @@ function normalizeItems(data: unknown): PaymentConnectionItem[] {
   });
 }
 
-export async function getPaymentConnectionWorkspace(): Promise<PaymentConnectionWorkspace> {
+export async function getPaymentConnectionWorkspace(organizationId: string | null): Promise<PaymentConnectionWorkspace> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", authenticatorLevel: "aal1", items: [previewItem] };
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("get_payment_connection_settings");
+    const { data, error } = await supabase.rpc("get_payment_connection_settings", { p_organization_id: organizationId });
     if (error || !data) throw error ?? new Error("Payment settings are unavailable.");
     const root = data as Record<string, unknown>;
     return {

@@ -5,6 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Wordmark } from "@/components/brand/wordmark";
 import { getPrivacyRequestWorkspace } from "@/lib/data/privacy";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +14,10 @@ export default async function PrivacySettingsPage({
 }: {
   searchParams: Promise<{ returnTo?: string }>;
 }) {
+  const organizationId = await getActiveOrganizationId();
   const query = await searchParams;
   const returnTo = query.returnTo?.startsWith("/") && !query.returnTo.startsWith("//") ? query.returnTo : "/";
-  const workspace = await getPrivacyRequestWorkspace();
+  const workspace = await getPrivacyRequestWorkspace(organizationId);
   return (
     <div className="min-h-screen bg-[#f6f8fb]">
       <header className="border-b bg-white">

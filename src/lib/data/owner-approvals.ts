@@ -76,11 +76,19 @@ function normalizeItems(data: unknown): OwnerApprovalItem[] {
 
 type ApprovalWorkspace = { mode: DataMode; items: OwnerApprovalItem[]; requestId?: string };
 
-async function getWorkspace(rpc: "get_owner_approval_workspace" | "get_operator_owner_approval_workspace"): Promise<ApprovalWorkspace> {
+async function getWorkspace(
+  rpc: "get_owner_approval_workspace" | "get_operator_owner_approval_workspace",
+  organizationId: string | null = null,
+): Promise<ApprovalWorkspace> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewApproval] };
+  // The operator variant is organization-scoped; the owner variant is scoped by the caller's own
+  // owner entity and has no operator organization to name.
+  if (rpc === "get_operator_owner_approval_workspace" && !organizationId) return { mode: "error", items: [] };
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc(rpc);
+    const { data, error } = organizationId
+      ? await supabase.rpc(rpc, { p_organization_id: organizationId })
+      : await supabase.rpc(rpc);
     if (error || !data) throw error ?? new Error("Owner approvals are unavailable.");
     return { mode: "ready", items: normalizeItems(data) };
   } catch {
@@ -97,6 +105,6 @@ export async function getOwnerApprovalDetail(approvalRequestId: string) {
   return { mode: workspace.mode, item: workspace.items.find((item) => item.approvalRequestId === approvalRequestId), requestId: workspace.requestId };
 }
 
-export function getOperatorOwnerApprovalWorkspace() {
-  return getWorkspace("get_operator_owner_approval_workspace");
+export function getOperatorOwnerApprovalWorkspace(organizationId: string | null) {
+  return getWorkspace("get_operator_owner_approval_workspace", organizationId);
 }

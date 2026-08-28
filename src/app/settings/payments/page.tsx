@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getPaymentConnectionWorkspace } from "@/lib/data/payment-connections";
 import { PaymentConnectionPanel } from "./payment-connection-panel";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
 export default async function PaymentSettingsPage() {
-  const workspace = await getPaymentConnectionWorkspace();
+  const organizationId = await getActiveOrganizationId();
+  const workspace = await getPaymentConnectionWorkspace(organizationId);
   return (
     <main className="min-h-screen p-5 lg:p-10"><div className="mx-auto max-w-4xl space-y-6">
       <Button variant="ghost" asChild><Link href="/app"><ArrowLeft className="h-4 w-4" />Back to command center</Link></Button>

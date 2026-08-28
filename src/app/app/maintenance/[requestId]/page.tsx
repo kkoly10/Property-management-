@@ -10,14 +10,16 @@ import { getOperatorOwnerApprovalWorkspace } from "@/lib/data/owner-approvals";
 import { AssignVendorForm } from "./assign-vendor-form";
 import { RecordCostForm } from "./record-cost-form";
 import { WorkOrderActions } from "./work-order-actions";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 const label = (value: string) => value.replaceAll("_", " ");
 const money = (amountMinor: number, currencyCode: string) => new Intl.NumberFormat("en-US", { style: "currency", currency: currencyCode }).format(amountMinor / 100);
 
 export default async function OperatorMaintenanceDetailPage({ params }: { params: Promise<{ requestId: string }> }) {
+  const organizationId = await getActiveOrganizationId();
   const { requestId } = await params;
-  const [detail, directory, approvalWorkspace] = await Promise.all([getOperatorWorkOrderDetail(requestId), getOperatorVendorDirectory(), getOperatorOwnerApprovalWorkspace()]);
+  const [detail, directory, approvalWorkspace] = await Promise.all([getOperatorWorkOrderDetail(organizationId, requestId), getOperatorVendorDirectory(organizationId), getOperatorOwnerApprovalWorkspace(organizationId)]);
   if (detail.mode === "ready" && !detail.item) notFound();
   const item = detail.item;
   const approvals = item?.workOrder ? approvalWorkspace.items.filter((approval) => approval.workOrderId === item.workOrder?.workOrderId) : [];

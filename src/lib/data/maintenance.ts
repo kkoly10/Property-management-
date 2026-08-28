@@ -109,11 +109,11 @@ export async function getResidentMaintenanceDetail(requestId: string) {
   return { mode: workspace.mode, item: workspace.items.find((item) => item.maintenanceRequestId === requestId), requestId: workspace.requestId };
 }
 
-export async function getOperatorMaintenanceWorkspace(): Promise<{ mode: DataMode; summary: { open: number; overdue: number; untriaged: number }; items: OperatorMaintenanceItem[]; requestId?: string }> {
+export async function getOperatorMaintenanceWorkspace(organizationId: string | null): Promise<{ mode: DataMode; summary: { open: number; overdue: number; untriaged: number }; items: OperatorMaintenanceItem[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", summary: { open: 1, overdue: 0, untriaged: 1 }, items: [{ ...previewResidentItem, organizationId: "10000000-0000-4000-8000-000000000001", officialPriority: "medium", status: "new", targetAt: null, workOrder: null }] };
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("get_operator_maintenance_workspace");
+    const { data, error } = await supabase.rpc("get_operator_maintenance_workspace", { p_organization_id: organizationId });
     if (error || !data) throw error ?? new Error("Maintenance is unavailable.");
     const raw = data as Record<string, unknown>;
     const summary = raw.summary as Record<string, unknown> | undefined;
@@ -121,16 +121,16 @@ export async function getOperatorMaintenanceWorkspace(): Promise<{ mode: DataMod
   } catch { return { mode: "error", summary: { open: 0, overdue: 0, untriaged: 0 }, items: [], requestId: crypto.randomUUID() }; }
 }
 
-export async function getOperatorWorkOrderDetail(maintenanceRequestId: string) {
-  const workspace = await getOperatorMaintenanceWorkspace();
+export async function getOperatorWorkOrderDetail(organizationId: string | null, maintenanceRequestId: string) {
+  const workspace = await getOperatorMaintenanceWorkspace(organizationId);
   return { mode: workspace.mode, item: workspace.items.find((item) => item.maintenanceRequestId === maintenanceRequestId), requestId: workspace.requestId };
 }
 
-export async function getOperatorVendorDirectory(): Promise<{ mode: DataMode; vendors: Vendor[]; requestId?: string }> {
+export async function getOperatorVendorDirectory(organizationId: string | null): Promise<{ mode: DataMode; vendors: Vendor[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", vendors: [{ vendorId: "b0000000-0000-4000-8000-000000000001", displayName: "Ready Fix Plumbing", email: "dispatch@readyfix.example", phoneE164: "+14045551234", status: "active" }] };
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("get_operator_vendor_directory");
+    const { data, error } = await supabase.rpc("get_operator_vendor_directory", { p_organization_id: organizationId });
     if (error || !data) throw error ?? new Error("Vendors are unavailable.");
     return { mode: "ready", vendors: normalizeVendors(data) };
   } catch { return { mode: "error", vendors: [], requestId: crypto.randomUUID() }; }

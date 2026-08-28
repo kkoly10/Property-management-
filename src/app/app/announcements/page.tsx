@@ -2,11 +2,13 @@ import { CircleAlert, ShieldCheck } from "lucide-react";
 import { AnnouncementManager } from "@/app/app/announcements/announcement-manager";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { getOperatorAnnouncementWorkspace } from "@/lib/data/announcements";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
 export default async function OperatorAnnouncementsPage() {
-  const workspace = await getOperatorAnnouncementWorkspace();
+  const organizationId = await getActiveOrganizationId();
+  const workspace = await getOperatorAnnouncementWorkspace(organizationId);
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div><p className="text-sm text-muted-foreground">Communications</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Announcements</h1><p className="mt-2 text-sm text-muted-foreground">Publish transactional updates to explicitly expanded resident or owner audiences.</p></div>

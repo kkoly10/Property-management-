@@ -79,12 +79,14 @@ function normalizeItems(value: unknown): OperatorSearchItem[] {
   });
 }
 
-export async function searchOperatorWorkspace(query: string): Promise<OperatorSearchState> {
+export async function searchOperatorWorkspace(organizationId: string | null, query: string): Promise<OperatorSearchState> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", query, items: [] };
+  if (!organizationId) return { mode: "error", query, items: [] };
 
   try {
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("get_operator_global_search", {
+      p_organization_id: organizationId,
       p_query: query,
       p_limit: OPERATOR_SEARCH_LIMIT,
     });

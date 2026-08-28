@@ -203,19 +203,21 @@ const previewRetryContext: ResidentPaymentRetryContext = { paymentId: previewFai
 const previewSettlement: SettlementSummaryItem = { settlementId: "90000000-0000-4000-8000-000000000009", publicReference: "SET-3F7A91C224BE", providerStatus: "paid", reconciliationStatus: "reconciled", grossMinor: 185000, feeMinor: 5665, netMinor: 179335, currencyCode: "USD", expectedArrivalDate: "2026-07-23", receivedAt: "2026-07-23T14:00:00Z", itemCount: 1, matchedCount: 1 };
 const previewException: ReconciliationExceptionItem = { exceptionId: "91000000-0000-4000-8000-000000000010", organizationId: "10000000-0000-4000-8000-000000000001", settlementId: "92000000-0000-4000-8000-000000000011", settlementReference: "SET-5DB42C991F10", paymentId: null, paymentReference: null, exceptionType: "amount_mismatch", status: "open", expectedMinor: 179335, actualMinor: 178835, currencyCode: "USD", detail: "The payout amount does not equal the net of its imported provider balance transactions.", detectedAt: "2026-07-24T14:00:00Z" };
 
-export async function getOperatorPaymentWorkspace(): Promise<{ mode: DataMode; items: ReceivableSummaryItem[]; payments: PaymentSummaryItem[]; options: ManualPaymentOption[]; settlements: SettlementSummaryItem[]; exceptions: ReconciliationExceptionItem[]; requestId?: string }> {
+export async function getOperatorPaymentWorkspace(organizationId: string | null): Promise<{ mode: DataMode; items: ReceivableSummaryItem[]; payments: PaymentSummaryItem[]; options: ManualPaymentOption[]; settlements: SettlementSummaryItem[]; exceptions: ReconciliationExceptionItem[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewReceivable], payments: [previewPayment, previewFailedPayment], options: [previewOption], settlements: [previewSettlement], exceptions: [previewException] };
+  if (!organizationId) return { mode: "error", items: [], payments: [], options: [], settlements: [], exceptions: [] };
   try {
     const supabase = await createClient();
-    const [balances, payments, options, reconciliation] = await Promise.all([supabase.rpc("get_operator_receivables_summary"), supabase.rpc("get_operator_payment_summary"), supabase.rpc("get_manual_payment_options"), supabase.rpc("get_settlement_reconciliation_workspace")]);
+    const scope = { p_organization_id: organizationId };
+    const [balances, payments, options, reconciliation] = await Promise.all([supabase.rpc("get_operator_receivables_summary", scope), supabase.rpc("get_operator_payment_summary", scope), supabase.rpc("get_manual_payment_options", scope), supabase.rpc("get_settlement_reconciliation_workspace", scope)]);
     if (balances.error || payments.error || options.error || reconciliation.error) throw balances.error ?? payments.error ?? options.error ?? reconciliation.error;
     const settlementWorkspace = normalizeSettlementWorkspace(reconciliation.data);
     return { mode: "ready", items: normalizeReceivables(balances.data), payments: normalizePayments(payments.data), options: normalizeOptions(options.data), settlements: settlementWorkspace.batches, exceptions: settlementWorkspace.exceptions };
   } catch { return { mode: "error", items: [], payments: [], options: [], settlements: [], exceptions: [], requestId: crypto.randomUUID() }; }
 }
 
-export async function getOperatorReceivables() {
-  const workspace = await getOperatorPaymentWorkspace();
+export async function getOperatorReceivables(organizationId: string | null) {
+  const workspace = await getOperatorPaymentWorkspace(organizationId);
   return { mode: workspace.mode, items: workspace.items, requestId: workspace.requestId };
 }
 

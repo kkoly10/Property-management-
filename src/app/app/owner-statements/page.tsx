@@ -6,13 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getOperatorOwnerStatementWorkspace } from "@/lib/data/owner-statements";
 import { InviteOwnerButton } from "./invite-owner-button";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
 const money = (amountMinor: number, currency: string) => new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amountMinor / 100);
 
 export default async function OwnerStatementsPage() {
-  const workspace = await getOperatorOwnerStatementWorkspace();
+  const organizationId = await getActiveOrganizationId();
+  const workspace = await getOperatorOwnerStatementWorkspace(organizationId);
   // An owner entity can span multiple properties (one row each); portal invitation is per owner
   // entity, so render the invite control only on the owner's first row.
   const firstRowKeyForOwner = new Map<string, string>();

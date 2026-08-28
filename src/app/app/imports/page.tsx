@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { getImportCenterState } from "@/lib/data/imports";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,8 @@ function badgeVariant(status: string): "success" | "warning" | "info" | "neutral
 }
 
 export default async function ImportsPage() {
-  const center = await getImportCenterState();
+  const organizationId = await getActiveOrganizationId();
+  const center = await getImportCenterState(organizationId);
   const completed = center.jobs.filter((job) => job.status === "completed").length;
   const needsAttention = center.jobs.filter((job) => job.status === "mapping" || job.status === "failed").length;
   return (

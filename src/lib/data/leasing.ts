@@ -13,7 +13,7 @@ export type LeasePropertyOption = {
 export type LeaseUnitOption = { id: string; propertyId: string; unitCode: string };
 export type SignedLeaseDocumentOption = { id: string; propertyId: string; unitId: string | null; title: string; filename: string };
 
-export async function getExistingLeaseOptions(): Promise<{
+export async function getExistingLeaseOptions(organizationId: string | null): Promise<{
   mode: "setup" | "ready" | "error";
   properties: LeasePropertyOption[];
   units: LeaseUnitOption[];
@@ -35,11 +35,11 @@ export async function getExistingLeaseOptions(): Promise<{
   try {
     const supabase = await createClient();
     const [{ data: properties, error: propertyError }, { data: units, error: unitError }, { data: books }, { data: documents, error: documentError }, { data: versions }] = await Promise.all([
-      supabase.from("properties").select("id,organization_id,accounting_book_id,name").neq("status", "archived").order("name"),
-      supabase.from("units").select("id,property_id,unit_code").eq("operational_status", "active").order("unit_code"),
-      supabase.from("accounting_books").select("id,functional_currency_code"),
-      supabase.from("documents").select("id,property_id,unit_id,title,tenancy_id").in("document_type", ["signed_lease", "lease"]).eq("status", "active").is("tenancy_id", null),
-      supabase.from("document_versions").select("document_id,original_filename,version_number").eq("upload_status", "clean").order("version_number", { ascending: false }),
+      supabase.from("properties").select("id,organization_id,accounting_book_id,name").eq("organization_id", organizationId).neq("status", "archived").order("name"),
+      supabase.from("units").select("id,property_id,unit_code").eq("organization_id", organizationId).eq("operational_status", "active").order("unit_code"),
+      supabase.from("accounting_books").select("id,functional_currency_code").eq("organization_id", organizationId),
+      supabase.from("documents").select("id,property_id,unit_id,title,tenancy_id").eq("organization_id", organizationId).in("document_type", ["signed_lease", "lease"]).eq("status", "active").is("tenancy_id", null),
+      supabase.from("document_versions").select("document_id,original_filename,version_number").eq("organization_id", organizationId).eq("upload_status", "clean").order("version_number", { ascending: false }),
     ]);
     if (propertyError || unitError || documentError) throw propertyError ?? unitError ?? documentError;
     const bookById = new Map((books ?? []).map((book) => [book.id, book.functional_currency_code]));
@@ -78,7 +78,7 @@ export type ResidentDirectoryRow = {
   invitationState: "active" | "invited" | "not_invited";
 };
 
-export async function getResidentDirectory(): Promise<{ mode: "setup" | "ready" | "error"; residents: ResidentDirectoryRow[]; requestId?: string }> {
+export async function getResidentDirectory(organizationId: string | null): Promise<{ mode: "setup" | "ready" | "error"; residents: ResidentDirectoryRow[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return {
     mode: "setup",
     residents: [{ personId: "preview-resident", organizationId: "20000000-0000-4000-8000-000000000002", name: "Jordan Rivera", email: "jordan@example.com", phoneE164: "+1 202 555 0110", householdName: "Rivera household", propertyName: "Maple Court", unitCode: "101", tenancyStatus: "active", leaseStart: "2026-01-01", leaseEnd: "2026-12-31", rentAmountMinor: 185000, currencyCode: "USD", invitationState: "not_invited" }],
@@ -86,14 +86,14 @@ export async function getResidentDirectory(): Promise<{ mode: "setup" | "ready" 
   try {
     const supabase = await createClient();
     const [{ data: people, error: peopleError }, { data: members }, { data: households }, { data: tenancies }, { data: leases }, { data: properties }, { data: units }, { data: relationships }] = await Promise.all([
-      supabase.from("people").select("id,organization_id,first_name,last_name,email,phone_e164").is("archived_at", null),
-      supabase.from("household_members").select("household_id,person_id,ends_on"),
-      supabase.from("households").select("id,display_name"),
-      supabase.from("tenancies").select("id,property_id,unit_id,household_id,lease_id,status").in("status", ["scheduled", "active", "notice_given", "move_out_in_progress"]),
-      supabase.from("leases").select("id,start_date,end_date,rent_amount_minor,currency_code"),
-      supabase.from("properties").select("id,name"),
-      supabase.from("units").select("id,unit_code"),
-      supabase.from("user_relationships").select("relationship_id,status").eq("relationship_type", "resident_person").in("status", ["active", "invited"]),
+      supabase.from("people").select("id,organization_id,first_name,last_name,email,phone_e164").eq("organization_id", organizationId).is("archived_at", null),
+      supabase.from("household_members").select("household_id,person_id,ends_on").eq("organization_id", organizationId),
+      supabase.from("households").select("id,display_name").eq("organization_id", organizationId),
+      supabase.from("tenancies").select("id,property_id,unit_id,household_id,lease_id,status").eq("organization_id", organizationId).in("status", ["scheduled", "active", "notice_given", "move_out_in_progress"]),
+      supabase.from("leases").select("id,start_date,end_date,rent_amount_minor,currency_code").eq("organization_id", organizationId),
+      supabase.from("properties").select("id,name").eq("organization_id", organizationId),
+      supabase.from("units").select("id,unit_code").eq("organization_id", organizationId),
+      supabase.from("user_relationships").select("relationship_id,status").eq("organization_id", organizationId).eq("relationship_type", "resident_person").in("status", ["active", "invited"]),
     ]);
     if (peopleError) throw peopleError;
     const householdById = new Map((households ?? []).map((household) => [household.id, household]));

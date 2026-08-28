@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { searchOperatorWorkspace, type OperatorSearchKind } from "@/lib/data/search";
 import { parseOperatorSearch } from "@/lib/validation/search";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
@@ -55,8 +56,9 @@ const statusLabel = (value: string) => value.replaceAll("_", " ").replace(/\b\w/
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
   const parsed = parseOperatorSearch(await searchParams);
+  const organizationId = await getActiveOrganizationId();
   const result = parsed.state === "ready"
-    ? await searchOperatorWorkspace(parsed.query)
+    ? await searchOperatorWorkspace(organizationId, parsed.query)
     : { mode: "ready" as const, query: parsed.query, items: [] };
 
   return (

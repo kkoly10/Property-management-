@@ -141,11 +141,18 @@ function normalizeDetail(value: unknown): ConversationDetail {
   };
 }
 
-export async function getConversationWorkspace(): Promise<ConversationWorkspace> {
+/**
+ * Shared with the resident and owner portals, which hold no operator organization: with no context
+ * the unscoped form is used and the caller sees only their own conversations, exactly as before. An
+ * operator supplies their active organization and sees only that tenant's.
+ */
+export async function getConversationWorkspace(organizationId: string | null = null): Promise<ConversationWorkspace> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewSummary] };
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("get_conversation_workspace");
+    const { data, error } = organizationId
+      ? await supabase.rpc("get_conversation_workspace", { p_organization_id: organizationId })
+      : await supabase.rpc("get_conversation_workspace");
     if (error || !data) throw error ?? new Error("Messages are unavailable.");
     const items = (data as { items?: unknown[] }).items;
     return { mode: "ready", items: Array.isArray(items) ? items.map(normalizeSummary) : [] };

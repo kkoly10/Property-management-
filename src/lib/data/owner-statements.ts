@@ -346,11 +346,11 @@ export async function getOwnerStatementWorkspace(): Promise<{ mode: DataMode; it
   }
 }
 
-export async function getOperatorOwnerStatementWorkspace(): Promise<{ mode: DataMode; owners: OperatorOwnerStatementContext[]; requestId?: string }> {
+export async function getOperatorOwnerStatementWorkspace(organizationId: string | null): Promise<{ mode: DataMode; owners: OperatorOwnerStatementContext[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", owners: [previewContext] };
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("get_operator_owner_statement_workspace");
+    const { data, error } = await supabase.rpc("get_operator_owner_statement_workspace", { p_organization_id: organizationId });
     if (error || !data) throw error ?? new Error("Owner statement preparation is unavailable.");
     const owners = (data as Record<string, unknown>).owners;
     return { mode: "ready", owners: Array.isArray(owners) ? owners.map(normalizeContext) : [] };

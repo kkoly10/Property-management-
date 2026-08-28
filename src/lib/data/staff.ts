@@ -130,11 +130,14 @@ const normalizeMember = (value: unknown): StaffMember => {
   };
 };
 
-export async function getStaffWorkspace(): Promise<StaffWorkspace> {
+export async function getStaffWorkspace(organizationId: string | null): Promise<StaffWorkspace> {
   if (!getPublicSupabaseConfig()) return preview;
+  // The RPC accepts p_organization_id but defaults it to null and then resolves the FIRST
+  // administrable organization. Always naming it is what stops that fallback ever running.
+  if (!organizationId) return { ...preview, mode: "error", organization: null, members: [], invitations: [] };
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("get_staff_management_workspace");
+    const { data, error } = await supabase.rpc("get_staff_management_workspace", { p_organization_id: organizationId });
     if (error || !data) throw error ?? new Error("Staff access is unavailable.");
     const root = data as Record<string, unknown>;
     const organization = root.organization as Record<string, unknown> | null;
