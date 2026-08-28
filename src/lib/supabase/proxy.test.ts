@@ -19,7 +19,7 @@ vi.mock("@supabase/ssr", () => ({
 const { updateSession } = await import("./proxy");
 
 function request(path: string) {
-  return new NextRequest(new URL(path, "https://crecy.com"));
+  return new NextRequest(new URL(path, "https://app.crecyos.com"));
 }
 
 afterEach(() => {

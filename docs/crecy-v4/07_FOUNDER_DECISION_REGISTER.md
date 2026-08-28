@@ -68,7 +68,7 @@ The exact country price books and entitlements in `11_PRICING_ENTITLEMENTS_AND_B
 | ID | Approved decision |
 |---|---|
 | FD-036 | Brand is Crecy. Product names: Crecy OS, Crecy Living, Crecy Owner, Crecy Vendor. |
-| FD-037 | Domains: `crecy.com`, `app.crecy.com`, community portals under `*.crecyliving.com`; owner/vendor domains may use `owner.crecy.com` and `vendor.crecy.com`. |
+| FD-037 | Domains (corrected): `crecyos.com` public marketing (canonical; `www.crecyos.com` 308-redirects to it), `app.crecyos.com` Crecy OS operator application, `crecyliving.com` Crecy Living resident root with community portals under `*.crecyliving.com`, `owner.crecyos.com` Crecy Owner, `vendor.crecyos.com` reserved for the future Crecy Vendor surface. `crecy.com`, `app.crecy.com`, `owner.crecy.com` and `vendor.crecy.com` are NOT owned and must not be treated as canonical product domains. The visible master brand remains Crecy (see FD-036); the domain is not the brand. |
 | FD-038 | Wordmark-led visual identity; light-first “Calm Global Infrastructure.” |
 | FD-039 | Typography: Inter; Noto Sans fallback; JetBrains Mono for identifiers/financial figures. |
 | FD-040 | Component foundation: shadcn/ui + Radix primitives + Tailwind CSS + TanStack Table. |

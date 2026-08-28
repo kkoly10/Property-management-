@@ -260,7 +260,7 @@ Every P0 route must implement:
 
 ### OW-01 Owner activation/login
 
-- **Route:** `owner.crecy.com/login`
+- **Route:** `owner.crecyos.com/login`
 - **Scope:** invitation tied to owner entity; no generic organization access.
 
 ### OW-02 Owner overview

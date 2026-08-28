@@ -37,8 +37,9 @@ The Supabase project is **`alrirkvfcmhqumqaidxj`** ("Property"). Dashboard paths
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://alrirkvfcmhqumqaidxj.supabase.co` — Settings → API → Project URL | The whole app runs in demo/preview mode with hardcoded sample data |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Settings → API Keys → the `sb_publishable_…` key (not the legacy `anon` JWT, and never the secret key) | Same |
 | `SUPABASE_SECRET_KEY` | Settings → API Keys → **Secret key** (`sb_secret_…`). Reveal once and store it in Vercel; never commit it | Invitation delivery and every worker route fail |
-| `NEXT_PUBLIC_SITE_URL` | Your own deployed origin, no trailing slash. Also add it to Supabase → Authentication → URL Configuration → Redirect URLs, or email confirmation links will be rejected | Email confirmation and password links point at localhost |
-| `NEXT_PUBLIC_MARKETING_ORIGIN` | Your own marketing origin | **Defaults to `https://crecy.com`.** A build served from a `*.vercel.app` domain advertises canonicals for a domain that does not serve it — set this on the first deploy even if the value is the vercel.app host |
+| `NEXT_PUBLIC_SITE_URL` | The **operator application** origin — production `https://app.crecyos.com`, no trailing slash. Also add it to Supabase → Authentication → URL Configuration → Redirect URLs, or email confirmation links break. This is NOT the marketing origin | Auth callbacks, secure document links, transactional mail links and Stripe return URLs are built from `http://localhost:3000` |
+| `NEXT_PUBLIC_LIVING_ROOT_DOMAIN` | `crecyliving.com` — the Crecy Living resident root. Community portals are `{community-slug}.crecyliving.com` | Resident absolute links fall back to the operator origin, which would send residents into Crecy OS |
+| `NEXT_PUBLIC_MARKETING_ORIGIN` | The **marketing** origin — production `https://crecyos.com` | **Defaults to `https://crecyos.com`.** A build served from a `*.vercel.app` domain advertises canonicals for a domain that does not serve it. A malformed value now throws at module load rather than failing quietly |
 
 `getPublicSupabaseConfig()` treats a value containing `your-project` or `replace_me` as absent, so a
 half-filled variable degrades to demo mode rather than failing loudly. If the deployed app shows sample
@@ -72,6 +73,40 @@ unlabeled build is treated as production and fails closed. Setting this to anyth
 `production` **relaxes the legal-consent gate**, so it must never appear on a real deployment.
 
 ---
+
+## 1b. Domains — five distinct states, do not conflate them
+
+A domain is not live because the code knows its name. Track each independently:
+
+| Domain | Purpose | Code configured | Added to Vercel | DNS verified | TLS active | Prod smoke-tested |
+| --- | --- | --- | --- | --- | --- | --- |
+| `crecyos.com` | Public Crecy marketing (canonical) | yes | yes | yes | yes | **no** |
+| `www.crecyos.com` | 308 → `https://crecyos.com` | yes | yes | yes | pending | **no** |
+| `app.crecyos.com` | Crecy OS operator app / auth entry | yes | yes | yes | yes | **no** |
+| `crecyliving.com` | Crecy Living resident root | yes | yes | yes | yes | **no** |
+| `*.crecyliving.com` | `{community-slug}` resident portals | partial | yes | pending | pending | **no** |
+| `owner.crecyos.com` | Crecy Owner portal | yes | yes | yes | yes | **no** |
+| `vendor.crecyos.com` | Future Crecy Vendor surface | no | **no** | no | no | no |
+
+`crecy.com` and its subdomains are not owned and are not canonical product domains (FD-037).
+
+### Supabase Auth — required after the domains resolve
+
+Supabase → Authentication → URL Configuration:
+
+- **Site URL:** `https://app.crecyos.com` — the operator app, not the marketing site.
+- **Redirect URLs:** add only the callbacks the flows actually use, e.g. `https://app.crecyos.com/auth/callback`
+  and `https://owner.crecyos.com/auth/callback`. Do not add a broad wildcard for operator/auth callbacks.
+- Resident community subdomains must not be accommodated by weakening redirect validation. If resident auth
+  eventually needs `*.crecyliving.com`, enumerate the hosts or route resident auth through a single origin —
+  do not widen the operator allowlist to do it.
+
+### Stripe — required after the domains resolve
+
+- Connect onboarding return/refresh URLs resolve through `NEXT_PUBLIC_SITE_URL`, so they follow
+  `https://app.crecyos.com` once that variable is set in production.
+- Resident payment return URLs currently also derive from `NEXT_PUBLIC_SITE_URL`. That sends residents to the
+  operator origin. See the launch blockers section — this is an origin-construction defect, not an accounting one.
 
 ## 2. Deploy order — this ordering is not optional
 
