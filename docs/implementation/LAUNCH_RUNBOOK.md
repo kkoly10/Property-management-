@@ -27,30 +27,43 @@ Set these on the Vercel project before the first production deploy. `NEXT_PUBLIC
 into the client bundle at **build** time, so a value added after a build does not take effect until the
 next one.
 
+The Supabase project is **`alrirkvfcmhqumqaidxj`** ("Property"). Dashboard paths below are relative to
+`supabase.com/dashboard/project/alrirkvfcmhqumqaidxj`.
+
 ### Required for the app to work at all
 
-| Variable | Why | If unset |
+| Variable | Where to get it | If unset |
 | --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | Project URL | The whole app runs in demo/preview mode with hardcoded sample data |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Browser key | Same |
-| `SUPABASE_SECRET_KEY` | Server-side admin authority for workers and invitations | Invitation delivery and every worker route fail |
-| `NEXT_PUBLIC_SITE_URL` | Auth callback origin | Email confirmation and password links point at localhost |
-| `NEXT_PUBLIC_MARKETING_ORIGIN` | Canonical URLs, Open Graph, sitemap, robots host | **Defaults to `https://crecy.com`.** A build served from a `*.vercel.app` domain advertises canonicals for a domain that does not serve it — set this on the first deploy even if the value is the vercel.app host |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://alrirkvfcmhqumqaidxj.supabase.co` — Settings → API → Project URL | The whole app runs in demo/preview mode with hardcoded sample data |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Settings → API Keys → the `sb_publishable_…` key (not the legacy `anon` JWT, and never the secret key) | Same |
+| `SUPABASE_SECRET_KEY` | Settings → API Keys → **Secret key** (`sb_secret_…`). Reveal once and store it in Vercel; never commit it | Invitation delivery and every worker route fail |
+| `NEXT_PUBLIC_SITE_URL` | Your own deployed origin, no trailing slash. Also add it to Supabase → Authentication → URL Configuration → Redirect URLs, or email confirmation links will be rejected | Email confirmation and password links point at localhost |
+| `NEXT_PUBLIC_MARKETING_ORIGIN` | Your own marketing origin | **Defaults to `https://crecy.com`.** A build served from a `*.vercel.app` domain advertises canonicals for a domain that does not serve it — set this on the first deploy even if the value is the vercel.app host |
+
+`getPublicSupabaseConfig()` treats a value containing `your-project` or `replace_me` as absent, so a
+half-filled variable degrades to demo mode rather than failing loudly. If the deployed app shows sample
+data, that is the first thing to check.
 
 ### Required for scheduled work to run
 
-| Variable | Why | If unset |
+| Variable | Where to get it | If unset |
 | --- | --- | --- |
-| `CRON_SECRET` | Vercel Cron sends it as `Authorization: Bearer $CRON_SECRET` | **Every `/api/internal/cron/*` route stays closed.** Rent is never generated, no mail is drained, no document is ever scanned. The routes do not degrade to open — an unset or `replace_`-prefixed secret authenticates nothing |
-| `CRECY_INTERNAL_WORKER_SECRET` | The manual/operator worker surface, separate from cron | Manual worker invocation is closed |
+| `CRON_SECRET` | Generate it: `openssl rand -hex 32`. Vercel sends it to cron routes automatically as `Authorization: Bearer $CRON_SECRET` — you never call them yourself | **Every `/api/internal/cron/*` route stays closed.** Rent is never generated, no mail is drained, no document is ever scanned. The routes do not degrade to open — an unset or `replace_`-prefixed secret authenticates nothing |
+| `CRECY_INTERNAL_WORKER_SECRET` | Generate it: `openssl rand -hex 32`. Deliberately separate from `CRON_SECRET` so a leaked scheduler credential does not also open the manual surface | Manual worker invocation is closed |
 
 ### Required for each provider
 
-| Variable | Opens | If unset |
+| Variable | Where to get it | If unset |
 | --- | --- | --- |
-| `CRECY_DOCUMENT_SCAN_RELAY_URL` + `_SECRET` | Document scanning | The scan route reports **503** and every uploaded document stays `quarantined` — unusable, which is the safe direction |
-| `CRECY_NOTIFICATION_RELAY_URL` + `_SECRET` | Transactional mail | The notification route reports **503**; jobs queue and are never sent |
-| `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | Online payments | Payment routes report 503; manual payment recording still works |
+| `CRECY_DOCUMENT_SCAN_RELAY_URL` + `_SECRET` | Your scanning service's endpoint; the secret is yours to generate and share with it | The scan route reports **503** and every uploaded document stays `quarantined` — unusable, which is the safe direction |
+| `CRECY_NOTIFICATION_RELAY_URL` + `_SECRET` | Your mail relay's endpoint; the secret is yours to generate and share with it | The notification route reports **503**; jobs queue and are never sent |
+| `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | Stripe dashboard → API keys (`sk_test_…`), and Developers → Webhooks → your endpoint → signing secret (`whsec_…`) | Payment routes report 503; manual payment recording still works |
+
+### Optional
+
+`STAFF_INVITATION_TOKEN_SECRET` and `RELATIONSHIP_INVITATION_TOKEN_SECRET` are dedicated HMAC secrets
+for invitation tokens. Omit them and `SUPABASE_SECRET_KEY` is used instead, which works; set them
+(`openssl rand -hex 32` each) if you want invitation tokens to survive a rotation of the Supabase key.
 
 ### Deliberately not set
 
