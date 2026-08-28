@@ -108,6 +108,28 @@ but that also meant a run where *every* batch failed returned 200. `scheduledRun
 outcome: `200` for success or an empty queue, `207` for partial failure, `502` when nothing succeeded.
 Partial failure must not read as total failure, and total failure must not read as success.
 
+## Corrected after adversarial review
+
+**Isolation existed BETWEEN zones, not within one.** The runner continues past a failing batch, which
+the report described as "a misconfigured book in Denver cannot be allowed to hold up rent in every other
+market". True — but *inside* a zone there was no isolation at all: the selector filtered only schedule
+status, due date and tenancy status, while `generate_recurring_charges` raises on four more conditions
+from inside its loop. One raise rolls the whole batch back, the `charge_generation_runs` row included,
+so the zone produced zero charges — and the next hourly run derived the identical worker-run id and
+failed identically, forever. Confirmed by execution: closing one receivable account in a six-schedule
+New York batch left the five healthy schedules with **0 charges**.
+
+**Arrears cleared at most one period per local day.** The worker-run id was derived from schedule IDs,
+which do not change when a period is charged, so the second run of the same local date replayed instead
+of advancing.
+
+**A skipped time zone reported HTTP 200.** `invalidTimeZones` never reached the status calculation, so a
+run in which an entire zone's rent silently did not generate looked perfectly healthy — the exact
+failure `health.ts` was written to prevent.
+
+All three are fixed in `20260828140000_phase_8_batch_a_review_corrections.sql` and covered by tests that
+fail when reverted.
+
 ## Not done here (stated, not hidden)
 
 - **No cron has ever fired.** The schedule is defined and verified in the repository, but nothing has run

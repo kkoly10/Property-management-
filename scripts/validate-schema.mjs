@@ -61,6 +61,7 @@ const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migratio
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
 const closeUnscopedOperatorSurfacesSql = await readFile(resolve(root, "supabase/migrations/20260828130000_phase_8_close_unscoped_operator_surfaces.sql"), "utf8");
+const batchAReviewCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260828140000_phase_8_batch_a_review_corrections.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -823,6 +824,7 @@ async function validateRecurringCharges() {
   await db.exec(runtimeSchedulerSql);
   await db.exec(activeOrganizationContextSql);
   await db.exec(closeUnscopedOperatorSurfacesSql);
+  await db.exec(batchAReviewCorrectionsSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -4898,8 +4900,120 @@ async function validateRecurringCharges() {
     auditedSurfaces: ctxSurfaces.length + 3,
   };
 
+  // ── Batch A review corrections (phase_8_batch_a_review_corrections) ──────────────────────────────
+  // Three defects the first pass shipped, two of them confirmed by execution rather than by reading.
+
+  // (1) A schedule the command would REFUSE must not be carried into a batch: generate_recurring_charges
+  // raises from inside its loop, so one bad row rolled back every healthy schedule beside it, the
+  // charge_generation_runs row included — and the next run derived the identical worker-run id and
+  // failed identically. Forever.
+  await db.exec("reset role");
+  const brokenReceivable = (await db.query(`select id from public.receivable_accounts
+    where organization_id='${organization.organizationId}' and public_reference='TZ-NY-AR'`)).rows[0].id;
+  await db.exec(`update public.receivable_accounts set status='closed' where id='${brokenReceivable}'`);
+  await db.exec(`update public.charge_schedules set next_run_on='2026-09-01', status='active'
+    where id in ('${zoneWorld.ny.scheduleId}','${zoneWorld.hi.scheduleId}')`);
+  // A second, HEALTHY New York schedule that must still be charged despite its broken neighbour.
+  const healthyNy = (await db.query(`
+    with household as (
+      insert into public.households(organization_id,display_name,status)
+      values ('${organization.organizationId}','Healthy NY household','resident') returning id
+    ), receivable as (
+      insert into public.receivable_accounts(organization_id,accounting_book_id,public_reference,currency_code,status)
+      values ('${organization.organizationId}','${entity.accountingBookId}','TZ-NY-AR-2','USD','active') returning id
+    ), unit as (
+      insert into public.units(organization_id,property_id,unit_code,operational_status)
+      values ('${organization.organizationId}','${zoneWorld.ny.propertyId}','TZ-NY-2','active') returning id
+    ), lease as (
+      insert into public.leases(organization_id,property_id,unit_id,household_id,country_profile_id,start_date,rent_amount_minor,currency_code,status,executed_at,created_by)
+      select '${organization.organizationId}','${zoneWorld.ny.propertyId}',u.id,h.id,cp.id,'2026-08-01',120000,'USD','active',now(),'${admin}'
+      from household h, unit u, public.country_profiles cp where cp.code='US_NATIONAL' returning id, household_id, unit_id
+    ), tenancy as (
+      insert into public.tenancies(organization_id,property_id,unit_id,household_id,lease_id,receivable_account_id,possession_start,status)
+      select '${organization.organizationId}','${zoneWorld.ny.propertyId}',l.unit_id,l.household_id,l.id,r.id,'2026-08-01','active'
+      from lease l, receivable r returning id
+    )
+    insert into public.charge_schedules(organization_id,accounting_book_id,tenancy_id,receivable_account_id,charge_type,amount_minor,currency_code,cadence,due_day,starts_on,next_run_on,status)
+    select '${organization.organizationId}','${entity.accountingBookId}',t.id,r.id,'rent',120000,'USD','monthly',1,'2026-08-01','2026-09-01','active'
+    from tenancy t, receivable r returning id`)).rows[0].id;
+
+  await db.exec("set role service_role");
+  const withBroken = (await db.query(`select public.list_due_charge_schedule_batches('2026-09-01T11:00:00Z'::timestamptz,50) as r`)).rows[0].r;
+  const nyBatchAfterBreak = withBroken.batches.find((b) => b.timeZone === "America/New_York");
+  assert(nyBatchAfterBreak && nyBatchAfterBreak.scheduleIds.includes(healthyNy),
+    "A healthy schedule was dropped from its zone's batch because a neighbour was misconfigured.");
+  assert(!nyBatchAfterBreak.scheduleIds.includes(zoneWorld.ny.scheduleId),
+    "A schedule whose receivable account is closed was carried into a batch the command would reject.");
+  const blockedNy = withBroken.blockedSchedules.find((b) => b.scheduleId === zoneWorld.ny.scheduleId);
+  assert(blockedNy && blockedNy.reason === "RECEIVABLE_ACCOUNT_NOT_ACTIVE",
+    "The refused schedule was silently dropped instead of being reported with its reason.");
+  // DECISIVE: the batch the selector now hands out actually succeeds, where the old one rolled back.
+  const brokenZoneRun = (await db.query(`select public.generate_recurring_charges('${nyBatchAfterBreak.localDate}'::date, '{${nyBatchAfterBreak.scheduleIds.join(",")}}'::uuid[], '${nyBatchAfterBreak.workerRunId}') as r`)).rows[0].r;
+  assert(brokenZoneRun.generatedCount === nyBatchAfterBreak.scheduleIds.length,
+    "The zone still failed to generate rent while one of its schedules was misconfigured.");
+  await db.exec("reset role");
+  const healthyCharged = (await db.query(`select count(*)::integer as c from public.charges where charge_schedule_id='${healthyNy}'`)).rows[0].c;
+  assert(healthyCharged === 1, "The healthy New York schedule was still not charged.");
+
+  // (2) Arrears must clear more than one period per local day. The worker-run id now covers
+  // (schedule, next_run_on) PAIRS, so a charged period changes the id and the next run advances.
+  //
+  // Honolulu is used because it holds exactly ONE healthy schedule: the id set is therefore identical
+  // across both runs, which is what makes this a test of the pairs and not of the set changing anyway.
+  await db.exec(`update public.charge_schedules set next_run_on='2026-06-01' where id='${zoneWorld.hi.scheduleId}'`);
+  await db.exec("set role service_role");
+  const hiBatch = async () => (await db.query(`select public.list_due_charge_schedule_batches('2026-09-01T11:00:00Z'::timestamptz,50) as r`))
+    .rows[0].r.batches.find((b) => b.timeZone === "Pacific/Honolulu");
+  const arrearsOne = await hiBatch();
+  assert(arrearsOne && arrearsOne.scheduleIds.length === 1 && arrearsOne.scheduleIds[0] === zoneWorld.hi.scheduleId,
+    "The arrears fixture is not the single-schedule batch this test needs.");
+  const arrearsRunOne = (await db.query(`select public.generate_recurring_charges('${arrearsOne.localDate}'::date, '{${arrearsOne.scheduleIds.join(",")}}'::uuid[], '${arrearsOne.workerRunId}') as r`)).rows[0].r;
+  assert(arrearsRunOne.generatedCount === 1, "The first arrears run did not charge the overdue period.");
+
+  const arrearsTwo = await hiBatch();
+  assert(arrearsTwo && JSON.stringify(arrearsTwo.scheduleIds) === JSON.stringify(arrearsOne.scheduleIds),
+    "The arrears fixture stopped being a stable single-schedule batch.");
+  assert(arrearsTwo.workerRunId !== arrearsOne.workerRunId,
+    "An identical schedule ID SET produced an identical worker-run id even though its due date advanced, so arrears would clear at one period per local day.");
+  const arrearsRunTwo = (await db.query(`select public.generate_recurring_charges('${arrearsTwo.localDate}'::date, '{${arrearsTwo.scheduleIds.join(",")}}'::uuid[], '${arrearsTwo.workerRunId}') as r`)).rows[0].r;
+  assert(arrearsRunTwo.replayed === false && arrearsRunTwo.generatedCount === 1,
+    "The second catch-up run replayed instead of charging the next arrears period.");
+
+  // An UNCHANGED due set must still replay — duplicate safety is not traded away for catch-up.
+  const arrearsReplay = (await db.query(`select public.generate_recurring_charges('${arrearsTwo.localDate}'::date, '{${arrearsTwo.scheduleIds.join(",")}}'::uuid[], '${arrearsTwo.workerRunId}') as r`)).rows[0].r;
+  assert(arrearsReplay.replayed === true && JSON.stringify(arrearsReplay.chargeIds) === JSON.stringify(arrearsRunTwo.chargeIds),
+    "An identical repeated invocation no longer replays — it would double-charge.");
+  await db.exec("reset role");
+  const arrearsCharges = (await db.query(`select count(*)::integer as c from public.charges where charge_schedule_id='${zoneWorld.hi.scheduleId}'`)).rows[0].c;
+  assert(arrearsCharges === 2, `Two catch-up runs on one local date produced ${arrearsCharges} charges instead of 2.`);
+
+  // (3) get_privacy_request_workspace is gated by private.is_active_org_member, the one membership
+  // helper the first pass left un-narrowed — so it offered BOTH of the caller's organizations while
+  // claiming to be scoped to one.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const privacyA = (await db.query(`select public.get_privacy_request_workspace('${organization.organizationId}') as r`)).rows[0].r;
+  const privacyB = (await db.query(`select public.get_privacy_request_workspace('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+  const privacyOrgIds = (workspace) => (workspace.organizations ?? []).map((o) => o.organizationId ?? o.id);
+  assert(privacyOrgIds(privacyA).every((id) => id === organization.organizationId),
+    "The privacy workspace offered another organization while scoped to the first.");
+  assert(privacyOrgIds(privacyB).every((id) => id === ctxOrgB.organizationId),
+    "The privacy workspace offered another organization while scoped to the second.");
+  assert(privacyOrgIds(privacyA).length === 1 && privacyOrgIds(privacyB).length === 1,
+    "The privacy workspace did not offer exactly the organization it was scoped to.");
+  // The unscoped form still serves residents and owners, who hold no operator organization.
+  const privacyUnscoped = (await db.query("select public.get_privacy_request_workspace() as r")).rows[0].r;
+  assert(privacyOrgIds(privacyUnscoped).length === 2,
+    "The unscoped privacy workspace stopped serving a caller with no operator context.");
+  await db.exec("reset role");
+
+  const reviewCorrections = {
+    blockedSchedulesReported: withBroken.blockedSchedules.length,
+    arrearsPeriodsClearedInOneDay: arrearsCharges,
+    privacyOrganizationsWhenScoped: 1,
+  };
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped };
 }
 
 try {

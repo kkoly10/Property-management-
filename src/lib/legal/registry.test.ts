@@ -64,6 +64,17 @@ describe("contentHash", () => {
   it("is stable for identical input", () => {
     expect(contentHash(base)).toBe(contentHash({ ...base }));
   });
+
+  it("is pinned to an exact value, so the serialization cannot change unnoticed", () => {
+    // Without this, any edit to the canonical serialization — a changed separator, a reordered or
+    // added field — would silently change every hash, therefore every future
+    // consent_records.legal_document_version, and quietly break verification of records already
+    // stored. Relative assertions cannot catch that; only a pinned value can.
+    //
+    // If this fails you have changed how consent evidence is derived. That is a decision about
+    // existing records, not a test to update.
+    expect(contentHash(base)).toBe("bff5bc688624b13e6d12c7ff09fd585488446317b34bdb5389e7007f0d8797d9");
+  });
 });
 
 describe("buildConsentBinding", () => {

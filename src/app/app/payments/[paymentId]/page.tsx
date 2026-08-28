@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getPaymentDetail } from "@/lib/data/finance";
 import { CorrectionForm } from "./correction-form";
 import { RefundForm } from "./refund-form";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 const money = (amount: number, currency: string) => new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount / 100);
@@ -15,8 +16,9 @@ const label = (value: string) => value.replaceAll("_", " ");
 const badgeVariant = (status: string) => status === "succeeded" || status === "won" ? "success" as const : status === "returned" || status === "reversed" || status === "refunded" || status === "lost" ? "warning" as const : "neutral" as const;
 
 export default async function PaymentDetailPage({ params }: { params: Promise<{ paymentId: string }> }) {
+  const organizationId = await getActiveOrganizationId();
   const { paymentId } = await params;
-  const result = await getPaymentDetail(paymentId);
+  const result = await getPaymentDetail(organizationId, paymentId);
   if (result.mode === "not_found") notFound();
   if (!result.payment) return <div className="mx-auto max-w-4xl space-y-6"><Button asChild variant="ghost" size="sm"><Link href="/app/payments"><ArrowLeft className="h-4 w-4" />Payments</Link></Button><Alert variant="destructive"><CircleAlert className="h-5 w-5" /><AlertTitle>Payment unavailable</AlertTitle><AlertDescription>Refresh and try again. Request {result.requestId}.</AlertDescription></Alert></div>;
   const payment = result.payment;

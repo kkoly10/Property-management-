@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getImportJobDetail } from "@/lib/data/imports";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
@@ -55,8 +56,9 @@ function summarizeCommitted(committed: Record<string, number> | null | undefined
 }
 
 export default async function ImportDetailPage({ params }: { params: Promise<{ importJobId: string }> }) {
+  const organizationId = await getActiveOrganizationId();
   const { importJobId } = await params;
-  const state = await getImportJobDetail(importJobId);
+  const state = await getImportJobDetail(organizationId, importJobId);
   if (!state.job) return <div className="mx-auto max-w-3xl"><Alert variant="destructive"><CircleAlert className="h-5 w-5" /><AlertTitle>Import not found</AlertTitle><AlertDescription>This job is unavailable or outside your organization scope. {state.requestId ? `Request ${state.requestId}.` : ""}</AlertDescription></Alert></div>;
   const job = state.job;
   const heading = IMPORT_TYPE_HEADINGS[job.importType] ?? "Portfolio import";

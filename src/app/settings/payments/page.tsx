@@ -6,11 +6,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getPaymentConnectionWorkspace } from "@/lib/data/payment-connections";
 import { PaymentConnectionPanel } from "./payment-connection-panel";
 import { getActiveOrganizationId } from "@/lib/organization/context";
+import { redirect } from "next/navigation";
+import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 
 export const dynamic = "force-dynamic";
 
 export default async function PaymentSettingsPage() {
   const organizationId = await getActiveOrganizationId();
+  // These routes sit outside the operator layout, so they carry no switcher and no context notice.
+  // Without a selection there is nothing to show and no way to choose from here — send the operator to
+  // the shell, which is where the picker lives. (Preview mode has no context and renders sample data.)
+  if (!organizationId && getPublicSupabaseConfig()) redirect("/app");
   const workspace = await getPaymentConnectionWorkspace(organizationId);
   return (
     <main className="min-h-screen p-5 lg:p-10"><div className="mx-auto max-w-4xl space-y-6">

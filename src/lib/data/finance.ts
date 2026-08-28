@@ -267,16 +267,22 @@ export async function getPaymentReceipt(documentId: string): Promise<{ mode: Dat
   } catch { return { mode: "error", requestId: crypto.randomUUID() }; }
 }
 
-export async function getPaymentDetail(paymentId: string): Promise<{ mode: DataMode | "not_found"; payment?: PaymentDetail; requestId?: string }> {
+/**
+ * Operator payment detail. The organization is passed even though a payment belongs to exactly one
+ * organization and RLS already decides visibility: it pins the active context, so opening a stale link
+ * to another tenant's payment finds nothing rather than quietly rendering it under the wrong shell.
+ */
+export async function getPaymentDetail(organizationId: string | null, paymentId: string): Promise<{ mode: DataMode | "not_found"; payment?: PaymentDetail; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return paymentId === previewPayment.paymentId ? { mode: "setup", payment: previewPaymentDetail } : paymentId === previewFailedPayment.paymentId ? { mode: "setup", payment: previewFailedPaymentDetail } : { mode: "not_found" };
   try {
     const supabase = await createClient();
+    const scope = organizationId ? { p_organization_id: organizationId } : {};
     const [detail, eligibility, disputeHistory, settlementHistory, attemptHistory] = await Promise.all([
-      supabase.rpc("get_payment_detail", { p_payment_id: paymentId }),
-      supabase.rpc("get_payment_refund_eligibility", { p_payment_id: paymentId }),
-      supabase.rpc("get_payment_dispute_history", { p_payment_id: paymentId }),
-      supabase.rpc("get_payment_settlement_history", { p_payment_id: paymentId }),
-      supabase.rpc("get_payment_attempt_history", { p_payment_id: paymentId }),
+      supabase.rpc("get_payment_detail", { ...scope, p_payment_id: paymentId }),
+      supabase.rpc("get_payment_refund_eligibility", { ...scope, p_payment_id: paymentId }),
+      supabase.rpc("get_payment_dispute_history", { ...scope, p_payment_id: paymentId }),
+      supabase.rpc("get_payment_settlement_history", { ...scope, p_payment_id: paymentId }),
+      supabase.rpc("get_payment_attempt_history", { ...scope, p_payment_id: paymentId }),
     ]);
     if (detail.error || !detail.data || eligibility.error || !eligibility.data || disputeHistory.error || !disputeHistory.data || settlementHistory.error || !settlementHistory.data || attemptHistory.error || !attemptHistory.data) return { mode: "not_found" };
     const payment = normalizePaymentDetail(detail.data);

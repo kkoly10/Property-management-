@@ -224,6 +224,7 @@ export async function runRecurringChargeGeneration(
     evaluatedAt: string;
     batches?: { timeZone: string; localDate: string; workerRunId: string; scheduleIds: string[] }[];
     invalidTimeZones?: string[];
+    blockedSchedules?: { scheduleId: string; timeZone: string; reason: string }[];
   };
   const batches = evaluated.batches ?? [];
 
@@ -256,6 +257,10 @@ export async function runRecurringChargeGeneration(
       replayedBatches: replayed,
       failedBatches: failures,
       invalidTimeZones: evaluated.invalidTimeZones ?? [],
+      // Schedules the command would refuse (closed book, inactive receivable, currency mismatch).
+      // They are excluded from their batch on purpose: carrying one in would roll back every healthy
+      // schedule beside it, because generate_recurring_charges raises from inside its loop.
+      blockedSchedules: evaluated.blockedSchedules ?? [],
     },
   };
 }

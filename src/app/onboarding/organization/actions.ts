@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/server";
 import { organizationSchema } from "@/lib/validation/onboarding";
 import { resolveOrganizationConsent, requiresPublishedLegalDocuments } from "@/lib/legal/registry";
 import type { ActionState } from "@/lib/actions/state";
-import type { LegalJurisdiction } from "@/lib/legal/types";
 
 export async function createOrganizationAction(_previousState: ActionState, formData: FormData): Promise<ActionState> {
   const result = organizationSchema.safeParse(Object.fromEntries(formData));
@@ -16,10 +15,13 @@ export async function createOrganizationAction(_previousState: ActionState, form
   // The version sent to the command is DERIVED from the documents that were actually shown, not a
   // literal. This previously sent `p_terms_version: "2026-07-20"` — a date with no corresponding
   // artifact anywhere in the product, next to a checkbox that linked to nothing.
-  const consent = resolveOrganizationConsent({
-    jurisdiction: result.data.headquartersCountryCode as LegalJurisdiction,
-    requirePublished: requiresPublishedLegalDocuments(),
-  });
+  // Resolved WITHOUT a jurisdiction, deliberately, so this always agrees with what the page rendered.
+  // The page cannot know the country until the form is filled, so resolving per-country here would make
+  // the two disagree the moment a country-specific document exists: the drift guard below would fire,
+  // and reloading would re-render the same mismatch, locking onboarding for that country behind a
+  // message that misdiagnoses the cause. Jurisdiction-specific documents need the consent block to
+  // re-render when the country changes — a tracked follow-up, not something to fake here.
+  const consent = resolveOrganizationConsent({ requirePublished: requiresPublishedLegalDocuments() });
   if (!consent.ok) {
     // Fail closed. Recording consent against a document that is not published would be inventing
     // evidence, which is worse than refusing to create the workspace (file 27 §5.A4).

@@ -62,7 +62,15 @@ properties make this safe:
   own transaction, so a context cannot leak into another request. A test asserts this directly.
 
 Each scoped surface is then a ~10-line wrapper that enters the context and calls the **shipped,
-already-proven body unchanged** — so scoping reaches every query inside it, aggregates included.
+already-proven body unchanged** — so scoping reaches every query inside it, aggregates included,
+*provided the body gates on a narrowed helper*.
+
+Adversarial review found that qualifier mattered: `get_privacy_request_workspace` gates its organization
+list with `private.is_active_org_member`, the one membership helper this slice did not narrow, so the
+wrapper entered the context and the body ignored it — the picker offered both of the caller's
+organizations while claiming to be scoped to one. Corrected in
+`20260828140000_phase_8_batch_a_review_corrections.sql`, which narrows that helper too; there are now no
+un-narrowed organization-membership helpers.
 
 `get_operator_global_search` was the one exception: it resolved its organization inline with no helper
 to narrow, so its body is reproduced with exactly two changes (organization first; the implicit pick
@@ -80,7 +88,9 @@ silent cross-tenant read into a permission error.
 one organization, so they cannot mix tenants; RLS already decides whether the caller may see it. An
 earlier draft of this slice revoked them too, which broke a real capability — a resident inspecting
 their own payment's settlement history has no operator organization to supply. Their scoped overloads
-exist for operator callers, which additionally pins the context.
+exist for operator callers, which additionally pins the context — the operator payment-detail and
+import-detail pages pass it. The remaining detail overloads (conversation, owner statement) are reached
+only from shared portal routes and are called unscoped, so those overloads are currently unused.
 
 ## Deployment ordering — the one migration in this project that is not deploy-safe
 
@@ -131,9 +141,9 @@ tests across 11 operator routes.
 
 - `list_operator_organizations` returns exactly the two, with display name and role;
 - all 11 unscoped collection surfaces raise `permission denied`;
-- **eight audited surfaces return the owning organization's rows and *zero* rows in the other** —
+- **nine audited surfaces return the owning organization's rows and *zero* rows in the other** —
   maintenance, communications, owners, payments, receivables, payment connections, global search,
-  dashboard, team;
+  dashboard, team (privacy was added by the review corrections, bringing it to ten);
 - global search finds the SECOND organization's own property (proving it is no longer pinned);
 - `ORGANIZATION_REQUIRED` for a null organization, `ORGANIZATION_SCOPE_DENIED` for a non-member;
 - **a revoked membership and an expired membership both stop working on the very next call**;

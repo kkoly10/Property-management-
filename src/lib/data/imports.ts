@@ -70,7 +70,7 @@ export async function getImportCenterState(organizationId: string | null): Promi
   }
 }
 
-export async function getImportJobDetail(importJobId: string): Promise<{ mode: "setup" | "ready" | "error"; job: ImportJobDetail | null; requestId?: string }> {
+export async function getImportJobDetail(organizationId: string | null, importJobId: string): Promise<{ mode: "setup" | "ready" | "error"; job: ImportJobDetail | null; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return {
     mode: "setup",
     job: {
@@ -88,7 +88,9 @@ export async function getImportJobDetail(importJobId: string): Promise<{ mode: "
   };
   try {
     const supabase = await createClient();
-    const detail = await supabase.rpc("get_import_job_detail", { p_import_job_id: importJobId });
+    const detail = organizationId
+      ? await supabase.rpc("get_import_job_detail", { p_organization_id: organizationId, p_import_job_id: importJobId })
+      : await supabase.rpc("get_import_job_detail", { p_import_job_id: importJobId });
     if (detail.error || !detail.data) return { mode: "ready", job: null };
     const raw = detail.data as Omit<ImportJobDetail, "sourceTitle" | "sourceHeaders">;
     const { data: source } = await supabase.from("documents").select("title").eq("id", raw.sourceDocumentId).maybeSingle();

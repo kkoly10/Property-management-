@@ -23,3 +23,21 @@ describe("scheduledRunStatus", () => {
     expect(scheduledRunStatus(-1, 3)).toBe(200);
   });
 });
+
+describe("scheduledRunStatus with skipped work", () => {
+  it("does not call a run healthy when it silently skipped work", () => {
+    // The failure this exists to prevent: a property whose time zone is unrecognized generates no rent,
+    // month after month, while the hourly cron reports 200 every single time.
+    expect(scheduledRunStatus(0, 0, 1)).toBe(207);
+    expect(scheduledRunStatus(3, 0, 2)).toBe(207);
+  });
+
+  it("still reports total failure as total failure", () => {
+    expect(scheduledRunStatus(3, 3, 1)).toBe(502);
+  });
+
+  it("leaves a genuinely clean run at 200", () => {
+    expect(scheduledRunStatus(0, 0, 0)).toBe(200);
+    expect(scheduledRunStatus(5, 0, 0)).toBe(200);
+  });
+});

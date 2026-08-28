@@ -40,10 +40,13 @@ for (const document of DOCUMENTS) {
 
 test("an unpublished version says so instead of looking binding", async ({ page }) => {
   await page.goto("/legal/operator-terms");
-  const draftNotice = page.getByText("This version is not published");
-  const published = page.getByText("published", { exact: true });
-  // Exactly one of the two must be true, and a draft must never render silently as if it were binding.
-  expect((await draftNotice.count()) + (await published.count())).toBeGreaterThan(0);
+  const state = (await page.locator('[data-slot="badge"]').first().textContent())?.trim();
+  const draftNotice = await page.getByText("This version is not published").count();
+
+  // Exactly one of the two states, and they must agree. A draft that renders without the notice would
+  // look binding; a published document that renders the notice would look worthless.
+  expect(["draft", "published", "retired"]).toContain(state);
+  expect(draftNotice, `state "${state}" and the draft notice disagree`).toBe(state === "published" ? 0 : 1);
 });
 
 test("the onboarding consent statement names the exact artifacts and links to them", async ({ page }) => {

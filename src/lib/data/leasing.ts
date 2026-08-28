@@ -32,6 +32,9 @@ export async function getExistingLeaseOptions(organizationId: string | null): Pr
     };
   }
 
+  // Explicit, like every sibling fetcher: do not rely on PostgREST refusing a null filter.
+  if (!organizationId) return { mode: "error", properties: [], units: [], documents: [] };
+
   try {
     const supabase = await createClient();
     const [{ data: properties, error: propertyError }, { data: units, error: unitError }, { data: books }, { data: documents, error: documentError }, { data: versions }] = await Promise.all([

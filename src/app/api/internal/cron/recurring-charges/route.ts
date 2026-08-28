@@ -17,6 +17,14 @@ export async function GET(request: Request) {
   }
   const result = await runRecurringChargeGeneration(createAdminClient(), { limit: 500 });
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
-  const summary = result.summary as { zonesDue: number; failedBatches: unknown[] };
-  return NextResponse.json(summary, { status: scheduledRunStatus(summary.zonesDue, summary.failedBatches.length) });
+  const summary = result.summary as {
+    zonesDue: number;
+    failedBatches: unknown[];
+    invalidTimeZones: unknown[];
+    blockedSchedules: unknown[];
+  };
+  // A zone skipped for an unrecognized time zone, or a schedule the command would refuse, is work that
+  // did not happen. It must be visible in the status, not just in the body nobody reads.
+  const degraded = summary.invalidTimeZones.length + summary.blockedSchedules.length;
+  return NextResponse.json(summary, { status: scheduledRunStatus(summary.zonesDue, summary.failedBatches.length, degraded) });
 }
