@@ -60,8 +60,11 @@ const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
-const closeUnscopedOperatorSurfacesSql = await readFile(resolve(root, "supabase/migrations/20260828130000_phase_8_close_unscoped_operator_surfaces.sql"), "utf8");
+const closeUnscopedOperatorSurfacesSql = await readFile(resolve(root, "supabase/migrations-contract/20260828130000_phase_8_close_unscoped_operator_surfaces.sql"), "utf8");
 const batchAReviewCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260828140000_phase_8_batch_a_review_corrections.sql"), "utf8");
+const organizationCreationBoundarySql = await readFile(resolve(root, "supabase/migrations/20260829100000_phase_1_organization_creation_boundary.sql"), "utf8");
+const scanRecoveryTracingSql = await readFile(resolve(root, "supabase/migrations/20260829110000_phase_2_scan_recovery_and_tracing.sql"), "utf8");
+const relationshipProjectionsSql = await readFile(resolve(root, "supabase/migrations/20260829120000_phase_8_relationship_projections.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -765,6 +768,22 @@ async function validateLeasing() {
   return { activatedTenancies: 2, balancedOpeningBalance: true, residentVisibleTenancies: residentVisibility.rows[0].tenancies, isolatedTenancy: tenancyB };
 }
 
+/**
+ * Create an organization the way the product now does: the server derives the actor from the session
+ * and calls the service_role-only command. The browser surface (public.create_organization) is revoked
+ * by the contract release, so a test that still called it would be asserting a path that no longer
+ * exists in the deployed end state.
+ *
+ * Restores the caller's authenticated role afterwards so surrounding assertions are unaffected.
+ */
+async function createOrganizationAsServer(db, actorId, argsSql, { aal } = {}) {
+  await db.exec("reset role; set role service_role");
+  const result = await db.query(`select public.create_organization_as_actor('${actorId}',${argsSql}) as result`);
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${actorId}'`);
+  if (aal) await db.exec(`set request.jwt.claim.aal='${aal}'`);
+  return result;
+}
+
 async function validateRecurringCharges() {
   const db = createDatabase();
   await prepareSupabasePrelude(db);
@@ -823,8 +842,14 @@ async function validateRecurringCharges() {
   await db.exec(documentScanLifecycleSql);
   await db.exec(runtimeSchedulerSql);
   await db.exec(activeOrganizationContextSql);
-  await db.exec(closeUnscopedOperatorSurfacesSql);
   await db.exec(batchAReviewCorrectionsSql);
+  await db.exec(organizationCreationBoundarySql);
+  await db.exec(scanRecoveryTracingSql);
+  await db.exec(relationshipProjectionsSql);
+  // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
+  // migration AND after the compatible application build. Its revocations are still proven here — the
+  // separation is about when a human may apply them, not about whether they are tested.
+  await db.exec(closeUnscopedOperatorSurfacesSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -833,7 +858,7 @@ async function validateRecurringCharges() {
   const ownerB = "c5000000-0000-4000-8000-000000000005";
   await db.exec(`insert into auth.users(id) values ('${admin}'),('${resident}'),('${outsider}'),('${ownerA}'),('${ownerB}')`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const organization = (await db.query(`select public.create_organization('Finance Atlas','finance-atlas','property_manager','US','en-US','America/New_York','2026-07-20','finance-org-0001') as result`)).rows[0].result;
+  const organization = (await createOrganizationAsServer(db, admin, `'Finance Atlas','finance-atlas','property_manager','US','en-US','America/New_York','operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','finance-org-0001'`)).rows[0].result;
   const entity = (await db.query(`select public.create_operating_entity_and_book('${organization.organizationId}','Finance Atlas LLC','Finance Atlas','US','company','USD','Operating book','finance-book-0001') as result`)).rows[0].result;
   const returnUrl = "https://app.crecy.example/settings/payments?stripe=return";
   const refreshUrl = "https://app.crecy.example/settings/payments?stripe=refresh";
@@ -1093,7 +1118,7 @@ async function validateRecurringCharges() {
       ('${ownerB}','${organization.organizationId}','owner_entity','${ownerEntityB}','active');
     set role authenticated; set request.jwt.claim.sub='${admin}';
   `);
-  const operatorConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const operatorConversations = (await db.query(`select public.get_conversation_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(operatorConversations.items.length === 3, "The operator messaging workspace did not provision the resident and exact owner conversations.");
   const residentConversation = operatorConversations.items.find((item) => item.conversationType === "operator_resident");
   const ownerAConversation = operatorConversations.items.find((item) => item.ownerEntityId === ownerEntityA);
@@ -1104,7 +1129,7 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query("select count(*) from public.messages"), "permission denied");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
-  const residentConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const residentConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(
     residentConversations.items.length === 1
       && residentConversations.items[0].conversationId === residentConversation.conversationId
@@ -1127,7 +1152,7 @@ async function validateRecurringCharges() {
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
-  const ownerAConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const ownerAConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(
     ownerAConversations.items.length === 1
       && ownerAConversations.items[0].conversationId === ownerAConversation.conversationId
@@ -1140,7 +1165,7 @@ async function validateRecurringCharges() {
   assert(ownerMessage.senderType === "owner", "An owner message was not attributed to its relationship type.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerB}'`);
-  const ownerBConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const ownerBConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(
     ownerBConversations.items.length === 1
       && ownerBConversations.items[0].conversationId === ownerBConversation.conversationId
@@ -1155,7 +1180,7 @@ async function validateRecurringCharges() {
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
-  const outsiderConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const outsiderConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(outsiderConversations.items.length === 0, "Conversation metadata leaked to an unrelated user.");
   await expectDatabaseError(
     () => db.query(`select public.get_conversation_detail('${residentConversation.conversationId}')`),
@@ -1181,7 +1206,7 @@ async function validateRecurringCharges() {
     values ('${organization.organizationId}','${scopedMessengerMembership}','${property.propertyId}');
     set role authenticated; set request.jwt.claim.sub='${scopedMessenger}';
   `);
-  const scopedConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const scopedConversations = (await db.query(`select public.get_conversation_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(
     scopedConversations.items.length === 1
       && scopedConversations.items[0].conversationId === residentConversation.conversationId,
@@ -1193,7 +1218,14 @@ async function validateRecurringCharges() {
     where id='${scopedMessengerMembership}';
     set role authenticated; set request.jwt.claim.sub='${scopedMessenger}';
   `);
-  const expiredScopedConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  // An expired membership is now refused at the context gate rather than handed a convincingly empty
+  // workspace — earlier, and for the right reason. The relationship projection is empty for them too,
+  // because an operator whose membership lapsed is not a conversation participant.
+  await expectDatabaseError(
+    () => db.query(`select public.get_conversation_workspace('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  const expiredScopedConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(expiredScopedConversations.items.length === 0, "An expired property membership retained messaging access.");
   await expectDatabaseError(
     () => db.query(`select public.send_conversation_message(
@@ -1457,7 +1489,7 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query(`select public.verify_privacy_request(
     '${residentPrivacyRequest.privacyRequestId}',2,'privacy-resident-verify-again-0001'
   )`), "PRIVACY_REQUEST_NOT_VERIFIABLE");
-  const residentPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  const residentPrivacyWorkspace = (await db.query("select public.get_relationship_privacy_request_workspace() as result")).rows[0].result;
   assert(
     residentPrivacyWorkspace.items.length === 1
       && residentPrivacyWorkspace.organizations.length === 1
@@ -1468,7 +1500,7 @@ async function validateRecurringCharges() {
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'; set request.jwt.claim.aal='aal2'`);
-  const ownerPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  const ownerPrivacyWorkspace = (await db.query("select public.get_relationship_privacy_request_workspace() as result")).rows[0].result;
   assert(
     ownerPrivacyWorkspace.organizations.length === 1
       && ownerPrivacyWorkspace.items.length === 0,
@@ -1511,7 +1543,7 @@ async function validateRecurringCharges() {
       && platformPrivacyCanceledReplay.version === 3,
     "Platform privacy cancellation was not versioned and idempotent.",
   );
-  const outsiderPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  const outsiderPrivacyWorkspace = (await db.query("select public.get_relationship_privacy_request_workspace() as result")).rows[0].result;
   assert(
     outsiderPrivacyWorkspace.organizations.length === 0
       && outsiderPrivacyWorkspace.items.length === 1
@@ -1520,7 +1552,7 @@ async function validateRecurringCharges() {
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
-  const adminPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  const adminPrivacyWorkspace = (await db.query(`select public.get_privacy_request_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(
     adminPrivacyWorkspace.items.length === 1
       && adminPrivacyWorkspace.items[0].privacyRequestId === residentPrivacyRequest.privacyRequestId,
@@ -3695,7 +3727,7 @@ async function validateRecurringCharges() {
   const orgTwoOwner = "e8000000-0000-4000-8000-000000000086";
   await db.exec(`reset role; insert into auth.users(id) values ('${orgTwoOwner}')`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${orgTwoOwner}'; set request.jwt.claim.aal='aal2'`);
-  const orgTwo = (await db.query(`select public.create_organization('Beacon Realty','beacon-realty','property_manager','US','en-US','America/New_York','2026-07-20','beacon-org-0001') as result`)).rows[0].result;
+  const orgTwo = (await createOrganizationAsServer(db, orgTwoOwner, `'Beacon Realty','beacon-realty','property_manager','US','en-US','America/New_York','operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','beacon-org-0001'`, { aal: "aal2" })).rows[0].result;
   // The single active session must block a session for a DIFFERENT org too — the invariant is global.
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
   await expectDatabaseError(() => db.query(`select public.start_support_session('${orgTwo.organizationId}','A concurrent session for a different org.',60,'support-second-diff-1')`), "SUPPORT_SESSION_ALREADY_ACTIVE");
@@ -4769,7 +4801,7 @@ async function validateRecurringCharges() {
   // the organization it is given — and only that one.
   const secondOperator = admin;
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${secondOperator}'; set request.jwt.claim.aal='aal2'`);
-  const ctxOrgB = (await db.query(`select public.create_organization('Second Harbor','second-harbor','property_manager','US','en-US','America/Chicago','2026-07-20','orgctx-create-0001') as result`)).rows[0].result;
+  const ctxOrgB = (await createOrganizationAsServer(db, secondOperator, `'Second Harbor','second-harbor','property_manager','US','en-US','America/Chicago','operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','orgctx-create-0001'`, { aal: "aal2" })).rows[0].result;
   const ctxEntityB = (await db.query(`select public.create_operating_entity_and_book('${ctxOrgB.organizationId}','Second Harbor LLC','Second Harbor','US','company','USD','Operating book','orgctx-book-0001') as result`)).rows[0].result;
   const ctxPropertyB = (await db.query(`select public.create_property('${ctxOrgB.organizationId}','${ctxEntityB.operatingEntityId}','${ctxEntityB.accountingBookId}','US_NATIONAL','Beacon Flats','multifamily','9 Beacon Way',null,'Chicago','IL','60601','US','America/Chicago','orgctx-property-0001') as result`)).rows[0].result;
   await db.query(`select public.create_unit('${ctxOrgB.organizationId}','${ctxPropertyB.propertyId}',null,'B-1','Apartment',1,1,500,'orgctx-unit-0001')`);
@@ -5000,10 +5032,19 @@ async function validateRecurringCharges() {
     "The privacy workspace offered another organization while scoped to the second.");
   assert(privacyOrgIds(privacyA).length === 1 && privacyOrgIds(privacyB).length === 1,
     "The privacy workspace did not offer exactly the organization it was scoped to.");
-  // The unscoped form still serves residents and owners, who hold no operator organization.
-  const privacyUnscoped = (await db.query("select public.get_privacy_request_workspace() as r")).rows[0].r;
-  assert(privacyOrgIds(privacyUnscoped).length === 2,
-    "The unscoped privacy workspace stopped serving a caller with no operator context.");
+  // The old shared form is gone for the browser entirely — that was the escape hatch, since its
+  // organization scope was `is_active_org_member OR has a relationship`, so an operator calling it
+  // directly unioned every organization they administer.
+  await expectDatabaseError(() => db.query("select public.get_privacy_request_workspace()"), "permission denied for function get_privacy_request_workspace");
+  await expectDatabaseError(() => db.query("select public.get_conversation_workspace()"), "permission denied for function get_conversation_workspace");
+  // The RELATIONSHIP projection replaces it for portal callers, and is structurally incapable of the
+  // union: this operator holds memberships in two organizations and relationships in neither.
+  const privacyRelationship = (await db.query("select public.get_relationship_privacy_request_workspace() as r")).rows[0].r;
+  assert(privacyOrgIds(privacyRelationship).length === 0,
+    "The relationship privacy projection offered organizations the caller only has an operator membership in.");
+  const conversationsRelationship = (await db.query("select public.get_relationship_conversation_workspace() as r")).rows[0].r;
+  assert(!conversationsRelationship.items.some((item) => item.audienceLabel === "Property management"),
+    "The relationship conversation projection returned conversations the caller only reaches as an operator.");
   await db.exec("reset role");
 
   const reviewCorrections = {
@@ -5012,8 +5053,230 @@ async function validateRecurringCharges() {
     privacyOrganizationsWhenScoped: 1,
   };
 
+  // ── A.1: dead-letter scan recovery, and one correlation id per scan state change ────────────────
+  // A1 built the retry ladder but no way OUT of a dead letter, so a relay outage lasting longer than
+  // the attempt budget left every document uploaded during it permanently unusable — with a manual SQL
+  // edit as the only escape, which is precisely what A1 set out to abolish.
+  //
+  // The scenario end to end: scanner outage -> retries exhausted -> dead-lettered -> document
+  // unavailable -> scanner restored -> AUTHORIZED retry -> queued -> scanned clean -> document usable.
+  const recoveryDoc = await finalizeScannableDocument("Outage notice", "outage.pdf", "7".repeat(64), "scan-recovr");
+  await db.exec("reset role; set role service_role");
+  const recoveryClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-recovery1') as r`)).rows[0].r;
+  const recoveryJob = recoveryClaim.jobs.find((j) => j.documentVersionId === recoveryDoc.finalized.versionId);
+  assert(recoveryJob, "The recovery fixture was not claimable.");
+
+  // The outage: every attempt fails until the budget is gone.
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set attempts=max_attempts where id='${recoveryJob.documentScanJobId}'`);
+  await db.exec("set role service_role");
+  const recoveryDead = (await db.query(`select public.fail_document_scan('${recoveryJob.documentScanJobId}','SCANNER_UNREACHABLE',true) as r`)).rows[0].r;
+  assert(recoveryDead.status === "dead_letter", "The exhausted scan did not dead-letter.");
+  await db.exec("reset role");
+  const deadState = (await db.query(`select upload_status from public.document_versions where id='${recoveryDoc.finalized.versionId}'`)).rows[0].upload_status;
+  assert(deadState === "quarantined", "A dead-lettered scan left its document somewhere other than quarantine.");
+  // The document is unavailable while the job is dead-lettered — that part was always right.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.deliver_document('${organization.organizationId}','${recoveryDoc.finalized.versionId}','resident_person','${invitedResidentPerson}','portal','scan-dead-deliv-1')`),
+    "DOCUMENT_NOT_DELIVERABLE",
+  );
+
+  // Recovery is authorization-controlled and requires a reason: this is a human overriding an
+  // automated decision, and the next person needs to know who and why.
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}',null,'scan-retry-noreason')`), "SCAN_RETRY_REASON_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','short','scan-retry-shortrsn')`), "SCAN_RETRY_REASON_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Relay restored after outage','tiny')`), "INVALID_IDEMPOTENCY_KEY");
+  // Residents and unrelated users cannot manipulate scan state.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Relay restored after outage','resident-retry-01')`), "DOCUMENT_SCOPE_DENIED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Relay restored after outage','outsider-retry-1')`), "DOCUMENT_SCOPE_DENIED");
+  await db.exec("reset role; set role anon");
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Relay restored after outage','anon-retry-0001')`), "permission denied for function retry_document_scan");
+
+  // The scanner is restored; an authorized operator retries.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const retried = (await db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Scan relay restored after provider outage','scan-retry-0001') as r`)).rows[0].r;
+  assert(retried.status === "queued", "The retry did not return the job to a claimable state.");
+  // DECISIVE: recovery re-opens the question, it does NOT answer it. The document is still unusable.
+  assert(retried.uploadStatus === "quarantined", "The retry made the document usable without a scan verdict.");
+  const retryReplay = (await db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Scan relay restored after provider outage','scan-retry-0001') as r`)).rows[0].r;
+  assert(retryReplay.documentScanJobId === retried.documentScanJobId && retryReplay.correlationId === retried.correlationId,
+    "Replaying the retry was not idempotent.");
+  await db.exec("reset role");
+  const retriedState = (await db.query(`select
+    (select status from private.document_scan_jobs where id='${recoveryJob.documentScanJobId}') as job_status,
+    (select attempts from private.document_scan_jobs where id='${recoveryJob.documentScanJobId}') as attempts,
+    (select upload_status from public.document_versions where id='${recoveryDoc.finalized.versionId}') as version_status,
+    (select count(*)::integer from audit.audit_events where action_code='document.scanRetried' and resource_id='${recoveryDoc.finalized.versionId}') as audits,
+    (select reason from audit.audit_events where action_code='document.scanRetried' and resource_id='${recoveryDoc.finalized.versionId}' limit 1) as reason`)).rows[0];
+  assert(retriedState.job_status === "queued" && retriedState.attempts === 0, "The retry did not reset the attempt budget.");
+  assert(retriedState.version_status === "quarantined", "The retry released the document before it was scanned.");
+  assert(retriedState.audits === 1 && retriedState.reason === "Scan relay restored after provider outage",
+    "The retry was not audited with the operator's reason.");
+
+  // The restored scanner now produces a real verdict, and only THAT makes the document usable.
+  await db.exec("set role service_role");
+  const recoveryReclaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-recovery2') as r`)).rows[0].r;
+  assert(recoveryReclaim.jobs.some((j) => j.documentScanJobId === recoveryJob.documentScanJobId), "The recovered job was not claimable again.");
+  const recoveryVerdict = (await db.query(`select public.complete_document_scan('${recoveryJob.documentScanJobId}','clean','${"7".repeat(64)}','test-scanner','ref-recovered') as r`)).rows[0].r;
+  assert(recoveryVerdict.uploadStatus === "clean", "The recovered scan did not clean the document.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const recoveredDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${recoveryDoc.finalized.versionId}','resident_person','${invitedResidentPerson}','portal','scan-recovered-dl1') as r`)).rows[0].r;
+  assert(recoveredDelivery.status === "delivered", "The recovered document was still unusable after a clean verdict.");
+
+  // A retry is not a way to re-decide a finished scan, nor to launder a rejected document.
+  await expectDatabaseError(
+    () => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Trying to re-open a finished scan','scan-retry-done01')`),
+    "DOCUMENT_SCAN_JOB_NOT_DEAD_LETTERED",
+  );
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set status='dead_letter' where document_version_id='${scanInfectedDoc.finalized.versionId}'`);
+  const infectedJobId = (await db.query(`select id from private.document_scan_jobs where document_version_id='${scanInfectedDoc.finalized.versionId}'`)).rows[0]?.id;
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  if (infectedJobId) {
+    await expectDatabaseError(
+      () => db.query(`select public.retry_document_scan('${organization.organizationId}','${infectedJobId}','Trying to launder an infected document','scan-retry-infect1')`),
+      "DOCUMENT_VERSION_NOT_SCANNABLE",
+    );
+  }
+
+  // (7) One logical state change, one correlation id. These were two independent gen_random_uuid()
+  // calls, so a scan verdict could not be joined across its audit row and its outbox event.
+  await db.exec("reset role");
+  const scanTrace = (await db.query(`select
+    (select correlation_id from audit.audit_events where action_code='document.scanned' and resource_id='${recoveryDoc.finalized.versionId}') as audit_correlation,
+    (select correlation_id from private.outbox_events where event_type='document.scanned' and aggregate_id='${recoveryDoc.finalized.versionId}') as outbox_correlation`)).rows[0];
+  assert(scanTrace.audit_correlation && scanTrace.audit_correlation === scanTrace.outbox_correlation,
+    "A single scan verdict wrote two different correlation ids, so its audit and outbox halves cannot be joined.");
+  assert(scanTrace.audit_correlation === recoveryVerdict.correlationId,
+    "The scan response did not return the correlation id it actually wrote.");
+  const retryTrace = (await db.query(`select
+    (select correlation_id from audit.audit_events where action_code='document.scanRetried' and resource_id='${recoveryDoc.finalized.versionId}') as audit_correlation,
+    (select correlation_id from private.outbox_events where event_type='document.scanRetried' and aggregate_id='${recoveryDoc.finalized.versionId}') as outbox_correlation`)).rows[0];
+  assert(retryTrace.audit_correlation && retryTrace.audit_correlation === retryTrace.outbox_correlation,
+    "The scan retry wrote two different correlation ids.");
+
+  const scanRecovery = {
+    deadLetterRetried: 1,
+    recoveredToClean: 1,
+    unauthorizedRetriesBlocked: 3,
+  };
+
+  // ── A.1: the organization-creation write boundary ────────────────────────────────────────────────
+  // A4 put the published-document gate in the Next server action. That was not a boundary: a signed-in
+  // browser could call public.create_organization directly with ANY p_terms_version — "", "2026-07-20",
+  // "I agree" — and record a consent row against a document that was never published or shown.
+  const boundaryActor = "e9000000-0000-4000-8000-0000000000c1";
+  const boundaryOutsider = "e9000000-0000-4000-8000-0000000000c2";
+  await db.exec(`reset role; insert into auth.users(id) values ('${boundaryActor}'),('${boundaryOutsider}')`);
+
+  // (1) Anonymous cannot create, by either surface.
+  await db.exec("set role anon");
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization('Anon Co','anon-co','property_manager','US','en-US','America/New_York','operator_terms@1#0123456789abcdef','anon-create-0001')`),
+    "permission denied for function create_organization",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization_as_actor('${boundaryActor}','Anon Co','anon-co','property_manager','US','en-US','America/New_York','operator_terms@1#0123456789abcdef','anon-create-0002')`),
+    "permission denied for function create_organization_as_actor",
+  );
+
+  // (2) DECISIVE: a signed-in browser cannot reach the privileged creation command at all. The trusted
+  // actor parameter only means something if the browser can never supply it.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${boundaryActor}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization_as_actor('${boundaryActor}','Direct Co','direct-co','property_manager','US','en-US','America/New_York','operator_terms@1#0123456789abcdef','direct-create-0001')`),
+    "permission denied for function create_organization_as_actor",
+  );
+  // Nor can it impersonate someone else through it.
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization_as_actor('${boundaryOutsider}','Impersonated Co','impersonated-co','property_manager','US','en-US','America/New_York','operator_terms@1#0123456789abcdef','direct-create-0002')`),
+    "permission denied for function create_organization_as_actor",
+  );
+
+  // (3) An arbitrary consent version cannot create an organization. Two independent reasons, and the
+  // test asserts BOTH, because either alone would be a thinner guarantee than it looks.
+  //
+  // First: after the contract release the browser cannot reach the creation surface at all, whatever
+  // version string it carries.
+  for (const bogus of ["", "  ", "2026", "short", "operator_terms@1#0123456789abcdef"]) {
+    await expectDatabaseError(
+      () => db.query(`select public.create_organization('Bogus Co','bogus-co','property_manager','US','en-US','America/New_York','${bogus}','bogus-create-${bogus.length}')`),
+      "permission denied for function create_organization",
+    );
+  }
+  // Second: even a trusted service_role caller — the server action itself, if it ever shipped a bug —
+  // cannot record consent evidence that names no artifact.
+  await db.exec("reset role; set role service_role");
+  for (const bogus of ["", "  ", "2026", "short"]) {
+    await expectDatabaseError(
+      () => db.query(`select public.create_organization_as_actor('${boundaryActor}','Bogus Co','bogus-co','property_manager','US','en-US','America/New_York','${bogus}','bogus-svc-${bogus.length}')`),
+      "CONSENT_VERSION_REQUIRED",
+    );
+  }
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${boundaryActor}'`);
+  await db.exec("reset role");
+  const bogusOrganizations = (await db.query("select count(*)::integer as c from public.organizations where slug in ('anon-co','direct-co','impersonated-co','bogus-co')")).rows[0].c;
+  assert(bogusOrganizations === 0, "A bypass attempt created an organization.");
+
+  // (4) A server-created organization records the exact resolved binding, and (7) a replay of the same
+  // server action creates exactly one organization.
+  const serverBinding = "operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef";
+  await db.exec("set role service_role");
+  const serverCreated = (await db.query(`select public.create_organization_as_actor(
+    '${boundaryActor}','Boundary Works','boundary-works','property_manager','US','en-US','America/New_York','${serverBinding}','boundary-create-0001'
+  ) as r`)).rows[0].r;
+  assert(serverCreated.organizationId && serverCreated.roleCode === "org_owner", "The server boundary did not create the organization.");
+  const serverReplay = (await db.query(`select public.create_organization_as_actor(
+    '${boundaryActor}','Boundary Works','boundary-works','property_manager','US','en-US','America/New_York','${serverBinding}','boundary-create-0001'
+  ) as r`)).rows[0].r;
+  assert(serverReplay.organizationId === serverCreated.organizationId, "An idempotent replay created a second organization.");
+  await db.exec("reset role");
+  const boundaryRows = (await db.query(`select
+    (select count(*)::integer from public.organizations where slug='boundary-works') as organizations,
+    (select count(*)::integer from public.organization_memberships where organization_id='${serverCreated.organizationId}' and user_id='${boundaryActor}' and role_code='org_owner' and status='active') as memberships,
+    (select legal_document_version from public.consent_records where organization_id='${serverCreated.organizationId}') as consent_version,
+    (select count(*)::integer from audit.audit_events where resource_id='${serverCreated.organizationId}' and action_code='organization.created') as audits,
+    (select count(*)::integer from private.outbox_events where aggregate_id='${serverCreated.organizationId}' and event_type='organization.created') as events`)).rows[0];
+  assert(boundaryRows.organizations === 1, `A replay produced ${boundaryRows.organizations} organizations.`);
+  assert(boundaryRows.memberships === 1, "The creating actor did not become the active owner.");
+  assert(boundaryRows.consent_version === serverBinding,
+    `Consent recorded "${boundaryRows.consent_version}" instead of the exact resolved binding.`);
+  assert(boundaryRows.audits === 1 && boundaryRows.events === 1, "The server boundary lost the audit or outbox trace.");
+
+  // An actor id that resolves to nobody is refused, so a trusted caller still cannot invent an owner.
+  await db.exec("set role service_role");
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization_as_actor('${"c".repeat(8)}-0000-4000-8000-000000000000','Ghost Co','ghost-co','property_manager','US','en-US','America/New_York','${serverBinding}','ghost-create-0001')`),
+    "ACTOR_NOT_FOUND",
+  );
+
+  // The Growth trial is the 30 days file 11 specifies, not the 14 that shipped.
+  await db.exec("reset role");
+  const trialRow = (await db.query(`select
+    extract(day from (trial_ends_at - created_at))::integer as trial_days,
+    extract(day from (current_period_end - current_period_start))::integer as period_days,
+    plan_code, status
+    from public.organization_subscriptions where organization_id='${serverCreated.organizationId}'`)).rows[0];
+  assert(trialRow.plan_code === "growth" && trialRow.status === "trialing", "The new organization did not start a Growth trial.");
+  assert(trialRow.trial_days === 30, `The Growth trial expires after ${trialRow.trial_days} days, not the authoritative 30.`);
+  assert(trialRow.period_days === 30, `The initial billing period is ${trialRow.period_days} days, not the authoritative 30.`);
+  const responseTrialDays = Math.round(
+    (new Date(serverCreated.trial.endsAt).getTime() - Date.now()) / 86_400_000,
+  );
+  assert(serverCreated.trial.planCode === "growth" && responseTrialDays === 30,
+    `The command response advertised a ${responseTrialDays}-day trial.`);
+
+  const organizationBoundary = {
+    bypassAttemptsBlocked: 13,
+    trialDays: trialRow.trial_days,
+    consentBoundToBinding: boundaryRows.consent_version === serverBinding,
+  };
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean };
 }
 
 try {

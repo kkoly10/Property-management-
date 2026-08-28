@@ -7,27 +7,24 @@ import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 import { ACTIVE_ORGANIZATION_COOKIE, normalizeOperatorOrganizations } from "@/lib/organization/context";
 
 /**
- * Switch the operator's active organization.
+ * Establish an organization as the active one.
  *
- * The selection is server-controlled: it is only ever written after the server has re-read the
- * caller's live memberships and found the requested one among them, and it is stored httpOnly so
- * browser script cannot set it. It is still revalidated on every use — the cookie is a preference,
- * never a grant.
+ * The membership check is not skippable: the selection is only written after the server re-reads the
+ * caller's live memberships and finds the requested organization among them. It is still revalidated
+ * on every use — the cookie is a preference, never a grant.
  *
- * `revalidatePath("/", "layout")` is what makes "switching context refreshes all organization-scoped
- * product data" true: every cached server render below the root layout is discarded, so no page can
- * keep showing the previous tenant's rows.
+ * Returns whether the selection was accepted, so a caller that needs to know (onboarding, which must
+ * not continue into the wrong tenant) can act on the answer instead of assuming.
  */
-export async function selectOrganization(formData: FormData): Promise<void> {
-  const organizationId = formData.get("organizationId");
-  if (typeof organizationId !== "string" || !organizationId) return;
-  if (!getPublicSupabaseConfig()) return;
+export async function setActiveOrganization(organizationId: string): Promise<boolean> {
+  if (!organizationId) return false;
+  if (!getPublicSupabaseConfig()) return false;
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("list_operator_organizations");
-  if (error) return;
+  if (error) return false;
   const permitted = normalizeOperatorOrganizations(data).some((o) => o.organizationId === organizationId);
-  if (!permitted) return;
+  if (!permitted) return false;
 
   const store = await cookies();
   store.set(ACTIVE_ORGANIZATION_COOKIE, organizationId, {
@@ -37,7 +34,17 @@ export async function selectOrganization(formData: FormData): Promise<void> {
     path: "/",
     maxAge: 60 * 60 * 24 * 90,
   });
+  // What makes "switching context refreshes all organization-scoped product data" true rather than
+  // aspirational: every cached server render below the root layout is discarded.
   revalidatePath("/", "layout");
+  return true;
+}
+
+/** The switcher's form target. */
+export async function selectOrganization(formData: FormData): Promise<void> {
+  const organizationId = formData.get("organizationId");
+  if (typeof organizationId !== "string") return;
+  await setActiveOrganization(organizationId);
 }
 
 /** Forget the selection — used when the selected membership disappears. */

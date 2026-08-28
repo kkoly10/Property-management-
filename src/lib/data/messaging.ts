@@ -142,9 +142,12 @@ function normalizeDetail(value: unknown): ConversationDetail {
 }
 
 /**
- * Shared with the resident and owner portals, which hold no operator organization: with no context
- * the unscoped form is used and the caller sees only their own conversations, exactly as before. An
- * operator supplies their active organization and sees only that tenant's.
+ * Two contracts, not one filter. With no operator context this uses the RELATIONSHIP projection,
+ * which returns only conversations the caller participates in and is structurally incapable of
+ * unioning organizations. An operator supplies their active organization and gets that tenant's.
+ *
+ * The old shared form answered both questions at once, and its operator half was organization-wide —
+ * so an operator could union organizations just by calling it directly.
  */
 export async function getConversationWorkspace(organizationId: string | null = null): Promise<ConversationWorkspace> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", items: [previewSummary] };
@@ -152,7 +155,7 @@ export async function getConversationWorkspace(organizationId: string | null = n
     const supabase = await createClient();
     const { data, error } = organizationId
       ? await supabase.rpc("get_conversation_workspace", { p_organization_id: organizationId })
-      : await supabase.rpc("get_conversation_workspace");
+      : await supabase.rpc("get_relationship_conversation_workspace");
     if (error || !data) throw error ?? new Error("Messages are unavailable.");
     const items = (data as { items?: unknown[] }).items;
     return { mode: "ready", items: Array.isArray(items) ? items.map(normalizeSummary) : [] };

@@ -117,8 +117,9 @@ function normalizeItem(value: unknown): PrivacyRequestItem {
 }
 
 /**
- * Shared with residents and owners, who have a privacy right regardless of any operator membership:
- * with no context the unscoped form is used. An operator supplies their active organization.
+ * Two contracts, not one filter. Residents and owners have a privacy right regardless of any operator
+ * membership, so with no context this uses the RELATIONSHIP projection — organizations they hold an
+ * active relationship with, and nothing else. An operator supplies their active organization.
  */
 export async function getPrivacyRequestWorkspace(organizationId: string | null = null): Promise<PrivacyRequestWorkspace> {
   if (!getPublicSupabaseConfig()) {
@@ -134,7 +135,7 @@ export async function getPrivacyRequestWorkspace(organizationId: string | null =
     const supabase = await createClient();
     const { data, error } = organizationId
       ? await supabase.rpc("get_privacy_request_workspace", { p_organization_id: organizationId })
-      : await supabase.rpc("get_privacy_request_workspace");
+      : await supabase.rpc("get_relationship_privacy_request_workspace");
     if (error || !data) throw error ?? new Error("Privacy requests are unavailable.");
     const root = data as Record<string, unknown>;
     return {

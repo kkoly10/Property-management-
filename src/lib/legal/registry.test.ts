@@ -7,6 +7,7 @@ import {
   findLegalDocumentByRoute,
   listLegalDocuments,
   resolveDocument,
+  DeploymentEnvironmentError,
   requiresPublishedLegalDocuments,
   resolveOrganizationConsent,
 } from "./registry";
@@ -156,38 +157,78 @@ describe("requiresPublishedLegalDocuments", () => {
   const setNodeEnv = (value: string) => {
     (process.env as Record<string, string | undefined>).NODE_ENV = value;
   };
+  const clearEnvironment = () => {
+    delete process.env.CRECY_DEPLOYMENT_ENV;
+    delete process.env.VERCEL_ENV;
+  };
   afterEach(() => {
     process.env = { ...saved };
   });
 
-  it("is strict on a real production deployment", () => {
-    process.env.CRECY_DEPLOYMENT_ENV = "production";
-    expect(requiresPublishedLegalDocuments()).toBe(true);
-    delete process.env.CRECY_DEPLOYMENT_ENV;
+  it("requires published documents on a Vercel production deployment", () => {
+    clearEnvironment();
     process.env.VERCEL_ENV = "production";
     expect(requiresPublishedLegalDocuments()).toBe(true);
   });
 
-  it("relaxes only where a NON-production environment has explicitly said so", () => {
-    for (const environment of ["preview", "development", "test", "staging"]) {
+  it("does NOT let an application override weaken a known Vercel production deployment", () => {
+    // The decisive rule. VERCEL_ENV is set by the platform; CRECY_DEPLOYMENT_ENV is set by whoever
+    // edits the project's variables. If the second could switch off the gate on real production, the
+    // gate would be advisory — and one copied `.env` line would be enough to record consent against
+    // unpublished drafts for every workspace created from then on.
+    clearEnvironment();
+    process.env.VERCEL_ENV = "production";
+    for (const override of ["development", "preview", "test"]) {
+      process.env.CRECY_DEPLOYMENT_ENV = override;
+      expect(requiresPublishedLegalDocuments(), `override "${override}" weakened Vercel production`).toBe(true);
+    }
+  });
+
+  it("throws on an unrecognized environment rather than guessing", () => {
+    // A typo must not silently become "development". This is the exact misspelling the reviewer named.
+    clearEnvironment();
+    process.env.CRECY_DEPLOYMENT_ENV = "produciton";
+    expect(() => requiresPublishedLegalDocuments()).toThrow(DeploymentEnvironmentError);
+    expect(() => requiresPublishedLegalDocuments()).toThrow(/produciton/);
+    for (const bogus of ["prod", "staging", "PRODUCTION_", "live", " "]) {
+      process.env.CRECY_DEPLOYMENT_ENV = bogus;
+      if (bogus.trim() === "") {
+        // An all-whitespace value is indistinguishable from unset, and unset falls through to rule 3.
+        expect(() => requiresPublishedLegalDocuments()).not.toThrow();
+      } else {
+        expect(() => requiresPublishedLegalDocuments(), `"${bogus}" did not fail closed`).toThrow(DeploymentEnvironmentError);
+      }
+    }
+  });
+
+  it("relaxes only for a recognized non-production environment", () => {
+    clearEnvironment();
+    for (const environment of ["preview", "development", "test"]) {
       process.env.CRECY_DEPLOYMENT_ENV = environment;
-      expect(requiresPublishedLegalDocuments(), `${environment} should not be strict`).toBe(false);
+      expect(requiresPublishedLegalDocuments(), `${environment} should not require published`).toBe(false);
+    }
+    process.env.CRECY_DEPLOYMENT_ENV = "production";
+    expect(requiresPublishedLegalDocuments()).toBe(true);
+  });
+
+  it("treats a Vercel preview or development deployment as non-production without an override", () => {
+    clearEnvironment();
+    for (const platform of ["preview", "development"]) {
+      process.env.VERCEL_ENV = platform;
+      expect(requiresPublishedLegalDocuments()).toBe(false);
     }
   });
 
   it("treats an unlabeled production build as production rather than defaulting to lax", () => {
-    // The safe default. A self-hosted deployment that sets neither variable must fail closed, not
-    // quietly record consent against a draft.
-    delete process.env.CRECY_DEPLOYMENT_ENV;
-    delete process.env.VERCEL_ENV;
+    // The safe default. A self-hosted deployment that sets neither variable must fail closed.
+    clearEnvironment();
     setNodeEnv("production");
     expect(requiresPublishedLegalDocuments()).toBe(true);
   });
 
-  it("lets an explicit non-production declaration override NODE_ENV", () => {
-    // How the E2E harness and preview deployments stay usable: they say what they are.
-    setNodeEnv("production");
-    process.env.CRECY_DEPLOYMENT_ENV = "test";
+  it("is not strict for an unlabeled non-production runtime", () => {
+    clearEnvironment();
+    setNodeEnv("development");
     expect(requiresPublishedLegalDocuments()).toBe(false);
   });
 });

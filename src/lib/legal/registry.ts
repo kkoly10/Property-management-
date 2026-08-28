@@ -123,18 +123,57 @@ export function resolveOrganizationConsent(options?: {
 }
 
 /**
+ * The deployment environments this application recognizes.
+ *
+ * A closed set on purpose. An unrecognized value is a typo or a rename, and the wrong thing to do with
+ * a typo is to guess: `CRECY_DEPLOYMENT_ENV=produciton` silently becoming "development" would relax the
+ * legal gate on a real production deployment because someone fat-fingered one letter.
+ */
+export const RECOGNIZED_DEPLOYMENT_ENVIRONMENTS = ["production", "preview", "development", "test"] as const;
+export type DeploymentEnvironment = (typeof RECOGNIZED_DEPLOYMENT_ENVIRONMENTS)[number];
+
+export class DeploymentEnvironmentError extends Error {
+  constructor(value: string) {
+    super(
+      `Unrecognized CRECY_DEPLOYMENT_ENV "${value}". Use one of: ${RECOGNIZED_DEPLOYMENT_ENVIRONMENTS.join(", ")}. `
+      + "Crecy will not guess a deployment environment, because guessing wrong relaxes the legal publication gate.",
+    );
+    this.name = "DeploymentEnvironmentError";
+  }
+}
+
+/**
  * Whether consent must bind to PUBLISHED artifacts here.
  *
- * `NODE_ENV` is the wrong signal: a preview deployment, a local `next start` and the E2E harness all
- * run with NODE_ENV=production while serving nobody real. The deployment environment is the right one.
+ * Three rules, in this order, and the order is the whole design:
  *
- * The default is deliberately STRICT — an unlabeled build that thinks it is production is treated as
- * production, so a self-hosted deployment that sets nothing fails closed rather than quietly recording
- * consent against a draft. A non-production environment has to say so, by setting
- * CRECY_DEPLOYMENT_ENV (or by running on Vercel, which sets VERCEL_ENV itself).
+ *   1. **Vercel has the last word on production.** `VERCEL_ENV` is set by the platform, not by us. If
+ *      it says `production`, this IS a production deployment and published documents are required —
+ *      no application-level variable may weaken that. An override that can turn off the gate on real
+ *      production is not a gate.
+ *   2. **An unrecognized override throws.** Not "falls back to development", not "assumes production
+ *      and continues" — throws, so a misconfiguration is a loud failure at the point of use rather
+ *      than a silent relaxation nobody notices until consent records are already wrong.
+ *   3. **Anything unlabeled is treated as production.** A self-hosted deployment that sets nothing
+ *      fails closed. A non-production environment has to say so.
  */
 export function requiresPublishedLegalDocuments(): boolean {
-  const declared = process.env.CRECY_DEPLOYMENT_ENV ?? process.env.VERCEL_ENV;
-  if (declared) return declared.trim().toLowerCase() === "production";
+  const platform = process.env.VERCEL_ENV?.trim().toLowerCase();
+  // Rule 1. Checked FIRST and returned immediately, so no override below can reach it.
+  if (platform === "production") return true;
+
+  const declared = process.env.CRECY_DEPLOYMENT_ENV?.trim().toLowerCase();
+  if (declared) {
+    // Rule 2.
+    if (!(RECOGNIZED_DEPLOYMENT_ENVIRONMENTS as readonly string[]).includes(declared)) {
+      throw new DeploymentEnvironmentError(process.env.CRECY_DEPLOYMENT_ENV as string);
+    }
+    return declared === "production";
+  }
+
+  // A Vercel preview or development deployment is genuinely not production.
+  if (platform === "preview" || platform === "development") return false;
+
+  // Rule 3.
   return process.env.NODE_ENV === "production";
 }
