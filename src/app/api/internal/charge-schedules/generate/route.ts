@@ -1,6 +1,6 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { hasValidWorkerCredential } from "@/lib/runtime/worker-auth";
 import { generateRecurringChargesSchema } from "@/lib/validation/finance";
 
 export const runtime = "nodejs";
@@ -9,15 +9,12 @@ function unauthorized() {
   return NextResponse.json({ error: "A valid internal worker credential is required." }, { status: 401 });
 }
 
-function hasValidWorkerCredential(request: Request) {
-  const expected = process.env.CRECY_INTERNAL_WORKER_SECRET;
-  const presented = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!expected || expected.includes("replace_with") || !presented) return false;
-  const expectedBytes = Buffer.from(expected);
-  const presentedBytes = Buffer.from(presented);
-  return expectedBytes.length === presentedBytes.length && timingSafeEqual(expectedBytes, presentedBytes);
-}
-
+/**
+ * Manual/operator entry point for ONE explicitly dated generation run — the escape hatch for a
+ * back-dated or single-schedule correction. The scheduled entry point is
+ * /api/internal/cron/recurring-charges, which never takes a caller-supplied date: it derives the
+ * operational date from each property's own time zone.
+ */
 export async function POST(request: Request) {
   if (!hasValidWorkerCredential(request)) return unauthorized();
   const parsed = generateRecurringChargesSchema.safeParse(await request.json().catch(() => null));

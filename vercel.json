@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/internal/cron/recurring-charges",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/internal/cron/notifications",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/internal/cron/document-scans",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/internal/cron/operational-sweep",
+      "schedule": "17 4 * * *"
+    }
+  ]
+}

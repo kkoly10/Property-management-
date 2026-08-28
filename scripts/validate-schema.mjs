@@ -58,6 +58,7 @@ const residentBalanceImportSql = await readFile(resolve(root, "supabase/migratio
 const xlsxSourceDocumentsSql = await readFile(resolve(root, "supabase/migrations/20260729120000_phase_3_xlsx_source_documents.sql"), "utf8");
 const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/20260729130000_phase_4_secure_link_raw_token.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
+const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -815,6 +816,7 @@ async function validateRecurringCharges() {
   await db.exec(xlsxSourceDocumentsSql);
   await db.exec(secureLinkRawTokenSql);
   await db.exec(documentScanLifecycleSql);
+  await db.exec(runtimeSchedulerSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -4558,8 +4560,178 @@ async function validateRecurringCharges() {
   assert(legacyPortal.deliveryChannel === "portal" && legacyPortal.status === "delivered", "The legacy 6-argument deliver_document signature regressed.");
   await db.exec("reset role");
 
+  // ── Runtime scheduler: per-property time zones (phase_4_runtime_scheduler, v4.2 Batch A2) ────────
+  // generate_recurring_charges takes ONE p_run_date and applies it to every due schedule. A scheduler
+  // that passed a naive UTC current_date would charge a Los Angeles property on the 1st while it is
+  // still the 31st there — wrong due date, wrong journal effective date, every single month. File 27
+  // §5.A2 makes the property's own zone binding, so the selector partitions by zone and computes the
+  // operational date in each one.
+  //
+  // Three materially different North American zones, evaluated across UTC midnight and a month
+  // boundary. On 2026-09-01 the offsets are EDT -4, PDT -7, HST -10 (Hawaii observes no DST).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  const zoneFixtures = [
+    { key: "ny", zone: "America/New_York", name: "Hudson Row", city: "Brooklyn", region: "NY", postal: "11201" },
+    { key: "la", zone: "America/Los_Angeles", name: "Sunset Terrace", city: "Los Angeles", region: "CA", postal: "90013" },
+    { key: "hi", zone: "Pacific/Honolulu", name: "Kalia Court", city: "Honolulu", region: "HI", postal: "96815" },
+  ];
+  const zoneWorld = {};
+  for (const [index, fixture] of zoneFixtures.entries()) {
+    const created = (await db.query(`select public.create_property('${organization.organizationId}','${entity.operatingEntityId}','${entity.accountingBookId}','US_NATIONAL','${fixture.name}','multifamily','${100 + index} Zone Street',null,'${fixture.city}','${fixture.region}','${fixture.postal}','US','${fixture.zone}','tz-property-${fixture.key}-01') as result`)).rows[0].result;
+    const createdUnit = (await db.query(`select public.create_unit('${organization.organizationId}','${created.propertyId}',null,'TZ-${fixture.key.toUpperCase()}','Apartment',1,1,600,'tz-unit-${fixture.key}-01') as result`)).rows[0].result;
+    zoneWorld[fixture.key] = { ...fixture, propertyId: created.propertyId, unitId: createdUnit.unitId };
+  }
+  // Households, leases, tenancies and schedules are seeded directly: this test is about WHICH schedules
+  // the selector considers due in each zone, not about lease activation (covered elsewhere).
+  await db.exec("reset role");
+  for (const fixture of Object.values(zoneWorld)) {
+    const seeded = (await db.query(`
+      with household as (
+        insert into public.households(organization_id,display_name,status)
+        values ('${organization.organizationId}','${fixture.name} household','resident') returning id
+      ), receivable as (
+        insert into public.receivable_accounts(organization_id,accounting_book_id,public_reference,currency_code,status)
+        values ('${organization.organizationId}','${entity.accountingBookId}','TZ-${fixture.key.toUpperCase()}-AR','USD','active') returning id
+      ), lease as (
+        insert into public.leases(organization_id,property_id,unit_id,household_id,country_profile_id,start_date,rent_amount_minor,currency_code,status,executed_at,created_by)
+        select '${organization.organizationId}','${fixture.propertyId}','${fixture.unitId}',h.id,cp.id,'2026-08-01',150000,'USD','active',now(),'${admin}'
+        from household h, public.country_profiles cp where cp.code='US_NATIONAL' returning id, household_id
+      ), tenancy as (
+        insert into public.tenancies(organization_id,property_id,unit_id,household_id,lease_id,receivable_account_id,possession_start,status)
+        select '${organization.organizationId}','${fixture.propertyId}','${fixture.unitId}',l.household_id,l.id,r.id,'2026-08-01','active'
+        from lease l, receivable r returning id
+      )
+      insert into public.charge_schedules(organization_id,accounting_book_id,tenancy_id,receivable_account_id,charge_type,amount_minor,currency_code,cadence,due_day,starts_on,next_run_on,status)
+      select '${organization.organizationId}','${entity.accountingBookId}',t.id,r.id,'rent',150000,'USD','monthly',1,'2026-08-01','2026-09-01','active'
+      from tenancy t, receivable r
+      returning id, tenancy_id`)).rows[0];
+    fixture.scheduleId = seeded.id;
+    fixture.tenancyId = seeded.tenancy_id;
+  }
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.list_due_charge_schedule_batches(now(),50)`), "permission denied for function list_due_charge_schedule_batches");
+  await expectDatabaseError(() => db.query(`select public.sweep_expired_operational_records(100)`), "permission denied for function sweep_expired_operational_records");
+  await db.exec("reset role; set role service_role");
+  await expectDatabaseError(() => db.query(`select public.list_due_charge_schedule_batches(now(),0)`), "INVALID_SCHEDULE_BATCH_SIZE");
+  await expectDatabaseError(() => db.query(`select public.list_due_charge_schedule_batches(now(),501)`), "INVALID_SCHEDULE_BATCH_SIZE");
+
+  const batchesAt = async (instant) =>
+    (await db.query(`select public.list_due_charge_schedule_batches('${instant}'::timestamptz,50) as r`)).rows[0].r;
+  const zoneBatch = (result, zone) => result.batches.find((b) => b.timeZone === zone) ?? null;
+
+  // 03:00Z on Sep 1 — still Aug 31 in ALL THREE zones. A naive UTC date would already read 2026-09-01.
+  const earlyUtc = await batchesAt("2026-09-01T03:00:00Z");
+  for (const fixture of Object.values(zoneWorld)) {
+    const batch = zoneBatch(earlyUtc, fixture.zone);
+    assert(!batch || !batch.scheduleIds.includes(fixture.scheduleId),
+      `A schedule due 2026-09-01 was selected in ${fixture.zone} while it was still 2026-08-31 there.`);
+  }
+
+  // 06:00Z — DECISIVE. It is 02:00 on Sep 1 in New York but still 23:00 on Aug 31 in Los Angeles and
+  // 20:00 on Aug 31 in Honolulu. A single naive UTC current_date would charge all three.
+  const boundaryUtc = await batchesAt("2026-09-01T06:00:00Z");
+  const nyBatch = zoneBatch(boundaryUtc, "America/New_York");
+  assert(nyBatch && nyBatch.localDate === "2026-09-01" && nyBatch.scheduleIds.includes(zoneWorld.ny.scheduleId),
+    "The New York schedule was not due once its own local date reached 2026-09-01.");
+  for (const key of ["la", "hi"]) {
+    const batch = zoneBatch(boundaryUtc, zoneWorld[key].zone);
+    assert(!batch || !batch.scheduleIds.includes(zoneWorld[key].scheduleId),
+      `The ${zoneWorld[key].zone} schedule was charged on 2026-09-01 while it was still August there.`);
+  }
+
+  // 09:00Z — Sep 1 in New York and Los Angeles, still Aug 31 in Honolulu.
+  const pacificUtc = await batchesAt("2026-09-01T09:00:00Z");
+  assert(zoneBatch(pacificUtc, "America/Los_Angeles")?.localDate === "2026-09-01", "Los Angeles did not reach its own 2026-09-01.");
+  const hawaiiAtNine = zoneBatch(pacificUtc, "Pacific/Honolulu");
+  assert(!hawaiiAtNine || !hawaiiAtNine.scheduleIds.includes(zoneWorld.hi.scheduleId), "Honolulu was charged while it was still 2026-08-31 there.");
+  // 11:00Z — every zone has crossed into September.
+  const allDue = await batchesAt("2026-09-01T11:00:00Z");
+  for (const fixture of Object.values(zoneWorld)) {
+    const batch = zoneBatch(allDue, fixture.zone);
+    assert(batch && batch.localDate === "2026-09-01" && batch.scheduleIds.includes(fixture.scheduleId),
+      `${fixture.zone} was still not due once its own local date reached 2026-09-01.`);
+  }
+  assert(new Set(allDue.batches.map((b) => b.workerRunId)).size === allDue.batchCount,
+    "Two zones shared a worker-run id, so one zone's run would replay the other's response.");
+
+  // Repeated and overlapping invocations must be duplicate-safe: an identical due set yields an
+  // identical worker-run id, and generate_recurring_charges replays rather than double-charging.
+  const allDueAgain = await batchesAt("2026-09-01T11:00:00Z");
+  assert(JSON.stringify(allDue.batches.map((b) => b.workerRunId).sort()) === JSON.stringify(allDueAgain.batches.map((b) => b.workerRunId).sort()),
+    "The worker-run id was not stable across two evaluations of the same due set.");
+
+  const laBatch = zoneBatch(allDue, "America/Los_Angeles");
+  const laRun = (await db.query(`select public.generate_recurring_charges('${laBatch.localDate}'::date, '{${laBatch.scheduleIds.join(",")}}'::uuid[], '${laBatch.workerRunId}') as r`)).rows[0].r;
+  assert(laRun.generatedCount === 1 && laRun.replayed === false, "The Los Angeles batch did not generate exactly its own charge.");
+  const laReplay = (await db.query(`select public.generate_recurring_charges('${laBatch.localDate}'::date, '{${laBatch.scheduleIds.join(",")}}'::uuid[], '${laBatch.workerRunId}') as r`)).rows[0].r;
+  assert(laReplay.replayed === true && JSON.stringify(laReplay.chargeIds) === JSON.stringify(laRun.chargeIds),
+    "A repeated scheduler invocation for the same batch double-charged instead of replaying.");
+  await db.exec("reset role");
+  const laCharge = (await db.query(`select c.due_date::text as due_date, jt.effective_date::text as effective_date, c.tenancy_id
+    from public.charges c join public.journal_transactions jt on jt.id=c.journal_transaction_id
+    where c.charge_schedule_id='${zoneWorld.la.scheduleId}'`)).rows;
+  assert(laCharge.length === 1 && laCharge[0].due_date === "2026-09-01" && laCharge[0].effective_date === "2026-09-01",
+    "The Los Angeles charge did not land on its own local operational date.");
+  const untouched = (await db.query(`select count(*)::integer as c from public.charges
+    where charge_schedule_id in ('${zoneWorld.ny.scheduleId}','${zoneWorld.hi.scheduleId}')`)).rows[0].c;
+  assert(untouched === 0, "Running one zone's batch charged another zone's schedules.");
+  const laAdvanced = (await db.query(`select next_run_on::text as next_run_on from public.charge_schedules where id='${zoneWorld.la.scheduleId}'`)).rows[0].next_run_on;
+  assert(laAdvanced === "2026-10-01", "The charged schedule did not advance to its next monthly run.");
+  await db.exec("set role service_role");
+  const laAfterRun = zoneBatch(await batchesAt("2026-09-01T11:00:00Z"), "America/Los_Angeles");
+  assert(!laAfterRun || !laAfterRun.scheduleIds.includes(zoneWorld.la.scheduleId),
+    "An already-charged schedule was still offered as due.");
+
+  // An unrecognized property time zone must not abort the whole evaluation.
+  await db.exec(`reset role; update public.properties set time_zone='Mars/Olympus' where id='${zoneWorld.hi.propertyId}'; set role service_role`);
+  const withInvalidZone = await batchesAt("2026-09-01T11:00:00Z");
+  assert(withInvalidZone.invalidTimeZones.includes("Mars/Olympus"), "An unknown property time zone was not reported.");
+  assert(zoneBatch(withInvalidZone, "America/New_York")?.scheduleIds.includes(zoneWorld.ny.scheduleId),
+    "One unknown time zone stopped rent generation for every other property.");
+  await db.exec(`reset role; update public.properties set time_zone='Pacific/Honolulu' where id='${zoneWorld.hi.propertyId}'; set role service_role`);
+
+  // A paused schedule or an inactive tenancy is never offered, so the scheduler cannot resurrect one.
+  await db.exec(`reset role; update public.charge_schedules set status='paused' where id='${zoneWorld.ny.scheduleId}'; set role service_role`);
+  const withPaused = await batchesAt("2026-09-01T11:00:00Z");
+  assert(!zoneBatch(withPaused, "America/New_York")?.scheduleIds.includes(zoneWorld.ny.scheduleId), "A paused schedule was offered as due.");
+  await db.exec(`reset role; update public.charge_schedules set status='active' where id='${zoneWorld.ny.scheduleId}';
+    update public.tenancies set status='closed' where id='${zoneWorld.ny.tenancyId}'; set role service_role`);
+  const withEndedTenancy = await batchesAt("2026-09-01T11:00:00Z");
+  assert(!zoneBatch(withEndedTenancy, "America/New_York")?.scheduleIds.includes(zoneWorld.ny.scheduleId),
+    "A schedule on a closed tenancy was offered as due, which generate_recurring_charges would reject with TENANCY_NOT_ACTIVE.");
+  await db.exec(`reset role; update public.tenancies set status='active' where id='${zoneWorld.ny.tenancyId}'; set role service_role`);
+
+  // Operational recovery sweep: expired upload grants and expired idempotency records.
+  await db.exec("reset role");
+  const staleGrants = (await db.query(`update private.upload_grants set expires_at=now()-interval '1 day'
+    where status='issued' returning id`)).rows.length;
+  await db.exec(`update private.idempotency_records set expires_at=now()-interval '1 day' where route='FinalizeDocument'`);
+  const expirableRecords = (await db.query(`select count(*)::integer as c from private.idempotency_records where expires_at<=now()`)).rows[0].c;
+  await db.exec("set role service_role");
+  await expectDatabaseError(() => db.query(`select public.sweep_expired_operational_records(0)`), "INVALID_SWEEP_LIMIT");
+  const swept = (await db.query(`select public.sweep_expired_operational_records(1000) as r`)).rows[0].r;
+  assert(swept.expiredUploadGrants === staleGrants && swept.purgedIdempotencyRecords === expirableRecords,
+    "The operational sweep did not expire every stale upload grant and purge every expired idempotency record.");
+  await db.exec("reset role");
+  const sweptState = (await db.query(`select
+    (select count(*)::integer from private.upload_grants where status='issued' and expires_at<=now()) as stale_grants,
+    (select count(*)::integer from private.idempotency_records where expires_at<=now()) as stale_records`)).rows[0];
+  assert(sweptState.stale_grants === 0 && sweptState.stale_records === 0, "The operational sweep left stale rows behind.");
+  await db.exec("set role service_role");
+  const sweptAgain = (await db.query(`select public.sweep_expired_operational_records(1000) as r`)).rows[0].r;
+  assert(sweptAgain.expiredUploadGrants === 0 && sweptAgain.purgedIdempotencyRecords === 0, "The operational sweep was not idempotent.");
+  await db.exec("reset role");
+
+  const schedulerTimeZones = {
+    zones: zoneFixtures.length,
+    boundaryDueZones: boundaryUtc.batches.length,
+    expiredUploadGrants: swept.expiredUploadGrants,
+    purgedIdempotencyRecords: swept.purgedIdempotencyRecords,
+  };
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords };
 }
 
 try {
