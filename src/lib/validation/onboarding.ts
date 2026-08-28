@@ -10,6 +10,18 @@ export const organizationSchema = z.object({
   defaultLocale: z.enum(["en-US", "es-MX", "en-CA", "fr-CA"]),
   defaultTimeZone: z.string().trim().min(1),
   acceptedTerms: z.literal("on", { error: "Accept the Terms and Privacy Notice to continue." }),
+  // REQUIRED, not "compare if present". A submission that omits it is not a submission that happens to
+  // skip a check — it is a submission that cannot say which documents were accepted, and consent
+  // evidence that cannot name its artifacts is not evidence. The shape is the registry's binding
+  // format: <code>@<version>+<code>@<version>#<16 hex>.
+  consentVersion: z
+    .string()
+    .trim()
+    .min(1, { error: "The accepted Terms and Privacy Notice version is missing. Reload and try again." })
+    .max(400)
+    .regex(/^[a-z0-9_]+@[^+#\s]+(?:\+[a-z0-9_]+@[^+#\s]+)*#[0-9a-f]{16}$/, {
+      error: "The accepted Terms and Privacy Notice version is malformed. Reload and try again.",
+    }),
   idempotencyKey: z.uuid(),
 });
 

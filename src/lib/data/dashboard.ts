@@ -238,24 +238,16 @@ function normalizeDashboard(data: unknown, filters: DashboardFilters): Dashboard
   };
 }
 
-export async function getOperatorShellState(): Promise<{ organizationName: string }> {
-  if (!getPublicSupabaseConfig()) return { organizationName: "Crecy workspace" };
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.from("organizations").select("display_name").limit(1).maybeSingle();
-    return { organizationName: data?.display_name ?? "Crecy workspace" };
-  } catch {
-    return { organizationName: "Crecy workspace" };
-  }
-}
-
-export async function getDashboardState(filters: DashboardFilters): Promise<DashboardState> {
+export async function getDashboardState(organizationId: string | null, filters: DashboardFilters): Promise<DashboardState> {
   if (!getPublicSupabaseConfig()) return emptyDashboard(filters, "setup");
+  // Was `p_organization_id: null`, which drove the command centre into its own implicit branch:
+  // `order by m.created_at, m.id limit 1`. Naming the active organization is what stops that.
+  if (!organizationId) return emptyDashboard(filters, "error");
 
   try {
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("get_operator_command_center", {
-      p_organization_id: null,
+      p_organization_id: organizationId,
       p_property_id: filters.propertyId ?? null,
       p_accounting_book_id: filters.accountingBookId ?? null,
       p_from_date: filters.fromDate,

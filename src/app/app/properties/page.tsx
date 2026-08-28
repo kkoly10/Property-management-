@@ -5,11 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { getPortfolioState } from "@/lib/data/portfolio";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
 export default async function PropertiesPage() {
-  const portfolio = await getPortfolioState();
+  const organizationId = await getActiveOrganizationId();
+  const portfolio = await getPortfolioState(organizationId);
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-semibold text-primary">Portfolio</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Properties</h1><p className="mt-2 text-sm text-muted-foreground">Properties stay attached to one accounting book and functional currency.</p></div><div className="flex gap-2"><Button asChild variant="outline"><Link href="/app/imports/new"><Upload className="h-4 w-4" />Import</Link></Button><Button asChild><Link href="/onboarding/property"><Plus className="h-4 w-4" />Add property</Link></Button></div></div>

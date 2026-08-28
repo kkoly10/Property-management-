@@ -4,11 +4,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getOperatorPaymentWorkspace } from "@/lib/data/finance";
 import { ManualPaymentForm } from "./manual-payment-form";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
 export default async function RecordPaymentPage() {
-  const workspace = await getOperatorPaymentWorkspace();
+  const organizationId = await getActiveOrganizationId();
+  const workspace = await getOperatorPaymentWorkspace(organizationId);
   return <div className="mx-auto max-w-4xl space-y-6">
     <Button asChild variant="ghost" size="sm"><Link href="/app/payments"><ArrowLeft className="h-4 w-4" />Payments</Link></Button>
     <div><p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-primary">Controlled entry</p><h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em]">Record manual payment</h1><p className="mt-2 text-sm text-muted-foreground">For money already received outside Crecy. This immediately posts an allocated, balanced journal.</p></div>

@@ -118,7 +118,7 @@ function normalizeRecipientAnnouncement(value: unknown): RecipientAnnouncement {
   };
 }
 
-export async function getOperatorAnnouncementWorkspace(): Promise<{
+export async function getOperatorAnnouncementWorkspace(organizationId: string | null): Promise<{
   mode: DataMode;
   items: OperatorAnnouncement[];
   properties: AnnouncementProperty[];
@@ -135,7 +135,7 @@ export async function getOperatorAnnouncementWorkspace(): Promise<{
   }
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("get_operator_announcement_workspace");
+    const { data, error } = await supabase.rpc("get_operator_announcement_workspace", { p_organization_id: organizationId });
     if (error || !data) throw error ?? new Error("Announcements are unavailable.");
     return {
       mode: "ready",

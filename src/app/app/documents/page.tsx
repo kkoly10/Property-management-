@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getDocumentCenterState } from "@/lib/data/documents";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,8 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 export default async function DocumentsPage() {
-  const center = await getDocumentCenterState();
+  const organizationId = await getActiveOrganizationId();
+  const center = await getDocumentCenterState(organizationId);
   const cleanCount = center.documents.filter((document) => document.uploadStatus === "clean").length;
   const pendingCount = center.documents.filter((document) => ["quarantined", "scanning"].includes(document.uploadStatus)).length;
   return (

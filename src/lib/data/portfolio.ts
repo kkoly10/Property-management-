@@ -68,15 +68,18 @@ export async function getPropertySetupOptions(): Promise<{ mode: "setup" | "read
   };
 }
 
-export async function getPortfolioState(): Promise<{ mode: "setup" | "ready" | "error"; properties: PortfolioProperty[]; requestId?: string }> {
+export async function getPortfolioState(organizationId: string | null): Promise<{ mode: "setup" | "ready" | "error"; properties: PortfolioProperty[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", properties: [] };
+  // These reads relied on RLS alone, which for an operator in two organizations returns the union of
+  // both. RLS decides what may be seen; the active context decides what is being LOOKED at.
+  if (!organizationId) return { mode: "error", properties: [] };
 
   try {
     const supabase = await createClient();
     const [{ data: properties, error: propertyError }, { data: books }, { data: units }] = await Promise.all([
-      supabase.from("properties").select("id,organization_id,accounting_book_id,name,property_type,country_code,subdivision_code,locality,address_line1,postal_code,time_zone,status").order("name"),
-      supabase.from("accounting_books").select("id,name,functional_currency_code"),
-      supabase.from("units").select("property_id,operational_status"),
+      supabase.from("properties").select("id,organization_id,accounting_book_id,name,property_type,country_code,subdivision_code,locality,address_line1,postal_code,time_zone,status").eq("organization_id", organizationId).order("name"),
+      supabase.from("accounting_books").select("id,name,functional_currency_code").eq("organization_id", organizationId),
+      supabase.from("units").select("property_id,operational_status").eq("organization_id", organizationId),
     ]);
     if (propertyError) throw propertyError;
 

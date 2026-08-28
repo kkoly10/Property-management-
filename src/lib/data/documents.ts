@@ -97,7 +97,15 @@ export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumen
   }
 }
 
-export async function getDocumentCenterState(): Promise<DocumentCenterState> {
+/**
+ * The document centre for ONE organization.
+ *
+ * This previously computed `organizationId` from `organizations.order(created_at).limit(1)` while
+ * listing `properties` and `documents` completely unscoped — so an operator in two organizations saw a
+ * merged document list attached to an upload form bound to only one of them. The organization is now
+ * supplied by the caller and every query is filtered by it.
+ */
+export async function getDocumentCenterState(organizationId: string | null): Promise<DocumentCenterState> {
   if (!getPublicSupabaseConfig()) {
     return {
       mode: "setup",
@@ -112,14 +120,16 @@ export async function getDocumentCenterState(): Promise<DocumentCenterState> {
     };
   }
 
+  // No context, no data. Guessing an organization here is the defect this parameter removes.
+  if (!organizationId) return { mode: "error", organizationId: null, properties: [], documents: [] };
+
   try {
     const supabase = await createClient();
-    const [{ data: organizations, error: organizationError }, { data: properties, error: propertyError }, { data: documents, error: documentError }] = await Promise.all([
-      supabase.from("organizations").select("id").order("created_at").limit(1),
-      supabase.from("properties").select("id,name").order("name"),
-      supabase.from("documents").select("id,title,document_type,property_id,source,status,created_at").order("created_at", { ascending: false }),
+    const [{ data: properties, error: propertyError }, { data: documents, error: documentError }] = await Promise.all([
+      supabase.from("properties").select("id,name").eq("organization_id", organizationId).order("name"),
+      supabase.from("documents").select("id,title,document_type,property_id,source,status,created_at").eq("organization_id", organizationId).order("created_at", { ascending: false }),
     ]);
-    if (organizationError || propertyError || documentError) throw organizationError ?? propertyError ?? documentError;
+    if (propertyError || documentError) throw propertyError ?? documentError;
 
     const documentIds = (documents ?? []).map((document) => document.id);
     const versionResult = documentIds.length
@@ -133,7 +143,7 @@ export async function getDocumentCenterState(): Promise<DocumentCenterState> {
 
     return {
       mode: "ready",
-      organizationId: organizations?.[0]?.id ?? null,
+      organizationId,
       properties: properties ?? [],
       documents: (documents ?? []).flatMap((document) => {
         const version = latestVersions.get(document.id);

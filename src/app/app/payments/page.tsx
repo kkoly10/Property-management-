@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getOperatorPaymentWorkspace, type ReceivableSummaryItem } from "@/lib/data/finance";
 import { ResolveExceptionControl } from "./resolve-exception-control";
 import { WriteOffChargesForm } from "./write-off-charges-form";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 const money = (amount: number, currency: string) => new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount / 100);
@@ -16,7 +17,8 @@ const reconciliationBadge = (status: string) => status === "reconciled" ? "succe
 function totals(items: ReceivableSummaryItem[]) { return items.reduce<Record<string, number>>((result, item) => ({ ...result, [item.currencyCode]: (result[item.currencyCode] ?? 0) + item.balanceMinor }), {}); }
 
 export default async function PaymentsPage() {
-  const workspace = await getOperatorPaymentWorkspace();
+  const organizationId = await getActiveOrganizationId();
+  const workspace = await getOperatorPaymentWorkspace(organizationId);
   const outstanding = totals(workspace.items);
   return <div className="mx-auto max-w-7xl space-y-6">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

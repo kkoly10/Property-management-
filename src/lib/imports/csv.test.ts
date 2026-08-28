@@ -21,3 +21,30 @@ describe("portfolio CSV parsing", () => {
     });
   });
 });
+
+describe("autoMapImportColumns for the lease-bearing legs", () => {
+  it("maps the occupied-lease and combined columns an operator's rent roll actually uses", () => {
+    const mapping = autoMapImportColumns([
+      "Property", "Type", "Address", "City", "Country", "Time Zone", "Unit",
+      "First Name", "Last Name", "Email", "Lease Start", "Rent", "Rent Frequency", "Currency", "Opening Balance",
+    ]);
+    expect(mapping).toMatchObject({
+      propertyName: "Property", propertyType: "Type", addressLine1: "Address", locality: "City",
+      countryCode: "Country", timeZone: "Time Zone", unitCode: "Unit",
+      primaryFirstName: "First Name", primaryLastName: "Last Name", primaryEmail: "Email",
+      leaseStartDate: "Lease Start", rentAmountMinor: "Rent", rentFrequency: "Rent Frequency",
+      currencyCode: "Currency", openingBalanceMinor: "Opening Balance",
+    });
+  });
+
+  it("maps the opening-balance columns", () => {
+    const mapping = autoMapImportColumns(["Property", "Address", "Country", "Unit", "Balance", "Effective Date", "Memo"]);
+    expect(mapping).toMatchObject({ openingBalanceMinor: "Balance", effectiveDate: "Effective Date", memo: "Memo" });
+  });
+
+  it("leaves unmatched canonical keys absent rather than guessing", () => {
+    const mapping = autoMapImportColumns(["Property", "Address"]);
+    expect(mapping.rentAmountMinor).toBeUndefined();
+    expect(mapping.unitCode).toBeUndefined();
+  });
+});

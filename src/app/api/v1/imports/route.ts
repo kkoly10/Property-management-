@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { CsvImportError, parseCsv } from "@/lib/imports/csv";
+import { importSourceMimeTypes, XLSX_MIME_TYPE } from "@/lib/imports/source-mime";
+import { parseXlsx, XlsxImportError } from "@/lib/imports/xlsx";
 import { createClient } from "@/lib/supabase/server";
 import { createImportJobSchema } from "@/lib/validation/imports";
 
@@ -24,17 +26,22 @@ export async function POST(request: Request) {
     .select("id,storage_bucket,storage_path,mime_type,upload_status")
     .eq("document_id", sourceDocument.id)
     .eq("upload_status", "clean")
-    .in("mime_type", ["text/csv", "application/vnd.ms-excel"])
+    .in("mime_type", [...importSourceMimeTypes])
     .order("version_number", { ascending: false }).limit(1).maybeSingle();
-  if (versionError || !sourceVersion) return errorResponse("The CSV must pass malware scanning before import.", 422);
+  if (versionError || !sourceVersion) return errorResponse("The source file must pass malware scanning before import.", 422);
 
   const downloaded = await supabase.storage.from(sourceVersion.storage_bucket).download(sourceVersion.storage_path);
   if (downloaded.error || !downloaded.data) return errorResponse("The immutable source file could not be read.", 422);
-  let csv: ReturnType<typeof parseCsv>;
+  // The stored mime type decides the parser: an .xlsx is a ZIP of XML and cannot be read as text.
+  let table: { headers: string[]; rows: Array<Record<string, string>> };
   try {
-    csv = parseCsv(await downloaded.data.text());
+    table =
+      sourceVersion.mime_type === XLSX_MIME_TYPE
+        ? parseXlsx(await downloaded.data.arrayBuffer())
+        : parseCsv(await downloaded.data.text());
   } catch (error) {
-    return errorResponse(error instanceof CsvImportError ? error.message : "The CSV could not be parsed.", 422);
+    if (error instanceof CsvImportError || error instanceof XlsxImportError) return errorResponse(error.message, 422);
+    return errorResponse("The source file could not be parsed.", 422);
   }
 
   const created = await supabase.rpc("create_import_job", {
@@ -42,14 +49,14 @@ export async function POST(request: Request) {
     p_import_type: parsed.data.importType,
     p_source_document_id: sourceDocument.id,
     p_source_document_version_id: sourceVersion.id,
-    p_source_headers: csv.headers,
-    p_source_rows: csv.rows,
+    p_source_headers: table.headers,
+    p_source_rows: table.rows,
     p_idempotency_key: request.headers.get("idempotency-key") ?? crypto.randomUUID(),
   });
   if (created.error || !created.data) {
     const denied = created.error?.message.includes("DENIED");
     const plan = created.error?.message.includes("PLAN_LIMIT");
-    return errorResponse(plan ? "Bulk CSV import is not included in this plan." : denied ? "Organization-wide property access is required." : "The import job could not be created.", plan ? 402 : denied ? 403 : 422);
+    return errorResponse(plan ? "Bulk import is not included in this plan." : denied ? "Organization-wide property access is required." : "The import job could not be created.", plan ? 402 : denied ? 403 : 422);
   }
   return NextResponse.json(created.data, { status: 201 });
 }

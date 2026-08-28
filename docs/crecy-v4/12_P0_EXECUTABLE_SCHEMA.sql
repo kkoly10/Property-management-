@@ -1041,6 +1041,32 @@ create table private.upload_grants (
   unique(nonce_hash)
 );
 
+-- Durable malware-scan state for a finalized document version. One job per version, so the
+-- quarantined -> scanning -> clean|rejected transition is owned by the database rather than by any
+-- particular scanner. The binding triple (bucket, path, sha256) is copied at enqueue time and
+-- re-proved before a verdict is applied, so a stale or replayed verdict cannot clean another object.
+create table private.document_scan_jobs (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  document_version_id uuid not null unique references public.document_versions(id) on delete restrict,
+  storage_bucket text not null,
+  storage_path text not null,
+  expected_sha256_hex text not null check (expected_sha256_hex ~ '^[0-9a-f]{64}$'),
+  status text not null default 'queued' check (status in ('queued','scanning','succeeded','dead_letter')),
+  verdict text check (verdict is null or verdict in ('clean','infected')),
+  attempts integer not null default 0 check (attempts >= 0),
+  max_attempts integer not null default 5 check (max_attempts between 1 and 20),
+  available_at timestamptz not null default now(),
+  claimed_at timestamptz,
+  worker_run_id text,
+  provider_code text,
+  provider_reference text,
+  last_error text,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz,
+  check ((status in ('succeeded') and verdict is not null) or status <> 'succeeded')
+);
+
 create table public.privacy_requests (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid references public.organizations(id) on delete restrict,

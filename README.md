@@ -8,6 +8,36 @@ Prerequisites: Node.js 22 or newer and a Supabase project.
 
 1. Copy `.env.example` to `.env.local` and add the Supabase project values. Add a Stripe `sk_test_` key and the `whsec_` signing secret for a Connect webhook pointed at `/api/internal/providers/stripe/webhook`.
 2. Apply the SQL files in `supabase/migrations` in timestamp order. Configure `CRECY_INTERNAL_WORKER_SECRET` before invoking internal scheduled-worker routes.
+
+### Scheduled workers
+
+Rent generation, transactional mail, document scanning and operational cleanup only happen if something
+invokes them. The schedule is defined in the repository at `src/lib/runtime/schedule.ts` and
+`vercel.json` is generated from it — `npm run schedule:check` (part of `npm run check`) fails if the two
+drift, or if a scheduled path has no `GET` route that fails closed.
+
+| Path | Cadence | Requires |
+| --- | --- | --- |
+| `/api/internal/cron/recurring-charges` | hourly | nothing beyond the database |
+| `/api/internal/cron/notifications` | every 10 min | `CRECY_NOTIFICATION_RELAY_URL` + `_SECRET` (503 without) |
+| `/api/internal/cron/document-scans` | every 10 min | `CRECY_DOCUMENT_SCAN_RELAY_URL` + `_SECRET` (503 without) |
+| `/api/internal/cron/operational-sweep` | daily | nothing beyond the database |
+
+Set `CRON_SECRET` on the deployment; Vercel Cron sends it as `Authorization: Bearer $CRON_SECRET`.
+**Without it every cron route stays closed** — the routes never degrade to public. The same routes also
+accept `CRECY_INTERNAL_WORKER_SECRET`, so the jobs can be driven from another orchestrator or by hand.
+A credential in the query string is rejected outright rather than honored.
+
+Rent runs **hourly on purpose**: a property's local date crosses midnight at a different UTC instant in
+every time zone, so each run charges only the schedules whose own property-local date has arrived. A
+once-daily UTC run would charge most zones on the wrong date.
+
+Scheduled runs answer `200` when everything succeeded or there was nothing to do, `207` when some items
+failed, and `502` when every item failed — so a quietly broken job cannot look healthy in the
+invocation log.
+
+> Vercel's Hobby plan caps cron jobs at 2 and allows only once-daily schedules. This schedule needs a
+> plan that permits four jobs at sub-daily cadence, or an external scheduler calling the same routes.
 3. Install and start the app:
 
 ```bash

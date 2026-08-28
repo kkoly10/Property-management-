@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getResidentDirectory } from "@/lib/data/leasing";
 import { InviteResidentButton } from "./invite-resident-button";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,8 @@ function formatMoney(amountMinor: number, currencyCode: string) {
 }
 
 export default async function ResidentsPage() {
-  const directory = await getResidentDirectory();
+  const organizationId = await getActiveOrganizationId();
+  const directory = await getResidentDirectory(organizationId);
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-primary">Resident operations</p><h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em]">Residents</h1><p className="mt-2 text-sm text-muted-foreground">Current household and tenancy relationships across your property scope.</p></div><Button asChild><Link href="/app/leases/record"><FileSignature className="h-4 w-4" />Record existing lease</Link></Button></div>

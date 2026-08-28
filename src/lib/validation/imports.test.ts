@@ -13,7 +13,11 @@ describe("import command validation", () => {
   });
 
   it("rejects an unknown import type, incomplete mapping, and changed hash shapes", () => {
-    expect(createImportJobSchema.safeParse({ organizationId: "10000000-0000-4000-8000-000000000001", importType: "residents", sourceDocumentId: "20000000-0000-4000-8000-000000000002" }).success).toBe(false);
+    // 'documents' is present in the import_jobs check constraint but has no command pair yet, so it
+    // must not be accepted here. ('residents' and 'opening_balances' now ARE implemented.)
+    expect(createImportJobSchema.safeParse({ organizationId: "10000000-0000-4000-8000-000000000001", importType: "documents", sourceDocumentId: "20000000-0000-4000-8000-000000000002" }).success).toBe(false);
+    expect(createImportJobSchema.safeParse({ organizationId: "10000000-0000-4000-8000-000000000001", importType: "residents", sourceDocumentId: "20000000-0000-4000-8000-000000000002" }).success).toBe(true);
+    expect(createImportJobSchema.safeParse({ organizationId: "10000000-0000-4000-8000-000000000001", importType: "opening_balances", sourceDocumentId: "20000000-0000-4000-8000-000000000002" }).success).toBe(true);
     expect(validateImportSchema.safeParse({ mapping: { propertyName:"Name" }, options: { dedupeMode:"strict",dateLocale:"en-US" } }).success).toBe(false);
     expect(commitImportSchema.safeParse({ expectedValidationHash: "short" }).success).toBe(false);
   });

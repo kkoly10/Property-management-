@@ -5,6 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getOperatorOwnerStatementWorkspace } from "@/lib/data/owner-statements";
 import { OwnerStatementPreparation } from "./owner-statement-preparation";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +23,9 @@ export default async function OwnerStatementPreparationPage({
   params: Promise<{ ownerEntityId: string }>;
   searchParams: Promise<{ propertyId?: string }>;
 }) {
+  const organizationId = await getActiveOrganizationId();
   const [{ ownerEntityId }, { propertyId }] = await Promise.all([params, searchParams]);
-  const workspace = await getOperatorOwnerStatementWorkspace();
+  const workspace = await getOperatorOwnerStatementWorkspace(organizationId);
   const owner = workspace.owners.find((item) => item.ownerEntityId === ownerEntityId && item.propertyId === propertyId);
   if (workspace.mode === "ready" && !owner) notFound();
   const period = previousMonth();

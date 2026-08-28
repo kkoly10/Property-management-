@@ -4,11 +4,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getOperatorMaintenanceWorkspace } from "@/lib/data/maintenance";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
 export default async function OperatorMaintenancePage() {
-  const workspace = await getOperatorMaintenanceWorkspace();
+  const organizationId = await getActiveOrganizationId();
+  const workspace = await getOperatorMaintenanceWorkspace(organizationId);
   const summaries = [{ label: "Open requests", value: workspace.summary.open, icon: Wrench }, { label: "Needs triage", value: workspace.summary.untriaged, icon: Inbox }, { label: "Overdue", value: workspace.summary.overdue, icon: ClockAlert }];
   return <div className="space-y-6"><div><p className="text-sm text-muted-foreground">Operations</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Maintenance</h1><p className="mt-2 text-sm text-muted-foreground">Review resident issues and keep the official triage state separate from requested urgency.</p></div>
     {workspace.mode === "setup" ? <Alert variant="info"><ShieldCheck className="h-5 w-5" /><AlertTitle>Maintenance preview</AlertTitle><AlertDescription>This sample shows the operator intake queue until Supabase is connected.</AlertDescription></Alert> : null}

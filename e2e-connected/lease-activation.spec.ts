@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 // Connected-mode E2E — lease activation leg (browser run 2 of the deep sequence).
 // Assumes an operator with an org + property, plus a seeded active unit and a
-// scanned-clean signed-lease document (the storage/scan pipeline is seeded out of
+// scanned-clean signed-lease document (cleaned by the real scan worker, out of
 // band). Drives the real `activate_existing_lease` command through the UI wizard.
 //
 // Self-skips unless the connection env + seeded operator are provided.

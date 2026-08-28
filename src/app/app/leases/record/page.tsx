@@ -4,11 +4,13 @@ import { ExistingLeaseForm } from "@/app/app/leases/record/existing-lease-form";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getExistingLeaseOptions } from "@/lib/data/leasing";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
 export default async function RecordExistingLeasePage({ searchParams }: { searchParams: Promise<{ propertyId?: string }> }) {
-  const [options, query] = await Promise.all([getExistingLeaseOptions(), searchParams]);
+  const organizationId = await getActiveOrganizationId();
+  const [options, query] = await Promise.all([getExistingLeaseOptions(organizationId), searchParams]);
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <Button asChild variant="ghost"><Link href="/app/residents"><ArrowLeft className="h-4 w-4" />Back to residents</Link></Button>

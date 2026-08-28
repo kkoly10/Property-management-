@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { parseDashboardFilters, type DashboardFilters } from "@/lib/dashboard-filters";
 import { getDashboardState, type DashboardState } from "@/lib/data/dashboard";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
@@ -62,7 +63,8 @@ function workspaceHref(path: string, filters: DashboardFilters) {
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const parsed = parseDashboardFilters(await searchParams);
-  const dashboard = await getDashboardState(parsed.filters);
+  const organizationId = await getActiveOrganizationId();
+  const dashboard = await getDashboardState(organizationId, parsed.filters);
   const filters = {
     ...parsed.filters,
     propertyId: dashboard.scope.propertyId ?? parsed.filters.propertyId,

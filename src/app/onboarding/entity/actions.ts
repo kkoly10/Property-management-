@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getActiveOrganizationId } from "@/lib/organization/context";
 import { entityBookSchema } from "@/lib/validation/onboarding";
 import type { ActionState } from "@/lib/actions/state";
 
@@ -13,16 +14,15 @@ export async function createEntityBookAction(_previousState: ActionState, formDa
 
   try {
     const supabase = await createClient();
-    const { data: memberships, error: membershipError } = await supabase
-      .from("organization_memberships")
-      .select("organization_id")
-      .eq("status", "active")
-      .limit(1);
-
-    if (membershipError || !memberships?.[0]) return { status: "error", message: "No active organization membership was found." };
+    // Onboarding creates the entity for the organization the operator is CURRENTLY in, not whichever
+    // membership row the database happened to return first (this read had no ordering at all). During
+    // onboarding there is normally exactly one, and the context selects it automatically; an operator
+    // who already has several must have chosen one before they get here.
+    const organizationId = await getActiveOrganizationId();
+    if (!organizationId) return { status: "error", message: "Select an organization before creating an entity." };
 
     const { error } = await supabase.rpc("create_operating_entity_and_book", {
-      p_organization_id: memberships[0].organization_id,
+      p_organization_id: organizationId,
       p_legal_name: result.data.legalName,
       p_display_name: result.data.displayName,
       p_country_code: result.data.countryCode,

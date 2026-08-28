@@ -51,6 +51,21 @@ const documentDeliveryRecipientReadSql = await readFile(resolve(root, "supabase/
 const platformSupportQueriesSql = await readFile(resolve(root, "supabase/migrations/20260727100000_phase_8_platform_support_queries.sql"), "utf8");
 const platformControlPlaneHardeningSql = await readFile(resolve(root, "supabase/migrations/20260727110000_phase_8_platform_control_plane_hardening.sql"), "utf8");
 const occupiedLeaseImportSql = await readFile(resolve(root, "supabase/migrations/20260727120000_phase_3_occupied_lease_import.sql"), "utf8");
+const notificationWorkerSql = await readFile(resolve(root, "supabase/migrations/20260728100000_phase_4_notification_worker.sql"), "utf8");
+const documentDeliveryChannelsSql = await readFile(resolve(root, "supabase/migrations/20260728110000_phase_4_document_delivery_channels.sql"), "utf8");
+const combinedImportSql = await readFile(resolve(root, "supabase/migrations/20260729100000_phase_3_combined_import.sql"), "utf8");
+const residentBalanceImportSql = await readFile(resolve(root, "supabase/migrations/20260729110000_phase_3_resident_and_balance_imports.sql"), "utf8");
+const xlsxSourceDocumentsSql = await readFile(resolve(root, "supabase/migrations/20260729120000_phase_3_xlsx_source_documents.sql"), "utf8");
+const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/20260729130000_phase_4_secure_link_raw_token.sql"), "utf8");
+const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
+const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
+const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
+const closeUnscopedOperatorSurfacesSql = await readFile(resolve(root, "supabase/migrations-contract/20260828130000_phase_8_close_unscoped_operator_surfaces.sql"), "utf8");
+const batchAReviewCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260828140000_phase_8_batch_a_review_corrections.sql"), "utf8");
+const organizationCreationBoundarySql = await readFile(resolve(root, "supabase/migrations/20260829100000_phase_1_organization_creation_boundary.sql"), "utf8");
+const scanRecoveryTracingSql = await readFile(resolve(root, "supabase/migrations/20260829110000_phase_2_scan_recovery_and_tracing.sql"), "utf8");
+const relationshipProjectionsSql = await readFile(resolve(root, "supabase/migrations/20260829120000_phase_8_relationship_projections.sql"), "utf8");
+const runtimeDiagnosticsSql = await readFile(resolve(root, "supabase/migrations/20260829130000_phase_8_runtime_diagnostics.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -130,7 +145,7 @@ async function validateAuthority() {
   await db.exec(rlsSql);
   const tableResult = await db.query(`select count(*)::integer as count from information_schema.tables where table_schema in ('public','private','audit','reporting')`);
   const policyResult = await db.query(`select count(*)::integer as count from pg_policies where schemaname in ('public','reporting')`);
-  assert(tableResult.rows[0].count === 76, "Authority schema table count changed unexpectedly.");
+  assert(tableResult.rows[0].count === 77, "Authority schema table count changed unexpectedly.");
   assert(policyResult.rows[0].count === 59, "Authority RLS policy count changed unexpectedly.");
 
   const admin = "d0000000-0000-4000-8000-000000000001";
@@ -598,6 +613,8 @@ async function validateImports() {
   const orgB = orgBResult.rows[0].result.organizationId;
   const invisibleJobs = await db.query(`select count(*)::integer as count from public.import_jobs where organization_id='${orgA}'`);
   assert(invisibleJobs.rows[0].count === 0, "Import-job RLS exposed another organization's jobs.");
+  // validateImports replays only through the imports migration, so the unscoped form still exists here.
+  // The organization-scoped form is exercised in validateRecurringCharges, which replays the whole chain.
   await expectDatabaseError(() => db.query(`select public.get_import_job_detail('${importJob}')`), "IMPORT_NOT_FOUND");
 
   await db.exec("reset role");
@@ -752,6 +769,22 @@ async function validateLeasing() {
   return { activatedTenancies: 2, balancedOpeningBalance: true, residentVisibleTenancies: residentVisibility.rows[0].tenancies, isolatedTenancy: tenancyB };
 }
 
+/**
+ * Create an organization the way the product now does: the server derives the actor from the session
+ * and calls the service_role-only command. The browser surface (public.create_organization) is revoked
+ * by the contract release, so a test that still called it would be asserting a path that no longer
+ * exists in the deployed end state.
+ *
+ * Restores the caller's authenticated role afterwards so surrounding assertions are unaffected.
+ */
+async function createOrganizationAsServer(db, actorId, argsSql, { aal } = {}) {
+  await db.exec("reset role; set role service_role");
+  const result = await db.query(`select public.create_organization_as_actor('${actorId}',${argsSql}) as result`);
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${actorId}'`);
+  if (aal) await db.exec(`set request.jwt.claim.aal='${aal}'`);
+  return result;
+}
+
 async function validateRecurringCharges() {
   const db = createDatabase();
   await prepareSupabasePrelude(db);
@@ -801,6 +834,24 @@ async function validateRecurringCharges() {
   await db.exec(platformSupportQueriesSql);
   await db.exec(platformControlPlaneHardeningSql);
   await db.exec(occupiedLeaseImportSql);
+  await db.exec(notificationWorkerSql);
+  await db.exec(documentDeliveryChannelsSql);
+  await db.exec(combinedImportSql);
+  await db.exec(residentBalanceImportSql);
+  await db.exec(xlsxSourceDocumentsSql);
+  await db.exec(secureLinkRawTokenSql);
+  await db.exec(documentScanLifecycleSql);
+  await db.exec(runtimeSchedulerSql);
+  await db.exec(activeOrganizationContextSql);
+  await db.exec(batchAReviewCorrectionsSql);
+  await db.exec(organizationCreationBoundarySql);
+  await db.exec(scanRecoveryTracingSql);
+  await db.exec(relationshipProjectionsSql);
+  await db.exec(runtimeDiagnosticsSql);
+  // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
+  // migration AND after the compatible application build. Its revocations are still proven here — the
+  // separation is about when a human may apply them, not about whether they are tested.
+  await db.exec(closeUnscopedOperatorSurfacesSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -809,7 +860,7 @@ async function validateRecurringCharges() {
   const ownerB = "c5000000-0000-4000-8000-000000000005";
   await db.exec(`insert into auth.users(id) values ('${admin}'),('${resident}'),('${outsider}'),('${ownerA}'),('${ownerB}')`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const organization = (await db.query(`select public.create_organization('Finance Atlas','finance-atlas','property_manager','US','en-US','America/New_York','2026-07-20','finance-org-0001') as result`)).rows[0].result;
+  const organization = (await createOrganizationAsServer(db, admin, `'Finance Atlas','finance-atlas','property_manager','US','en-US','America/New_York','operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','finance-org-0001'`)).rows[0].result;
   const entity = (await db.query(`select public.create_operating_entity_and_book('${organization.organizationId}','Finance Atlas LLC','Finance Atlas','US','company','USD','Operating book','finance-book-0001') as result`)).rows[0].result;
   const returnUrl = "https://app.crecy.example/settings/payments?stripe=return";
   const refreshUrl = "https://app.crecy.example/settings/payments?stripe=refresh";
@@ -838,7 +889,7 @@ async function validateRecurringCharges() {
   ) as result`)).rows[0].result;
   assert(providerReplay.providerConnectionId === providerConnection.providerConnectionId && providerReplay.url === stripeLinkUrl, "Stripe onboarding replay did not return the canonical response.");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
-  const paymentSettings = (await db.query("select public.get_payment_connection_settings() as result")).rows[0].result;
+  const paymentSettings = (await db.query(`select public.get_payment_connection_settings('${organization.organizationId}') as result`)).rows[0].result;
   assert(paymentSettings.authenticatorLevel === "aal2" && paymentSettings.items.length === 1 && paymentSettings.items[0].status === "requirements_due", "Payment settings did not expose the MFA-gated provider state.");
   await expectDatabaseError(() => db.query(`insert into public.provider_connections(
     organization_id,operating_entity_id,provider_code,provider_account_id,account_configuration,dashboard_access,fees_payer,losses_collector,status
@@ -847,8 +898,13 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query(`select public.prepare_stripe_onboarding_link(
     '${organization.organizationId}','${entity.operatingEntityId}','${returnUrl}','${refreshUrl}','stripe-outsider-0001'
   )`), "ORGANIZATION_SCOPE_DENIED");
-  const outsiderPaymentSettings = (await db.query("select public.get_payment_connection_settings() as result")).rows[0].result;
-  assert(outsiderPaymentSettings.items.length === 0, "Provider connection settings leaked to an unrelated user.");
+  // Since v4.2 A3 the operator surfaces are organization-scoped, so an unrelated user is refused BEFORE
+  // any row is read rather than being handed a convincingly empty workspace.
+  await expectDatabaseError(
+    () => db.query(`select public.get_payment_connection_settings('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  await expectDatabaseError(() => db.query("select public.get_payment_connection_settings()"), "permission denied for function get_payment_connection_settings");
   await db.exec("reset role");
   const providerTraces = (await db.query(`select
     (select count(*)::integer from public.provider_connections where id='${providerConnection.providerConnectionId}') as connections,
@@ -1046,7 +1102,7 @@ async function validateRecurringCharges() {
   const outsiderMaintenance = (await db.query("select public.get_resident_maintenance_workspace() as result")).rows[0].result;
   assert(outsiderMaintenance.items.length === 0 && outsiderMaintenance.tenancies.length === 0, "Maintenance data leaked to an unrelated user.");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const operatorMaintenance = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const operatorMaintenance = (await db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(operatorMaintenance.summary.open === 1 && operatorMaintenance.summary.untriaged === 1 && operatorMaintenance.items[0].officialPriority === "medium", "Operator maintenance intake queue is incomplete.");
 
   const ownerEntityA = "cb000000-0000-4000-8000-000000000011";
@@ -1064,7 +1120,7 @@ async function validateRecurringCharges() {
       ('${ownerB}','${organization.organizationId}','owner_entity','${ownerEntityB}','active');
     set role authenticated; set request.jwt.claim.sub='${admin}';
   `);
-  const operatorConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const operatorConversations = (await db.query(`select public.get_conversation_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(operatorConversations.items.length === 3, "The operator messaging workspace did not provision the resident and exact owner conversations.");
   const residentConversation = operatorConversations.items.find((item) => item.conversationType === "operator_resident");
   const ownerAConversation = operatorConversations.items.find((item) => item.ownerEntityId === ownerEntityA);
@@ -1075,7 +1131,7 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query("select count(*) from public.messages"), "permission denied");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
-  const residentConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const residentConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(
     residentConversations.items.length === 1
       && residentConversations.items[0].conversationId === residentConversation.conversationId
@@ -1098,7 +1154,7 @@ async function validateRecurringCharges() {
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'`);
-  const ownerAConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const ownerAConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(
     ownerAConversations.items.length === 1
       && ownerAConversations.items[0].conversationId === ownerAConversation.conversationId
@@ -1111,7 +1167,7 @@ async function validateRecurringCharges() {
   assert(ownerMessage.senderType === "owner", "An owner message was not attributed to its relationship type.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerB}'`);
-  const ownerBConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const ownerBConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(
     ownerBConversations.items.length === 1
       && ownerBConversations.items[0].conversationId === ownerBConversation.conversationId
@@ -1126,7 +1182,7 @@ async function validateRecurringCharges() {
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
-  const outsiderConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const outsiderConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(outsiderConversations.items.length === 0, "Conversation metadata leaked to an unrelated user.");
   await expectDatabaseError(
     () => db.query(`select public.get_conversation_detail('${residentConversation.conversationId}')`),
@@ -1152,7 +1208,7 @@ async function validateRecurringCharges() {
     values ('${organization.organizationId}','${scopedMessengerMembership}','${property.propertyId}');
     set role authenticated; set request.jwt.claim.sub='${scopedMessenger}';
   `);
-  const scopedConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  const scopedConversations = (await db.query(`select public.get_conversation_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(
     scopedConversations.items.length === 1
       && scopedConversations.items[0].conversationId === residentConversation.conversationId,
@@ -1164,7 +1220,14 @@ async function validateRecurringCharges() {
     where id='${scopedMessengerMembership}';
     set role authenticated; set request.jwt.claim.sub='${scopedMessenger}';
   `);
-  const expiredScopedConversations = (await db.query("select public.get_conversation_workspace() as result")).rows[0].result;
+  // An expired membership is now refused at the context gate rather than handed a convincingly empty
+  // workspace — earlier, and for the right reason. The relationship projection is empty for them too,
+  // because an operator whose membership lapsed is not a conversation participant.
+  await expectDatabaseError(
+    () => db.query(`select public.get_conversation_workspace('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  const expiredScopedConversations = (await db.query("select public.get_relationship_conversation_workspace() as result")).rows[0].result;
   assert(expiredScopedConversations.items.length === 0, "An expired property membership retained messaging access.");
   await expectDatabaseError(
     () => db.query(`select public.send_conversation_message(
@@ -1344,7 +1407,7 @@ async function validateRecurringCharges() {
     '${canceledAnnouncement.announcementId}',1,'announcement-cancel-0001'
   ) as result`)).rows[0].result;
   assert(canceledResult.status === "canceled" && canceledReplay.version === canceledResult.version, "Draft cancellation was not state-checked and idempotent.");
-  const operatorAnnouncements = (await db.query("select public.get_operator_announcement_workspace() as result")).rows[0].result;
+  const operatorAnnouncements = (await db.query(`select public.get_operator_announcement_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(
     operatorAnnouncements.items.length === 3
       && operatorAnnouncements.properties.length === 1
@@ -1428,7 +1491,7 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query(`select public.verify_privacy_request(
     '${residentPrivacyRequest.privacyRequestId}',2,'privacy-resident-verify-again-0001'
   )`), "PRIVACY_REQUEST_NOT_VERIFIABLE");
-  const residentPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  const residentPrivacyWorkspace = (await db.query("select public.get_relationship_privacy_request_workspace() as result")).rows[0].result;
   assert(
     residentPrivacyWorkspace.items.length === 1
       && residentPrivacyWorkspace.organizations.length === 1
@@ -1439,7 +1502,7 @@ async function validateRecurringCharges() {
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${ownerA}'; set request.jwt.claim.aal='aal2'`);
-  const ownerPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  const ownerPrivacyWorkspace = (await db.query("select public.get_relationship_privacy_request_workspace() as result")).rows[0].result;
   assert(
     ownerPrivacyWorkspace.organizations.length === 1
       && ownerPrivacyWorkspace.items.length === 0,
@@ -1482,7 +1545,7 @@ async function validateRecurringCharges() {
       && platformPrivacyCanceledReplay.version === 3,
     "Platform privacy cancellation was not versioned and idempotent.",
   );
-  const outsiderPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  const outsiderPrivacyWorkspace = (await db.query("select public.get_relationship_privacy_request_workspace() as result")).rows[0].result;
   assert(
     outsiderPrivacyWorkspace.organizations.length === 0
       && outsiderPrivacyWorkspace.items.length === 1
@@ -1491,7 +1554,7 @@ async function validateRecurringCharges() {
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
-  const adminPrivacyWorkspace = (await db.query("select public.get_privacy_request_workspace() as result")).rows[0].result;
+  const adminPrivacyWorkspace = (await db.query(`select public.get_privacy_request_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(
     adminPrivacyWorkspace.items.length === 1
       && adminPrivacyWorkspace.items[0].privacyRequestId === residentPrivacyRequest.privacyRequestId,
@@ -1886,7 +1949,7 @@ async function validateRecurringCharges() {
     set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}';
   `);
   await expectDatabaseError(() => db.query(`select public.create_vendor('${organization.organizationId}','Rogue Vendor',null,null,'vendor-scoped-0001')`), "ORGANIZATION_SCOPE_DENIED");
-  const scopedDirectory = (await db.query("select public.get_operator_vendor_directory() as result")).rows[0].result;
+  const scopedDirectory = (await db.query(`select public.get_operator_vendor_directory('${organization.organizationId}') as result`)).rows[0].result;
   assert(scopedDirectory.length === 0, "A property-scoped coordinator unexpectedly saw the unscoped vendor directory.");
 
   const workOrder = (await db.query(`select public.create_and_assign_work_order(
@@ -1902,7 +1965,7 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query(`select public.create_and_assign_work_order(
     '${organization.organizationId}','${maintenance.maintenanceRequestId}',null,'Duplicate attempt.',null,null,null,null,false,null,'work-order-duplicate-0001'
   )`), "WORK_ORDER_ALREADY_EXISTS");
-  const operatorAfterTriage = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const operatorAfterTriage = (await db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(operatorAfterTriage.items[0].officialPriority === "high" && operatorAfterTriage.items[0].workOrder.workOrderId === workOrder.workOrderId && operatorAfterTriage.items[0].workOrder.vendorName === "Ready Fix Plumbing", "Operator workspace did not project the assigned work order.");
   const scopedVendorRead = (await db.query("select count(*)::integer as count from public.vendors")).rows[0].count;
   assert(scopedVendorRead === 1, "Property-scoped coordinator could not read the vendor already tied to their own work order.");
@@ -1982,9 +2045,9 @@ async function validateRecurringCharges() {
   assert(approvedClosed.status === "closed" && approvedClosed.version === 7, "The fully approved work order could not be closed.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const adminVendorDirectory = (await db.query("select public.get_operator_vendor_directory() as result")).rows[0].result;
+  const adminVendorDirectory = (await db.query(`select public.get_operator_vendor_directory('${organization.organizationId}') as result`)).rows[0].result;
   assert(adminVendorDirectory.length === 1 && adminVendorDirectory[0].vendorId === vendor.vendorId, "Org-wide admin did not see the vendor directory.");
-  const operatorApprovals = (await db.query("select public.get_operator_owner_approval_workspace() as result")).rows[0].result;
+  const operatorApprovals = (await db.query(`select public.get_operator_owner_approval_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(operatorApprovals.items.length === 2 && operatorApprovals.items.every((item) => item.status === "approved"), "The operator approval projection omitted an owner decision.");
 
   await db.exec(`reset role;
@@ -2227,7 +2290,7 @@ async function validateRecurringCharges() {
   assert(ownerBStatementRows === 1 && ownerBStatementWorkspace.remittances.length === 0, "Co-owner B crossed the exact owner-entity statement or remittance DTO boundary.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const operatorStatements = (await db.query("select public.get_operator_owner_statement_workspace() as result")).rows[0].result;
+  const operatorStatements = (await db.query(`select public.get_operator_owner_statement_workspace('${organization.organizationId}') as result`)).rows[0].result;
   const operatorOwnerA = operatorStatements.owners.find((item) => item.ownerEntityId === ownerEntityA);
   assert(operatorStatements.owners.length === 2 && operatorOwnerA?.latestStatement.versionNumber === 2 && operatorOwnerA.latestStatement.availableToRemitMinor === 40698 && operatorOwnerA.ownerPayableMinor === 40698 && operatorOwnerA.remittances.length === 1 && operatorOwnerA.evidenceDocuments.length === 1, "The operator statement workspace omitted the latest correction, payable, evidence, or remittance.");
 
@@ -2857,11 +2920,17 @@ async function validateRecurringCharges() {
   assert(settlementPosting.debits === 5000 && settlementPosting.credits === 5000 && settlementPosting.audits === 1 && settlementPosting.events === 1, "Settlement accounting or durable trace is incomplete.");
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const settlementWorkspace = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  const settlementWorkspace = (await db.query(`select public.get_settlement_reconciliation_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(settlementWorkspace.batches.length === 2 && settlementWorkspace.exceptions.length === 2 && settlementWorkspace.batches.find((batch) => batch.settlementId === settlement.settlementId)?.matchedCount === 1, "The operator reconciliation workspace is incomplete.");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentSettlementRows = (await db.query("select count(*)::integer as count from public.settlement_batches")).rows[0].count;
-  const residentSettlementWorkspace = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  // A resident holds no operator membership, so the organization-scoped reconciliation workspace is
+  // refused outright; their own payment's sanitized settlement history still works unscoped.
+  await expectDatabaseError(
+    () => db.query(`select public.get_settlement_reconciliation_workspace('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  const residentSettlementWorkspace = { batches: [] };
   const residentSettlementHistory = (await db.query(`select public.get_payment_settlement_history('${settlementPreparation.paymentId}') as result`)).rows[0].result;
   assert(residentSettlementRows === 0 && residentSettlementWorkspace.batches.length === 0 && residentSettlementHistory.settlements.length === 1, "Settlement data leaked to a resident or their sanitized payment history is missing.");
 
@@ -3023,37 +3092,37 @@ async function validateRecurringCharges() {
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const propertySearch = (await db.query(
-    "select public.get_operator_global_search('Map',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Map',24) as result`,
   )).rows[0].result;
   const unitSearch = (await db.query(
-    "select public.get_operator_global_search('101',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','101',24) as result`,
   )).rows[0].result;
   const residentSearch = (await db.query(
-    "select public.get_operator_global_search('Avery',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Avery',24) as result`,
   )).rows[0].result;
   const leaseSearch = (await db.query(
-    "select public.get_operator_global_search('FIN-',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','FIN-',24) as result`,
   )).rows[0].result;
   const paymentSearch = (await db.query(
-    `select public.get_operator_global_search('${payment.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${payment.publicReference}',24) as result`,
   )).rows[0].result;
   const maintenanceSearch = (await db.query(
-    `select public.get_operator_global_search('${maintenance.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${maintenance.publicReference}',24) as result`,
   )).rows[0].result;
   const workOrderSearch = (await db.query(
-    `select public.get_operator_global_search('${workOrder.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${workOrder.publicReference}',24) as result`,
   )).rows[0].result;
   const documentSearch = (await db.query(
-    "select public.get_operator_global_search('Unit 101',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Unit 101',24) as result`,
   )).rows[0].result;
   const ownerSearch = (await db.query(
-    "select public.get_operator_global_search('Finance Atlas Owner',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Finance Atlas Owner',24) as result`,
   )).rows[0].result;
   const emailSearch = (await db.query(
-    "select public.get_operator_global_search('avery@example.com',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','avery@example.com',24) as result`,
   )).rows[0].result;
   const limitedSearch = (await db.query(
-    "select public.get_operator_global_search('Finance',1) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Finance',1) as result`,
   )).rows[0].result;
   const searchPayload = JSON.stringify({
     propertySearch,
@@ -3089,27 +3158,27 @@ async function validateRecurringCharges() {
     "Operator global search exposed resident contact data, maintenance access/detail, payment reasons, or provider identifiers.",
   );
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('x',24)"),
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','x',24)`),
     "SEARCH_QUERY_TOO_SHORT",
   );
   await expectDatabaseError(
-    () => db.query(`select public.get_operator_global_search('${"x".repeat(81)}',24)`),
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','${"x".repeat(81)}',24)`),
     "SEARCH_QUERY_TOO_LONG",
   );
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('Map',51)"),
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','Map',51)`),
     "SEARCH_LIMIT_OUT_OF_BOUNDS",
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}'`);
   const scopedMaintenanceSearch = (await db.query(
-    `select public.get_operator_global_search('${maintenance.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${maintenance.publicReference}',24) as result`,
   )).rows[0].result;
   const scopedPaymentSearch = (await db.query(
-    `select public.get_operator_global_search('${payment.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${payment.publicReference}',24) as result`,
   )).rows[0].result;
   const scopedOtherPropertySearch = (await db.query(
-    "select public.get_operator_global_search('Harbour',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Harbour',24) as result`,
   )).rows[0].result;
   assert(
     scopedMaintenanceSearch.items.some((item) => item.kind === "maintenance_request")
@@ -3124,8 +3193,8 @@ async function validateRecurringCharges() {
     "OPERATOR_ORGANIZATION_DENIED",
   );
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('Map',24)"),
-    "OPERATOR_ORGANIZATION_DENIED",
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','Map',24)`),
+    "ORGANIZATION_SCOPE_DENIED",
   );
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   await expectDatabaseError(
@@ -3133,13 +3202,13 @@ async function validateRecurringCharges() {
     "OPERATOR_ORGANIZATION_DENIED",
   );
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('Map',24)"),
-    "OPERATOR_ORGANIZATION_DENIED",
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','Map',24)`),
+    "ORGANIZATION_SCOPE_DENIED",
   );
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('Map',24)"),
-    "OPERATOR_ORGANIZATION_DENIED",
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','Map',24)`),
+    "ORGANIZATION_SCOPE_DENIED",
   );
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
@@ -3194,7 +3263,7 @@ async function validateRecurringCharges() {
   `)).rows[0];
   assert(costTraces.events === 1 && costTraces.audits === 1, "Work-order cost audit/outbox trace is incomplete.");
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const maintenanceAfterCost = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const maintenanceAfterCost = (await db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}') as result`)).rows[0].result;
   const costedItem = maintenanceAfterCost.items.find((item) => item.workOrder && item.workOrder.workOrderId === workOrder.workOrderId);
   assert(costedItem && costedItem.workOrder.cost && costedItem.workOrder.cost.amountMinor === 32000 && costedItem.workOrder.cost.currencyCode === "USD", "Operator workspace did not surface the posted work-order cost.");
 
@@ -3336,7 +3405,7 @@ async function validateRecurringCharges() {
   `)).rows[0];
   assert(resolutionTraces.resolved_events === 2 && resolutionTraces.escalated_events === 1 && resolutionTraces.resolved_audits === 2 && resolutionTraces.escalated_audits === 1, "Reconciliation-resolution audit/outbox trace is incomplete.");
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const workspaceAfterResolution = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  const workspaceAfterResolution = (await db.query(`select public.get_settlement_reconciliation_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(!workspaceAfterResolution.exceptions.some((row) => row.settlementId === mismatch.settlementId), "Resolved/waived exceptions still appear on the operator reconciliation queue.");
 
   // Receivable write-off (phase_4_receivable_write_off). Generate two fresh rent charges (the schedule
@@ -3416,7 +3485,7 @@ async function validateRecurringCharges() {
       ('e6000000-0000-4000-8000-000000000066','${ownerInvitedOnlyUser}','${organization.organizationId}','owner_entity','${ownerInvitedOnly}','invited');
   `);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const inviteStateWorkspace = (await db.query("select public.get_operator_owner_statement_workspace() as result")).rows[0].result;
+  const inviteStateWorkspace = (await db.query(`select public.get_operator_owner_statement_workspace('${organization.organizationId}') as result`)).rows[0].result;
   const activeOwnerRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === invitedOwnerEntity);
   const notInvitedRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerNotInvited);
   const invitedOnlyRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerInvitedOnly);
@@ -3486,10 +3555,20 @@ async function validateRecurringCharges() {
   // DECISIVE INERT TEST: the agent holds an active session and is NOT a member of the org; the helper
   // is wired into no policy, so a normal tenant read still returns zero rows.
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
-  const agentMaintenance = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
-  const agentReceivables = (await db.query("select public.get_operator_receivables_summary() as result")).rows[0].result;
-  assert(agentMaintenance.items.length === 0 && (agentReceivables.items ?? []).length === 0,
-    "An active support session leaked cross-org data — the grant must be inert until a policy wires the helper in.");
+  // Since v4.2 A3 the operator surfaces are organization-scoped, so an active support session is now
+  // refused at the context gate — earlier than before, and for the right reason: a support session is
+  // not an organization membership. The inertness this test exists to prove is unchanged and stronger.
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_receivables_summary('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  // And the unscoped collection surfaces are not reachable at all any more.
+  await expectDatabaseError(() => db.query("select public.get_operator_maintenance_workspace()"),
+    "permission denied for function get_operator_maintenance_workspace");
 
   await db.exec("reset role");
   const supportStartTrace = (await db.query(`select
@@ -3650,7 +3729,7 @@ async function validateRecurringCharges() {
   const orgTwoOwner = "e8000000-0000-4000-8000-000000000086";
   await db.exec(`reset role; insert into auth.users(id) values ('${orgTwoOwner}')`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${orgTwoOwner}'; set request.jwt.claim.aal='aal2'`);
-  const orgTwo = (await db.query(`select public.create_organization('Beacon Realty','beacon-realty','property_manager','US','en-US','America/New_York','2026-07-20','beacon-org-0001') as result`)).rows[0].result;
+  const orgTwo = (await createOrganizationAsServer(db, orgTwoOwner, `'Beacon Realty','beacon-realty','property_manager','US','en-US','America/New_York','operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','beacon-org-0001'`, { aal: "aal2" })).rows[0].result;
   // The single active session must block a session for a DIFFERENT org too — the invariant is global.
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
   await expectDatabaseError(() => db.query(`select public.start_support_session('${orgTwo.organizationId}','A concurrent session for a different org.',60,'support-second-diff-1')`), "SUPPORT_SESSION_ALREADY_ACTIVE");
@@ -3687,27 +3766,198 @@ async function validateRecurringCharges() {
     "The overview did not deterministically report the current Growth trial over the historical canceled Starter.");
   await db.exec("reset role");
 
+  // ── Document malware-scan lifecycle (phase_2_document_scan_lifecycle, v4.2 Batch A1) ─────────────
+  // Before this slice finalize_document parked every version in 'quarantined' and nothing ever moved
+  // it, so the only way a document became usable was a manual SQL edit. File 27 §5.A1 forbids treating
+  // that as certification, so the clean version used by the delivery tests below is now produced by
+  // driving the real worker surface: finalize -> claim -> verdict.
+  const scanProperty = (await db.query(`select id from public.properties where organization_id='${organization.organizationId}' order by created_at limit 1`)).rows[0].id;
+  const scanCleanSha = "a".repeat(64);
+  const scanInfectedSha = "b".repeat(64);
+  const scanRetrySha = "c".repeat(64);
+  const scanStallSha = "d".repeat(64);
+
+  async function finalizeScannableDocument(title, filename, sha, key) {
+    await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+    const g = (await db.query(`select public.create_document_upload_grant('${organization.organizationId}','property','${scanProperty}','notice','${title.replace(/'/g, "''")}','${filename}','application/pdf',2048,'${key}-grant') as r`)).rows[0].r;
+    await db.exec("reset role; set role service_role");
+    const f = (await db.query(`select public.finalize_document('${admin}','${g.grantId}','${sha}','${key}-final') as r`)).rows[0].r;
+    return { grant: g, finalized: f };
+  }
+
+  const scanCleanDoc = await finalizeScannableDocument("Quiet hours notice", "notice.pdf", scanCleanSha, "scan-clean");
+  await db.exec("reset role");
+  const scanEnqueued = (await db.query(`select status, attempts, expected_sha256_hex, storage_bucket, storage_path, id
+    from private.document_scan_jobs where document_version_id='${scanCleanDoc.finalized.versionId}'`)).rows[0];
+  assert(scanEnqueued && scanEnqueued.status === "queued" && scanEnqueued.attempts === 0,
+    "finalize_document did not enqueue a queued scan job for the new version.");
+  assert(scanEnqueued.expected_sha256_hex === scanCleanSha
+    && scanEnqueued.storage_bucket === scanCleanDoc.grant.storageBucket
+    && scanEnqueued.storage_path === scanCleanDoc.grant.storagePath,
+    "The scan job did not bind the version's own bucket/path/digest.");
+  const scanVersionAtRest = (await db.query(`select upload_status from public.document_versions where id='${scanCleanDoc.finalized.versionId}'`)).rows[0].upload_status;
+  assert(scanVersionAtRest === "quarantined", "A newly finalized version did not stay quarantined.");
+
+  // (A1-2, first half) A quarantined version is unusable downstream — proven against a real gate.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.deliver_document('${organization.organizationId}','${scanCleanDoc.finalized.versionId}','resident_person','${invitedResidentPerson}','portal','scan-predeliver-01')`),
+    "DOCUMENT_NOT_DELIVERABLE",
+  );
+
+  // The worker surface is service_role only: a signed-in operator cannot self-serve a verdict.
+  await expectDatabaseError(() => db.query(`select public.claim_document_scan_jobs(10,'scan-run-forbidden')`), "permission denied for function claim_document_scan_jobs");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${scanCleanSha}','test-scanner','ref-1')`), "permission denied for function complete_document_scan");
+  await expectDatabaseError(() => db.query(`select public.fail_document_scan('${scanEnqueued.id}','X',true)`), "permission denied for function fail_document_scan");
+  await expectDatabaseError(() => db.query(`select public.requeue_stalled_document_scans(5)`), "permission denied for function requeue_stalled_document_scans");
+
+  await db.exec("reset role; set role service_role");
+  await expectDatabaseError(() => db.query(`select public.claim_document_scan_jobs(0,'scan-run-000001')`), "INVALID_SCAN_BATCH_SIZE");
+  await expectDatabaseError(() => db.query(`select public.claim_document_scan_jobs(10,'short')`), "INVALID_WORKER_RUN_ID");
+
+  const scanClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000001') as r`)).rows[0].r;
+  assert(scanClaim.claimed >= 1, "The scan worker claimed no due jobs.");
+  const scanCleanJob = scanClaim.jobs.find((j) => j.documentVersionId === scanCleanDoc.finalized.versionId);
+  assert(scanCleanJob && scanCleanJob.expectedSha256Hex === scanCleanSha && scanCleanJob.attempt === 1,
+    "The claimed job DTO did not carry the version's binding digest and attempt counter.");
+  await db.exec("reset role");
+  const scanClaimedState = (await db.query(`select
+    (select status from private.document_scan_jobs where id='${scanEnqueued.id}') as job_status,
+    (select upload_status from public.document_versions where id='${scanCleanDoc.finalized.versionId}') as version_status`)).rows[0];
+  assert(scanClaimedState.job_status === "scanning" && scanClaimedState.version_status === "scanning",
+    "Claiming a scan job did not advance BOTH the job and its version to 'scanning'.");
+  await db.exec("reset role; set role service_role");
+  const scanReclaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000002') as r`)).rows[0].r;
+  assert(!scanReclaim.jobs.some((j) => j.documentScanJobId === scanEnqueued.id),
+    "A second worker re-claimed a job that was already being scanned.");
+
+  // (A1-3) A verdict whose observed bytes do not match the bound digest cannot clean anything.
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${"9".repeat(64)}','test-scanner','ref-mismatch')`), "SCAN_TARGET_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','maybe','${scanCleanSha}','test-scanner','ref-x')`), "INVALID_SCAN_VERDICT");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','not-a-digest','test-scanner','ref-x')`), "INVALID_CHECKSUM");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${scanCleanSha}',null,'ref-x')`), "SCAN_PROVIDER_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('e9000000-0000-4000-8000-0000000000fa','clean','${scanCleanSha}','test-scanner','ref-x')`), "DOCUMENT_SCAN_JOB_NOT_FOUND");
+  await db.exec("reset role");
+  const scanAfterMismatch = (await db.query(`select upload_status from public.document_versions where id='${scanCleanDoc.finalized.versionId}'`)).rows[0].upload_status;
+  assert(scanAfterMismatch === "scanning", "A rejected verdict still moved the version out of 'scanning'.");
+
+  // (A1-1) The one path that produces a usable document.
+  await db.exec("reset role; set role service_role");
+  const scanCleanResult = (await db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${scanCleanSha}','test-scanner','ref-clean-1') as r`)).rows[0].r;
+  assert(scanCleanResult.verdict === "clean" && scanCleanResult.uploadStatus === "clean" && scanCleanResult.duplicate === false,
+    "A clean verdict did not clean the version.");
+  const scanCleanReplay = (await db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${scanCleanSha}','test-scanner','ref-clean-1') as r`)).rows[0].r;
+  assert(scanCleanReplay.duplicate === true && scanCleanReplay.verdict === "clean", "Replaying a completed scan was not idempotent.");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','infected','${scanCleanSha}','test-scanner','ref-clean-1')`), "SCAN_VERDICT_CONFLICT");
+  await db.exec("reset role");
+  const scanCleanedVersion = (await db.query(`select upload_status, malware_scan_provider, malware_scan_reference, rejected_reason, malware_scanned_at is not null as scanned
+    from public.document_versions where id='${scanCleanDoc.finalized.versionId}'`)).rows[0];
+  assert(scanCleanedVersion.upload_status === "clean" && scanCleanedVersion.malware_scan_provider === "test-scanner"
+    && scanCleanedVersion.malware_scan_reference === "ref-clean-1" && scanCleanedVersion.rejected_reason === null && scanCleanedVersion.scanned,
+    "The cleaned version did not record its provider receipt.");
+  const scanCleanTraces = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where action_code='document.scanned' and resource_id='${scanCleanDoc.finalized.versionId}') as audits,
+    (select count(*)::integer from private.outbox_events where event_type='document.scanned' and aggregate_id='${scanCleanDoc.finalized.versionId}') as events`)).rows[0];
+  assert(scanCleanTraces.audits === 1 && scanCleanTraces.events === 1, "A scan verdict did not write exactly one audit and one outbox trace.");
+
+  // (A1-2) An infected verdict rejects the version, and downstream use stays blocked forever.
+  const scanInfectedDoc = await finalizeScannableDocument("Infected notice", "infected.pdf", scanInfectedSha, "scan-infect");
+  await db.exec("reset role; set role service_role");
+  const scanInfectedClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000003') as r`)).rows[0].r;
+  const scanInfectedJob = scanInfectedClaim.jobs.find((j) => j.documentVersionId === scanInfectedDoc.finalized.versionId);
+  assert(scanInfectedJob, "The infected fixture's job was not claimable.");
+  // A verdict carrying ANOTHER version's (valid) digest must not be accepted against this job.
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanInfectedJob.documentScanJobId}','clean','${scanCleanSha}','test-scanner','ref-crossver')`), "SCAN_TARGET_MISMATCH");
+  const scanInfectedResult = (await db.query(`select public.complete_document_scan('${scanInfectedJob.documentScanJobId}','infected','${scanInfectedSha}','test-scanner','ref-eicar-1') as r`)).rows[0].r;
+  assert(scanInfectedResult.uploadStatus === "rejected", "An infected verdict did not reject the version.");
+  await db.exec("reset role");
+  const scanRejectedVersion = (await db.query(`select upload_status, rejected_reason from public.document_versions where id='${scanInfectedDoc.finalized.versionId}'`)).rows[0];
+  assert(scanRejectedVersion.upload_status === "rejected" && scanRejectedVersion.rejected_reason === "MALWARE_DETECTED:ref-eicar-1",
+    "The rejected version did not record why it was rejected.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.deliver_document('${organization.organizationId}','${scanInfectedDoc.finalized.versionId}','resident_person','${invitedResidentPerson}','portal','scan-infect-deliv1')`),
+    "DOCUMENT_NOT_DELIVERABLE",
+  );
+  // A rejected version can never be talked back into 'clean', even by a fresh job on the same row.
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set status='scanning', verdict=null, completed_at=null where id='${scanInfectedJob.documentScanJobId}'`);
+  await db.exec("set role service_role");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanInfectedJob.documentScanJobId}','clean','${scanInfectedSha}','test-scanner','ref-resurrect')`), "DOCUMENT_VERSION_NOT_SCANNABLE");
+
+  // A failed scan ATTEMPT is not a verdict: the version falls back to quarantined, never to clean.
+  const scanRetryDoc = await finalizeScannableDocument("Flaky notice", "flaky.pdf", scanRetrySha, "scan-retry0");
+  await db.exec("reset role; set role service_role");
+  const scanRetryClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000004') as r`)).rows[0].r;
+  const scanRetryJob = scanRetryClaim.jobs.find((j) => j.documentVersionId === scanRetryDoc.finalized.versionId);
+  const scanRetryFail = (await db.query(`select public.fail_document_scan('${scanRetryJob.documentScanJobId}','SCANNER_TIMEOUT',true) as r`)).rows[0].r;
+  assert(scanRetryFail.status === "queued", "A retryable scan failure did not return the job to the queue.");
+  await db.exec("reset role");
+  const scanRetryState = (await db.query(`select
+    (select upload_status from public.document_versions where id='${scanRetryDoc.finalized.versionId}') as version_status,
+    (select available_at > now() from private.document_scan_jobs where id='${scanRetryJob.documentScanJobId}') as backed_off,
+    (select attempts from private.document_scan_jobs where id='${scanRetryJob.documentScanJobId}') as attempts`)).rows[0];
+  assert(scanRetryState.version_status === "quarantined" && scanRetryState.backed_off === true && scanRetryState.attempts === 1,
+    "A failed scan attempt did not quarantine the version behind a backoff.");
+  // Exhausting the retry budget dead-letters the job — and STILL leaves the document unusable.
+  await db.exec(`update private.document_scan_jobs set attempts=max_attempts-1, available_at=now()-interval '1 minute' where id='${scanRetryJob.documentScanJobId}'`);
+  await db.exec("set role service_role");
+  const scanRetryClaim2 = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000005') as r`)).rows[0].r;
+  assert(scanRetryClaim2.jobs.some((j) => j.documentScanJobId === scanRetryJob.documentScanJobId), "The backed-off job did not become due again.");
+  const scanDead = (await db.query(`select public.fail_document_scan('${scanRetryJob.documentScanJobId}','SCANNER_UNAVAILABLE',true) as r`)).rows[0].r;
+  assert(scanDead.status === "dead_letter", "An exhausted scan job did not dead-letter.");
+  const scanDeadReplay = (await db.query(`select public.fail_document_scan('${scanRetryJob.documentScanJobId}','SCANNER_UNAVAILABLE',true) as r`)).rows[0].r;
+  assert(scanDeadReplay.duplicate === true, "Re-failing a dead-lettered scan job was not idempotent.");
+  await db.exec("reset role");
+  const scanDeadState = (await db.query(`select
+    (select upload_status from public.document_versions where id='${scanRetryDoc.finalized.versionId}') as version_status,
+    (select count(*)::integer from audit.audit_events where action_code='document.scanDeadLettered' and resource_id='${scanRetryDoc.finalized.versionId}') as audits`)).rows[0];
+  assert(scanDeadState.version_status === "quarantined" && scanDeadState.audits === 1,
+    "A dead-lettered scan left the version usable or wrote no incident audit.");
+
+  // A worker that dies mid-scan must not strand its document in 'scanning' forever.
+  const scanStallDoc = await finalizeScannableDocument("Stalled notice", "stalled.pdf", scanStallSha, "scan-stall0");
+  await db.exec("reset role; set role service_role");
+  const scanStallClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000006') as r`)).rows[0].r;
+  const scanStallJob = scanStallClaim.jobs.find((j) => j.documentVersionId === scanStallDoc.finalized.versionId);
+  await expectDatabaseError(() => db.query(`select public.requeue_stalled_document_scans(0)`), "INVALID_STALL_WINDOW");
+  const scanNoStall = (await db.query(`select public.requeue_stalled_document_scans(30) as r`)).rows[0].r;
+  assert(scanNoStall.requeued === 0, "The stall sweep requeued a freshly claimed job.");
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set claimed_at=now()-interval '2 hours' where id='${scanStallJob.documentScanJobId}'`);
+  await db.exec("set role service_role");
+  const scanSwept = (await db.query(`select public.requeue_stalled_document_scans(30) as r`)).rows[0].r;
+  assert(scanSwept.requeued === 1 && scanSwept.deadLettered === 0, "The stall sweep did not requeue the abandoned scan.");
+  await db.exec("reset role");
+  const scanSweptState = (await db.query(`select
+    (select status from private.document_scan_jobs where id='${scanStallJob.documentScanJobId}') as job_status,
+    (select upload_status from public.document_versions where id='${scanStallDoc.finalized.versionId}') as version_status`)).rows[0];
+  assert(scanSweptState.job_status === "queued" && scanSweptState.version_status === "quarantined",
+    "The stall sweep left the job or its version in 'scanning'.");
+
+  const scanLifecycle = {
+    enqueued: (await db.query(`select count(*)::integer as c from private.document_scan_jobs where organization_id='${organization.organizationId}'`)).rows[0].c,
+    cleanedByWorker: scanCleanDoc.finalized.versionId,
+    rejectedByWorker: scanInfectedDoc.finalized.versionId,
+    deadLettered: 1,
+    stallSwept: 1,
+  };
+
   // Document delivery & acknowledgement (phase_2_document_delivery). Operator delivers a finalized,
   // clean document version to a portal recipient identified by their active user_relationship; the
   // recipient records an append-only acknowledgement. Covers RLS isolation, replay, and the per-type
   // acknowledgement guard.
-  const deliveryDoc = "e9000000-0000-4000-8000-0000000000d1";
-  const deliveryVersion = "e9000000-0000-4000-8000-0000000000d2";
-  const deliveryQuarantineDoc = "e9000000-0000-4000-8000-0000000000d5";
-  const deliveryQuarantineVersion = "e9000000-0000-4000-8000-0000000000d6";
+  // The delivered document is the one the SCAN WORKER cleaned above, not a hand-written 'clean' row:
+  // file 27 §5.A1 forbids a manual upload_status edit standing in for the lifecycle.
+  const deliveryDoc = scanCleanDoc.finalized.documentId;
+  const deliveryVersion = scanCleanDoc.finalized.versionId;
+  const deliveryQuarantineDoc = scanInfectedDoc.finalized.documentId;
+  const deliveryQuarantineVersion = scanInfectedDoc.finalized.versionId;
   const deliveryOutsider = "e9000000-0000-4000-8000-0000000000d4";
-  await db.exec(`reset role;
-    insert into auth.users(id) values ('${deliveryOutsider}');
-    insert into public.documents(id,organization_id,property_id,document_type,title,source,status,created_by)
-      select '${deliveryDoc}','${organization.organizationId}',p.id,'notice','Quiet hours notice','operator_supplied','active','${admin}' from public.properties p where p.organization_id='${organization.organizationId}' limit 1;
-    insert into public.documents(id,organization_id,property_id,document_type,title,source,status,created_by)
-      select '${deliveryQuarantineDoc}','${organization.organizationId}',p.id,'notice','Unscanned notice','operator_supplied','active','${admin}' from public.properties p where p.organization_id='${organization.organizationId}' limit 1;
-    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status) values
-      ('${deliveryVersion}','${organization.organizationId}','${deliveryDoc}',1,'documents','org/notice-v1.pdf','application/pdf',2048,'${"a".repeat(64)}','notice.pdf','${admin}','clean'),
-      ('${deliveryQuarantineVersion}','${organization.organizationId}','${deliveryQuarantineDoc}',1,'documents','org/notice-q.pdf','application/pdf',2048,'${"b".repeat(64)}','notice-q.pdf','${admin}','quarantined');`);
+  await db.exec(`reset role; insert into auth.users(id) values ('${deliveryOutsider}');`);
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email','doc-deliver-email-01')`), "UNSUPPORTED_DELIVERY_CHANNEL");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','carrier_pigeon','doc-deliver-badchan-1')`), "UNSUPPORTED_DELIVERY_CHANNEL");
   await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}',null,null,'portal','doc-deliver-norecip-1')`), "INVALID_DELIVERY_RECIPIENT");
   await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','e9000000-0000-4000-8000-0000000000ff','resident_person','${invitedResidentPerson}','portal','doc-deliver-noverr-1')`), "DOCUMENT_VERSION_NOT_FOUND");
   await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryQuarantineVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-quar-01')`), "DOCUMENT_NOT_DELIVERABLE");
@@ -3826,10 +4076,1369 @@ async function validateRecurringCharges() {
   const occBadValidation = (await db.query(`select public.validate_occupied_import('${occBadJob}','${JSON.stringify(occMapping)}'::jsonb,'${JSON.stringify(occOptions)}'::jsonb) as result`)).rows[0].result;
   assert(occBadValidation.status === "mapping" && occBadValidation.totals.errors === 1, "Unknown-property occupied row was not flagged as an error.");
   await expectDatabaseError(() => db.query(`select public.commit_occupied_import('${occBadJob}','${occBadValidation.validationHash}')`), "IMPORT_NOT_READY");
+
+  // ── Single-pass combined import (phase_3_combined_import) ───────────────────────────────────────
+  // The real onboarding artifact is ONE spreadsheet: unit, resident, rent, balance. This leg creates
+  // the property and unit AND activates the tenancy from a single row, so the portfolio is operational
+  // after one commit. Both rows below name a property that does NOT exist yet.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const cmbSourceDoc = "ea000000-0000-4000-8000-0000000000c1";
+  const cmbSourceVersion = "ea000000-0000-4000-8000-0000000000c2";
+  await db.exec(`reset role;
+    insert into public.documents(id,organization_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${cmbSourceDoc}','${organization.organizationId}','portfolio_import','Combined roster','operator_supplied','active',true,'${admin}');
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${cmbSourceVersion}','${organization.organizationId}','${cmbSourceDoc}',1,'private-documents','organizations/${organization.organizationId}/organization/${organization.organizationId}/${cmbSourceVersion}/combined.csv','text/csv',512,'${"f".repeat(64)}','combined.csv','${admin}','clean');
+    set role authenticated; set request.jwt.claim.sub='${admin}';`);
+
+  const cmbHeaders = ["Property","Type","Address","City","State","Postal","Country","TZ","Unit","UnitType","Beds","Baths","Sqft","First","Last","Email","Start","Rent","Freq","Currency","Opening"];
+  const cmbRow = (unit, first, last, opening) => ({
+    Property: "Birch Terrace", Type: "multifamily", Address: "500 Birch Avenue", City: "Norfolk", State: "VA", Postal: "23510",
+    Country: "US", TZ: "America/New_York", Unit: unit, UnitType: "Apartment", Beds: "2", Baths: "1", Sqft: "780",
+    First: first, Last: last, Email: `${first.toLowerCase()}.${last.toLowerCase()}@example.test`,
+    Start: "2026-08-01", Rent: "135000", Freq: "monthly", Currency: "USD", Opening: opening,
+  });
+  const cmbMapping = {
+    propertyName: "Property", propertyType: "Type", addressLine1: "Address", locality: "City", subdivisionCode: "State",
+    postalCode: "Postal", countryCode: "Country", timeZone: "TZ", unitCode: "Unit", unitType: "UnitType",
+    bedrooms: "Beds", bathrooms: "Baths", squareFeet: "Sqft", primaryFirstName: "First", primaryLastName: "Last",
+    primaryEmail: "Email", leaseStartDate: "Start", rentAmountMinor: "Rent", rentFrequency: "Freq",
+    currencyCode: "Currency", openingBalanceMinor: "Opening",
+  };
+  const cmbOptions = { dedupeMode: "strict", dateLocale: "en-US" };
+  const cmbRows = [cmbRow("A1", "Noor", "Haddad", "90000"), cmbRow("A2", "Iris", "Okafor", "0")];
+
+  const cmbJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbRows)}'::jsonb,'combined-import-0001') as result`)).rows[0].result.importJobId;
+  const cmbValidation = (await db.query(`select public.validate_combined_import('${cmbJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbValidation.status === "ready" && cmbValidation.totals.creates === 2 && cmbValidation.totals.errors === 0, "Two valid combined rows did not reach ready.");
+  assert(cmbValidation.totals.newUnits === 2, "The combined validation did not count both units as new seats.");
+  await expectDatabaseError(() => db.query(`select public.commit_combined_import('${cmbJob}','${"0".repeat(64)}')`), "VALIDATION_HASH_CONFLICT");
+  const cmbCommitted = (await db.query(`select public.commit_combined_import('${cmbJob}','${cmbValidation.validationHash}') as result`)).rows[0].result;
+  assert(cmbCommitted.status === "completed", "The combined import did not complete.");
+  assert(cmbCommitted.committed.properties === 1 && cmbCommitted.committed.units === 2 && cmbCommitted.committed.tenancies === 2 && cmbCommitted.committed.openingBalances === 1,
+    "The combined commit did not create one property, two units, two tenancies, and one opening balance.");
+  const cmbReplay = (await db.query(`select public.commit_combined_import('${cmbJob}','${cmbValidation.validationHash}') as result`)).rows[0].result;
+  assert(cmbReplay.reportDocumentId === cmbCommitted.reportDocumentId, "Combined-import commit replay returned a different report document.");
+
+  // Both rows named one property, so exactly ONE property exists — the second row reused the first
+  // row's freshly created property rather than duplicating it.
+  await db.exec("reset role");
+  const cmbProperty = (await db.query(`select id,status from public.properties
+    where organization_id='${organization.organizationId}' and lower(name)='birch terrace'`)).rows;
+  assert(cmbProperty.length === 1, "The combined import duplicated the property across rows.");
+  const cmbUnits = (await db.query(`select count(*)::integer as c from public.units where property_id='${cmbProperty[0].id}'`)).rows[0].c;
+  assert(cmbUnits === 2, "The combined import did not create both units under the shared property.");
+
+  // Each row is fully operational: active tenancy, household with a primary member, armed rent schedule.
+  // Keyed by unit code, not array position: both rows share a possession_start, so ordering by date
+  // would not deterministically identify which tenancy is A1 and which is A2.
+  const cmbTenancies = (await db.query(`select u.unit_code, t.id, t.status, cs.id as schedule_id, cs.next_run_on, hm.is_primary_contact
+    from public.tenancies t
+    join public.units u on u.id=t.unit_id
+    join public.charge_schedules cs on cs.tenancy_id=t.id
+    join public.household_members hm on hm.household_id=t.household_id
+    where t.property_id='${cmbProperty[0].id}' order by u.unit_code`)).rows;
+  const cmbTenancyByUnit = Object.fromEntries(cmbTenancies.map((t) => [t.unit_code, t]));
+  assert(cmbTenancyByUnit.A1 && cmbTenancyByUnit.A2, "The combined import did not produce a tenancy for each imported unit.");
+  assert(cmbTenancies.length === 2 && cmbTenancies.every((t) => t.status === "active" && t.schedule_id && t.is_primary_contact === true),
+    "A combined-imported row did not yield an active tenancy with a rent schedule and a primary household member.");
+
+  // The opening receivable is balanced 1100 DR / 3900 CR, and the zero-balance row posts NO journal.
+  const cmbLedger = (await db.query(`select
+    coalesce(sum(je.debit_minor) filter (where la.account_code='1100'),0)::bigint as ar_debit,
+    coalesce(sum(je.credit_minor) filter (where la.account_code='3900'),0)::bigint as equity_credit,
+    coalesce(sum(je.debit_minor),0)::bigint as total_debit,
+    coalesce(sum(je.credit_minor),0)::bigint as total_credit,
+    count(distinct jt.id)::integer as transactions
+    from public.journal_transactions jt
+    join public.journal_entries je on je.journal_transaction_id=jt.id
+    join public.ledger_accounts la on la.id=je.ledger_account_id
+    where jt.transaction_type='opening_balance' and jt.metadata->>'importJobId'='${cmbJob}'`)).rows[0];
+  assert(Number(cmbLedger.ar_debit) === 90000 && Number(cmbLedger.equity_credit) === 90000, "The combined opening receivable did not post 90000 to 1100 DR / 3900 CR.");
+  assert(Number(cmbLedger.total_debit) === Number(cmbLedger.total_credit), "The combined opening journal is unbalanced.");
+  assert(cmbLedger.transactions === 1, "A zero opening balance still posted a journal transaction.");
+
+  // Operational end state: the imported tenancy generates its first recurring rent charge.
+  await db.exec("reset role; set role service_role");
+  const cmbCharge = (await db.query(`select public.generate_recurring_charges('2026-08-01',array['${cmbTenancyByUnit.A1.schedule_id}']::uuid[],'combined-charge-gen-0001') as result`)).rows[0].result;
+  assert(cmbCharge.generatedCount >= 1, "A combined-imported tenancy could not generate its first recurring rent charge.");
+
+  // Two rows for the same unit would activate overlapping tenancies; that is always an error.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const cmbDupRows = [cmbRow("B1", "Ada", "Stone", "0"), cmbRow("B1", "Leo", "Stone", "0")];
+  const cmbDupJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbDupRows)}'::jsonb,'combined-import-dup-1') as result`)).rows[0].result.importJobId;
+  const cmbDupValidation = (await db.query(`select public.validate_combined_import('${cmbDupJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbDupValidation.status === "mapping" && cmbDupValidation.totals.errors === 1, "A repeated unit in one combined file was not rejected.");
+  assert(JSON.stringify(cmbDupValidation.errors).includes("DUPLICATE_UNIT"), "The repeated-unit row did not raise DUPLICATE_UNIT.");
+  await expectDatabaseError(() => db.query(`select public.commit_combined_import('${cmbDupJob}','${cmbDupValidation.validationHash}')`), "IMPORT_NOT_READY");
+
+  // Re-importing a unit that is ALREADY occupied is rejected rather than double-booked.
+  const cmbOverlapRows = [cmbRow("A1", "Mona", "Vale", "0")];
+  const cmbOverlapJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbOverlapRows)}'::jsonb,'combined-import-overlap-1') as result`)).rows[0].result.importJobId;
+  const cmbOverlapValidation = (await db.query(`select public.validate_combined_import('${cmbOverlapJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbOverlapValidation.status === "mapping" && JSON.stringify(cmbOverlapValidation.errors).includes("TENANCY_OVERLAP"),
+    "Importing into an already-occupied unit was not rejected.");
+
+  // Seat accounting: a row that REUSES an existing unit must consume no new unit seat. Pinned at the
+  // plan boundary, because with headroom an over-count is invisible — and an over-count would refuse a
+  // perfectly legal import with PLAN_LIMIT_EXCEEDED.
+  const reuseUnit = (await db.query(`select public.create_unit('${organization.organizationId}','${property.propertyId}',null,'301','Apartment',1,1,600,'finance-reuse-unit-0001') as result`)).rows[0].result;
+  const cmbReuseRows = [{
+    Property: "Maple Court", Type: "multifamily", Address: "100 Main Street", City: "Richmond", State: "VA", Postal: "23220",
+    Country: "US", TZ: "America/New_York", Unit: "301", UnitType: "Apartment", Beds: "1", Baths: "1", Sqft: "600",
+    First: "Rae", Last: "Kimura", Email: "rae.kimura@example.test",
+    Start: "2026-08-01", Rent: "99000", Freq: "monthly", Currency: "USD", Opening: "0",
+  }];
+  const cmbReuseJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbReuseRows)}'::jsonb,'combined-import-reuse-1') as result`)).rows[0].result.importJobId;
+  const cmbReuseValidation = (await db.query(`select public.validate_combined_import('${cmbReuseJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbReuseValidation.status === "ready" && cmbReuseValidation.totals.newUnits === 0, "A row reusing an existing unit was counted as a new unit seat.");
+
+  // Squeeze the plan limit to exactly the units that already exist: a zero-new-seat import must still
+  // commit, and any genuinely new unit must be refused.
+  await db.exec("reset role");
+  const unitsNow = (await db.query(`select count(*)::integer as c from public.units
+    where organization_id='${organization.organizationId}' and operational_status<>'retired' and archived_at is null`)).rows[0].c;
+  await db.exec(`update public.plan_entitlements set limit_value=${unitsNow} where plan_code='growth' and feature_code='core.unit'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const cmbReuseCommitted = (await db.query(`select public.commit_combined_import('${cmbReuseJob}','${cmbReuseValidation.validationHash}') as result`)).rows[0].result;
+  assert(cmbReuseCommitted.status === "completed" && cmbReuseCommitted.committed.units === 0 && cmbReuseCommitted.committed.tenancies === 1,
+    "Reusing an existing unit at the exact plan limit was refused — new-unit seats are being over-counted.");
+  await db.exec("reset role");
+  const reuseTenancy = (await db.query(`select count(*)::integer as c from public.tenancies where unit_id='${reuseUnit.unitId}' and status='active'`)).rows[0].c;
+  assert(reuseTenancy === 1, "The reuse row did not activate a tenancy on the existing unit.");
+
+  // Same limit, but this row needs a genuinely new unit: refused, and nothing is written.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const cmbOverLimitRows = [cmbRow("C9", "Zed", "Marsh", "0")];
+  const cmbOverLimitJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify(cmbOverLimitRows)}'::jsonb,'combined-import-overlimit-1') as result`)).rows[0].result.importJobId;
+  const cmbOverLimitValidation = (await db.query(`select public.validate_combined_import('${cmbOverLimitJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(cmbOverLimitValidation.status === "ready", "The over-limit fixture did not validate.");
+  const cmbOverLimitCommit = (await db.query(`select public.commit_combined_import('${cmbOverLimitJob}','${cmbOverLimitValidation.validationHash}') as result`)).rows[0].result;
+  assert(cmbOverLimitCommit.status === "failed" && cmbOverLimitCommit.error === "PLAN_LIMIT_EXCEEDED", "A combined import past the unit limit was not refused.");
+  await db.exec("reset role");
+  const overLimitUnits = (await db.query(`select count(*)::integer as c from public.units u
+    join public.properties p on p.id=u.property_id
+    where p.organization_id='${organization.organizationId}' and lower(u.unit_code)='c9'`)).rows[0].c;
+  assert(overLimitUnits === 0, "A refused over-limit import still wrote a unit — the commit is not atomic.");
+  await db.exec(`update public.plan_entitlements set limit_value=50 where plan_code='growth' and feature_code='core.unit'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+
+  // ── True .xlsx sources (phase_3_xlsx_source_documents) ──────────────────────────────────────────
+  // The mime allowlist is enforced in five places; these assertions cover the two SQL gates, without
+  // which an operator could upload nothing and create_import_job would reject the version anyway.
+  const xlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  const xlsxGrant = (await db.query(`select public.create_document_upload_grant(
+    '${organization.organizationId}','organization','${organization.organizationId}','portfolio_import','Roster workbook','roster.xlsx','${xlsxMime}',4096,'xlsx-upload-grant-0001'
+  ) as result`)).rows[0].result;
+  assert(xlsxGrant.grantId && xlsxGrant.storagePath, "An .xlsx upload grant was refused by the mime allowlist.");
+  await expectDatabaseError(() => db.query(`select public.create_document_upload_grant(
+    '${organization.organizationId}','organization','${organization.organizationId}','portfolio_import','Executable','payload.exe','application/x-msdownload',4096,'xlsx-upload-grant-bad-1'
+  )`), "MIME_TYPE_NOT_ALLOWED");
+  await db.exec("reset role");
+  const bucketMimes = (await db.query(`select allowed_mime_types from storage.buckets where id='private-documents'`)).rows[0].allowed_mime_types;
+  assert(Array.isArray(bucketMimes) && bucketMimes.includes(xlsxMime), "The storage bucket still rejects .xlsx uploads.");
+
+  // An .xlsx source document is accepted by create_import_job exactly like a CSV one.
+  const xlsxDoc = "ea000000-0000-4000-8000-0000000000e1";
+  const xlsxVersion = "ea000000-0000-4000-8000-0000000000e2";
+  await db.exec(`insert into public.documents(id,organization_id,document_type,title,source,status,operator_supplied_unverified,created_by)
+    values ('${xlsxDoc}','${organization.organizationId}','portfolio_import','Roster workbook','operator_supplied','active',true,'${admin}');
+    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status)
+    values ('${xlsxVersion}','${organization.organizationId}','${xlsxDoc}',1,'private-documents','organizations/${organization.organizationId}/organization/${organization.organizationId}/${xlsxVersion}/roster.xlsx','${xlsxMime}',4096,'${"9".repeat(64)}','roster.xlsx','${admin}','clean');`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const xlsxJob = (await db.query(`select public.create_import_job('${organization.organizationId}','combined','${xlsxDoc}','${xlsxVersion}','${JSON.stringify(cmbHeaders)}'::jsonb,'${JSON.stringify([cmbRow("X1", "Ivy", "Nakamura", "0")])}'::jsonb,'xlsx-import-0001') as result`)).rows[0].result;
+  assert(xlsxJob.importJobId && xlsxJob.status === "mapping", "An .xlsx-backed import job was refused by create_import_job.");
+
+  // ── Residents leg: multi-member households (phase_3_resident_and_balance_imports) ───────────────
+  // The lease-bearing legs create a household with exactly ONE member. Real households have
+  // co-residents; this leg adds them to a tenancy that already exists.
+  const resHeaders = ["Property","Address","City","Country","Unit","First","Last","Email","Phone","Responsible","Starts"];
+  const resRows = [
+    { Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "A1", First: "Sam", Last: "Haddad", Email: "sam.haddad@example.test", Phone: "+14155550188", Responsible: "true", Starts: "2026-08-01" },
+    { Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "A1", First: "Kai", Last: "Haddad", Email: "kai.haddad@example.test", Phone: "", Responsible: "false", Starts: "2026-08-01" },
+  ];
+  const resMapping = { propertyName: "Property", addressLine1: "Address", locality: "City", countryCode: "Country", unitCode: "Unit", firstName: "First", lastName: "Last", email: "Email", phone: "Phone", financiallyResponsible: "Responsible", startsOn: "Starts" };
+  const resJob = (await db.query(`select public.create_import_job('${organization.organizationId}','residents','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(resHeaders)}'::jsonb,'${JSON.stringify(resRows)}'::jsonb,'resident-import-0001') as result`)).rows[0].result.importJobId;
+  const resValidation = (await db.query(`select public.validate_resident_import('${resJob}','${JSON.stringify(resMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(resValidation.status === "ready" && resValidation.totals.creates === 2, "Two co-resident rows did not validate against the existing tenancy.");
+  const resCommitted = (await db.query(`select public.commit_resident_import('${resJob}','${resValidation.validationHash}') as result`)).rows[0].result;
+  assert(resCommitted.status === "completed" && resCommitted.committed.householdMembers === 2 && resCommitted.committed.people === 2,
+    "The residents import did not add both co-residents.");
+
+  await db.exec("reset role");
+  const householdRoster = (await db.query(`select
+    count(*)::integer as members,
+    count(*) filter (where hm.is_primary_contact)::integer as primaries,
+    count(*) filter (where hm.is_financially_responsible)::integer as responsible
+    from public.household_members hm
+    join public.tenancies t on t.household_id=hm.household_id
+    where t.id='${cmbTenancyByUnit.A1.id}'`)).rows[0];
+  assert(householdRoster.members === 3, "The household did not end with the primary resident plus two co-residents.");
+  assert(householdRoster.primaries === 1, "A co-resident was made a second primary contact — notification routing would be ambiguous.");
+  assert(householdRoster.responsible === 2, "The financially-responsible flag was not carried from the roster.");
+
+  // Re-running the same roster must not duplicate people: the existing person is matched by email and
+  // the row is flagged as already a member.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const resRerunJob = (await db.query(`select public.create_import_job('${organization.organizationId}','residents','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(resHeaders)}'::jsonb,'${JSON.stringify(resRows)}'::jsonb,'resident-import-rerun-1') as result`)).rows[0].result.importJobId;
+  const resRerunValidation = (await db.query(`select public.validate_resident_import('${resRerunJob}','${JSON.stringify(resMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(resRerunValidation.status === "mapping" && resRerunValidation.totals.errors === 2, "Re-running the roster did not flag both rows as already-members.");
+  assert(JSON.stringify(resRerunValidation.errors).includes("ALREADY_A_MEMBER"), "The re-run rows did not raise ALREADY_A_MEMBER.");
+  await db.exec("reset role");
+  const peopleAfterRerun = (await db.query(`select count(*)::integer as c from public.people
+    where organization_id='${organization.organizationId}' and email='sam.haddad@example.test'`)).rows[0].c;
+  assert(peopleAfterRerun === 1, "Re-running the roster duplicated a person record.");
+
+  // A roster row for a unit with no tenancy is a per-row error, not a silent skip.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const resOrphanRows = [{ Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "Z9", First: "Ola", Last: "Vex", Email: "ola.vex@example.test", Phone: "", Responsible: "false", Starts: "2026-08-01" }];
+  const resOrphanJob = (await db.query(`select public.create_import_job('${organization.organizationId}','residents','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(resHeaders)}'::jsonb,'${JSON.stringify(resOrphanRows)}'::jsonb,'resident-import-orphan-1') as result`)).rows[0].result.importJobId;
+  const resOrphanValidation = (await db.query(`select public.validate_resident_import('${resOrphanJob}','${JSON.stringify(resMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(resOrphanValidation.status === "mapping" && JSON.stringify(resOrphanValidation.errors).includes("TENANCY_NOT_FOUND"), "A roster row with no tenancy was not rejected.");
+  await expectDatabaseError(() => db.query(`select public.commit_resident_import('${resOrphanJob}','${resOrphanValidation.validationHash}')`), "IMPORT_NOT_READY");
+
+  // ── Opening-balances leg ────────────────────────────────────────────────────────────────────────
+  // Balances usually arrive as a separate export from the rent roll. Unit A2 was imported with a zero
+  // opening balance, so it has no opening journal yet and is the legitimate target.
+  const balHeaders = ["Property","Address","City","Country","Unit","Balance","Effective","Memo"];
+  const balRows = [{ Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "A2", Balance: "47500", Effective: "2026-08-01", Memo: "Migrated balance" }];
+  const balMapping = { propertyName: "Property", addressLine1: "Address", locality: "City", countryCode: "Country", unitCode: "Unit", openingBalanceMinor: "Balance", effectiveDate: "Effective", memo: "Memo" };
+  const balJob = (await db.query(`select public.create_import_job('${organization.organizationId}','opening_balances','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(balHeaders)}'::jsonb,'${JSON.stringify(balRows)}'::jsonb,'balance-import-0001') as result`)).rows[0].result.importJobId;
+  const balValidation = (await db.query(`select public.validate_opening_balance_import('${balJob}','${JSON.stringify(balMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(balValidation.status === "ready" && Number(balValidation.totals.netOpeningBalanceMinor) === 47500, "The opening-balance file did not validate to its net total.");
+  const balCommitted = (await db.query(`select public.commit_opening_balance_import('${balJob}','${balValidation.validationHash}') as result`)).rows[0].result;
+  assert(balCommitted.status === "completed" && balCommitted.committed.openingBalances === 1, "The opening-balance import did not post exactly one balance.");
+
+  await db.exec("reset role");
+  const balLedger = (await db.query(`select
+    coalesce(sum(je.debit_minor) filter (where la.account_code='1100'),0)::bigint as ar_debit,
+    coalesce(sum(je.credit_minor) filter (where la.account_code='3900'),0)::bigint as equity_credit,
+    coalesce(sum(je.debit_minor),0)::bigint as total_debit,
+    coalesce(sum(je.credit_minor),0)::bigint as total_credit
+    from public.journal_transactions jt
+    join public.journal_entries je on je.journal_transaction_id=jt.id
+    join public.ledger_accounts la on la.id=je.ledger_account_id
+    where jt.transaction_type='opening_balance' and jt.metadata->>'importJobId'='${balJob}'`)).rows[0];
+  assert(Number(balLedger.ar_debit) === 47500 && Number(balLedger.equity_credit) === 47500, "The imported opening balance did not post 47500 to 1100 DR / 3900 CR.");
+  assert(Number(balLedger.total_debit) === Number(balLedger.total_credit), "The imported opening-balance journal is unbalanced.");
+
+  // Re-importing the same balance must be refused: doubling a receivable is a financial defect.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const balRerunJob = (await db.query(`select public.create_import_job('${organization.organizationId}','opening_balances','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(balHeaders)}'::jsonb,'${JSON.stringify(balRows)}'::jsonb,'balance-import-rerun-1') as result`)).rows[0].result.importJobId;
+  const balRerunValidation = (await db.query(`select public.validate_opening_balance_import('${balRerunJob}','${JSON.stringify(balMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(balRerunValidation.status === "mapping" && JSON.stringify(balRerunValidation.errors).includes("OPENING_BALANCE_EXISTS"), "Re-importing an opening balance was not refused.");
+  await db.exec("reset role");
+  const balTotalAfterRerun = (await db.query(`select coalesce(sum(je.debit_minor),0)::bigint as ar
+    from public.journal_transactions jt
+    join public.journal_entries je on je.journal_transaction_id=jt.id
+    join public.ledger_accounts la on la.id=je.ledger_account_id
+    where jt.source_type='tenancy' and jt.source_id='${cmbTenancyByUnit.A2.id}' and la.account_code='1100'`)).rows[0].ar;
+  assert(Number(balTotalAfterRerun) === 47500, "The receivable was doubled by a repeated opening-balance import.");
+
+  // A zero balance has nothing to post, and a row for an unknown unit is an error.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const balBadRows = [
+    { Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "A1", Balance: "0", Effective: "2026-08-01", Memo: "" },
+    { Property: "Birch Terrace", Address: "500 Birch Avenue", City: "Norfolk", Country: "US", Unit: "Q7", Balance: "1000", Effective: "2026-08-01", Memo: "" },
+  ];
+  const balBadJob = (await db.query(`select public.create_import_job('${organization.organizationId}','opening_balances','${cmbSourceDoc}','${cmbSourceVersion}','${JSON.stringify(balHeaders)}'::jsonb,'${JSON.stringify(balBadRows)}'::jsonb,'balance-import-bad-1') as result`)).rows[0].result.importJobId;
+  const balBadValidation = (await db.query(`select public.validate_opening_balance_import('${balBadJob}','${JSON.stringify(balMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb) as result`)).rows[0].result;
+  assert(balBadValidation.totals.errors === 2, "The zero-balance and unknown-unit rows were not both rejected.");
+  assert(JSON.stringify(balBadValidation.errors).includes("ZERO_OPENING_BALANCE") && JSON.stringify(balBadValidation.errors).includes("TENANCY_NOT_FOUND"),
+    "The opening-balance validator did not raise the expected per-row codes.");
+
+  // Each leg refuses a job belonging to another leg.
+  await expectDatabaseError(() => db.query(`select public.validate_resident_import('${balBadJob}','${JSON.stringify(resMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb)`), "IMPORT_TYPE_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.validate_opening_balance_import('${resOrphanJob}','${JSON.stringify(balMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb)`), "IMPORT_TYPE_MISMATCH");
+
+  // A combined job cannot be driven by the occupied-lease commands, and vice versa.
+  await expectDatabaseError(() => db.query(`select public.validate_occupied_import('${cmbOverlapJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb)`), "IMPORT_TYPE_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.validate_combined_import('${occJob}','${JSON.stringify(cmbMapping)}'::jsonb,'${JSON.stringify(cmbOptions)}'::jsonb)`), "IMPORT_TYPE_MISMATCH");
+  await db.exec("reset role");
   await db.exec("reset role");
 
+  // ── Transactional notification worker (phase_4_notification_worker) ─────────────────────────────
+  // Commands enqueue private.notification_jobs everywhere; this is the drain half. Park every job
+  // queued by the earlier slices so this block's assertions are deterministic (and prove available_at
+  // gating on the way), then drive the worker against jobs enqueued here.
+  await db.exec("reset role");
+  await db.exec(`update private.notification_jobs set available_at=now()+interval '30 days' where status='queued'`);
+  const parkedClaim = (await db.query(`select public.claim_notification_jobs('email',50,'worker-run-parked-01') as r`)).rows[0].r;
+  assert(parkedClaim.claimed === 0, "Jobs scheduled into the future must not be claimable — available_at is not gating the queue.");
+
+  // Only the service role may drive the worker; the browser role cannot touch the queue at all.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.claim_notification_jobs('email',10,'worker-run-forbidden-1')`), "permission denied");
+  await expectDatabaseError(() => db.query(`select public.complete_notification_job('${"0".repeat(8)}-0000-4000-8000-00000000f001','smtp','msg-1')`), "permission denied");
+  await expectDatabaseError(() => db.query(`select public.fail_notification_job('${"0".repeat(8)}-0000-4000-8000-00000000f001','ERR',true)`), "permission denied");
+
+  // Input validation.
+  await db.exec("reset role; set role service_role");
+  await expectDatabaseError(() => db.query(`select public.claim_notification_jobs('carrier_pigeon',10,'worker-run-badchan-1')`), "INVALID_NOTIFICATION_CHANNEL");
+  await expectDatabaseError(() => db.query(`select public.claim_notification_jobs('email',0,'worker-run-badsize-1')`), "INVALID_NOTIFICATION_BATCH_SIZE");
+  await expectDatabaseError(() => db.query(`select public.claim_notification_jobs('email',10,'short')`), "INVALID_WORKER_RUN_ID");
+  await expectDatabaseError(() => db.query(`select public.requeue_stalled_notification_jobs(0)`), "INVALID_STALL_WINDOW");
+
+  // Enqueue a deterministic batch: two sendable transactional emails plus one category email whose
+  // recipient has switched that category off.
+  await db.exec("reset role");
+  await db.exec(`update auth.users set email='worker.recipient@example.com' where id='${admin}'`);
+  await db.exec(`insert into public.notification_preferences(user_id,category,channel,enabled)
+    values ('${admin}','documents','email',false)
+    on conflict (user_id,category,channel) do update set enabled=false`);
+  await db.exec(`insert into private.notification_jobs(organization_id,template_code,locale,channel,recipient_user_id,recipient_address,payload,idempotency_key)
+    values
+      ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w1"}'::jsonb,'worker-test:transactional-1'),
+      ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w2"}'::jsonb,'worker-test:transactional-2'),
+      ('${organization.organizationId}','document_delivered','en-US','email','${admin}','worker.recipient@example.com','{"documentId":"w3"}'::jsonb,'worker-test:category-optout-1')`);
+
+  // Claim: the opted-out category job is suppressed terminally; the two transactional ones are claimed.
+  // An invitation must never be silenced by a preference row — that would lock a user out of the product.
+  await db.exec("reset role; set role service_role");
+  const claimOne = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0001') as r`)).rows[0].r;
+  assert(claimOne.claimed === 2 && claimOne.suppressed === 1, "The worker did not claim both transactional emails while suppressing the opted-out category email.");
+  assert(claimOne.jobs.every((j) => j.channel === "email" && j.recipientAddress === "worker.recipient@example.com" && j.attempt === 1), "Claimed job DTOs are missing a resolved recipient address or a first-attempt counter.");
+  assert(claimOne.jobs.every((j) => j.category === null), "A transactional invitation must map to a null preference category.");
+  await db.exec("reset role");
+  const notifSuppressedRow = (await db.query(`select status,last_error from private.notification_jobs where idempotency_key='worker-test:category-optout-1'`)).rows[0];
+  assert(notifSuppressedRow.status === "canceled" && notifSuppressedRow.last_error === "RECIPIENT_OPTED_OUT", "The opted-out job was not terminally canceled.");
+
+  // A claimed job is no longer visible to the next claim — this is what SKIP LOCKED buys under true concurrency.
+  await db.exec("reset role; set role service_role");
+  const claimTwo = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0002') as r`)).rows[0].r;
+  assert(claimTwo.claimed === 0, "A second worker re-claimed jobs that were already in flight.");
+
+  // Success path: complete → 'sent' + an 'accepted' provider receipt; a duplicate completion is idempotent.
+  const sentJobId = claimOne.jobs[0].notificationJobId;
+  const retryJobId = claimOne.jobs[1].notificationJobId;
+  const notifCompleted = (await db.query(`select public.complete_notification_job('${sentJobId}','smtp','provider-msg-0001') as r`)).rows[0].r;
+  assert(notifCompleted.status === "sent" && notifCompleted.duplicate === false, "Completing a claimed job did not mark it sent.");
+  const notifCompletedReplay = (await db.query(`select public.complete_notification_job('${sentJobId}','smtp','provider-msg-0001') as r`)).rows[0].r;
+  assert(notifCompletedReplay.duplicate === true && notifCompletedReplay.status === "sent", "A duplicate completion was not idempotent.");
+  await expectDatabaseError(() => db.query(`select public.complete_notification_job('${"0".repeat(8)}-0000-4000-8000-00000000f0ff','smtp','x')`), "NOTIFICATION_JOB_NOT_FOUND");
+
+  // Retryable failure: back to 'queued' behind a backoff, so it is not immediately re-claimable.
+  const failedOnce = (await db.query(`select public.fail_notification_job('${retryJobId}','SMTP_TIMEOUT',true) as r`)).rows[0].r;
+  assert(failedOnce.status === "queued" && failedOnce.attempts === 1, "A retryable send failure did not return the job to the queue.");
+  const claimThree = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0003') as r`)).rows[0].r;
+  assert(claimThree.claimed === 0, "A backed-off job was re-claimed before its retry delay elapsed.");
+  await db.exec("reset role");
+  const notifBackoffRow = (await db.query(`select available_at > now() as backed_off, last_error from private.notification_jobs where id='${retryJobId}'`)).rows[0];
+  assert(notifBackoffRow.backed_off === true && notifBackoffRow.last_error === "SMTP_TIMEOUT", "The retry backoff or the recorded error is wrong.");
+
+  // Completing a job that is not currently claimed is refused — bookkeeping cannot skip the queue.
+  await db.exec("reset role; set role service_role");
+  await expectDatabaseError(() => db.query(`select public.complete_notification_job('${retryJobId}','smtp','msg')`), "NOTIFICATION_JOB_NOT_CLAIMED");
+
+  // Non-retryable verdict (hard bounce) dead-letters immediately and leaves an audit trail.
+  await db.exec(`reset role; update private.notification_jobs set available_at=now() where id='${retryJobId}'`);
+  await db.exec("set role service_role");
+  const notifReclaimed = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0004') as r`)).rows[0].r;
+  assert(notifReclaimed.claimed === 1 && notifReclaimed.jobs[0].attempt === 2, "The backed-off job did not become claimable again with an incremented attempt.");
+  const deadLettered = (await db.query(`select public.fail_notification_job('${retryJobId}','INVALID_RECIPIENT_ADDRESS',false) as r`)).rows[0].r;
+  assert(deadLettered.status === "dead_letter", "A non-retryable failure did not dead-letter the job.");
+  await db.exec("reset role");
+  const deadLetterAudit = (await db.query(`select count(*)::integer as c from audit.audit_events
+    where action_code='notification.deadLettered' and actor_type='system' and resource_id='${retryJobId}'`)).rows[0].c;
+  assert(deadLetterAudit === 1, "A dead-lettered notification did not write exactly one system audit event.");
+
+  // Exhausting the retry budget dead-letters even when the provider says the error is retryable.
+  await db.exec(`insert into private.notification_jobs(organization_id,template_code,locale,channel,recipient_user_id,recipient_address,payload,idempotency_key,attempts,max_attempts)
+    values ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w4"}'::jsonb,'worker-test:notifExhausted-1',2,3)`);
+  await db.exec("set role service_role");
+  const lastAttempt = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0005') as r`)).rows[0].r;
+  assert(lastAttempt.claimed === 1 && lastAttempt.jobs[0].attempt === 3 && lastAttempt.jobs[0].maxAttempts === 3, "The notifExhausted-budget fixture did not reach its final attempt.");
+  const notifExhausted = (await db.query(`select public.fail_notification_job('${lastAttempt.jobs[0].notificationJobId}','SMTP_TIMEOUT',true) as r`)).rows[0].r;
+  assert(notifExhausted.status === "dead_letter", "A retryable failure on the final attempt did not dead-letter the job.");
+
+  // A crashed worker's claim is recovered by the stall sweep rather than being lost forever.
+  await db.exec("reset role");
+  await db.exec(`insert into private.notification_jobs(organization_id,template_code,locale,channel,recipient_user_id,recipient_address,payload,idempotency_key)
+    values ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w5"}'::jsonb,'worker-test:stalled-1')`);
+  await db.exec("set role service_role");
+  const stalledClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-claim-0006') as r`)).rows[0].r;
+  assert(stalledClaim.claimed === 1, "The stall fixture was not claimed.");
+  const stalledJobId = stalledClaim.jobs[0].notificationJobId;
+  await db.exec(`reset role; update private.notification_jobs set claimed_at=now()-interval '2 hours' where id='${stalledJobId}'`);
+  await db.exec("set role service_role");
+  const notifSwept = (await db.query(`select public.requeue_stalled_notification_jobs(30) as r`)).rows[0].r;
+  assert(notifSwept.requeued === 1, "The stall sweep did not recover the crashed worker's claim.");
+  await db.exec("reset role");
+  const notifSweptRow = (await db.query(`select status,claimed_at,last_error from private.notification_jobs where id='${stalledJobId}'`)).rows[0];
+  assert(notifSweptRow.status === "queued" && notifSweptRow.claimed_at === null && notifSweptRow.last_error === "WORKER_STALLED", "A swept job was not returned to the queue cleanly.");
+
+  // A stall that exhausts the retry budget is a dead letter too: it must be counted for THIS sweep only
+  // and audited exactly like a provider-reported dead letter, not silently dropped.
+  await db.exec(`reset role; insert into private.notification_jobs(organization_id,template_code,locale,channel,recipient_user_id,recipient_address,payload,idempotency_key,attempts,max_attempts,status,claimed_at)
+    values ('${organization.organizationId}','staff_invitation','en-US','email','${admin}','worker.recipient@example.com','{"invitationId":"w6"}'::jsonb,'worker-test:stalled-exhausted-1',4,4,'processing',now()-interval '3 hours')`);
+  const stalledDeadId = (await db.query(`select id from private.notification_jobs where idempotency_key='worker-test:stalled-exhausted-1'`)).rows[0].id;
+  await db.exec("set role service_role");
+  const sweepTwo = (await db.query(`select public.requeue_stalled_notification_jobs(30) as r`)).rows[0].r;
+  assert(sweepTwo.requeued === 1 && sweepTwo.deadLettered === 1, "The stall sweep did not report exactly this run's dead letters.");
+  const sweepThree = (await db.query(`select public.requeue_stalled_notification_jobs(30) as r`)).rows[0].r;
+  assert(sweepThree.requeued === 0 && sweepThree.deadLettered === 0, "The stall sweep reported dead letters from an earlier run - the counter is cumulative, not per-run.");
+  await db.exec("reset role");
+  const stallDeadAudit = (await db.query(`select count(*)::integer as c from audit.audit_events
+    where action_code='notification.deadLettered' and actor_type='system' and resource_id='${stalledDeadId}'`)).rows[0].c;
+  assert(stallDeadAudit === 1, "A stall-induced dead letter was not audited like a provider-reported one.");
+
+  // Provider notifReceipts are recorded per attempt for both outcomes.
+  const notifReceipts = (await db.query(`select
+    (select count(*)::integer from private.notification_deliveries where notification_job_id='${sentJobId}' and status='accepted') as accepted,
+    (select count(*)::integer from private.notification_deliveries where notification_job_id='${retryJobId}' and status='failed') as failed`)).rows[0];
+  assert(notifReceipts.accepted === 1 && notifReceipts.failed === 2, "Provider notifReceipts were not recorded once per send attempt.");
+
+  // in_app jobs are never preference-suppressed (the preference table's own check excludes in_app).
+  await db.exec("reset role; set role service_role");
+  const inAppBatch = (await db.query(`select public.claim_notification_jobs('in_app',5,'worker-run-inapp-0001') as r`)).rows[0].r;
+  assert(inAppBatch.suppressed === 0, "The worker attempted preference suppression on the in_app channel.");
+  await db.exec("reset role");
+
+  const notificationWorkerTrace = (await db.query(`select
+    (select count(*)::integer from private.notification_jobs where status='sent' and idempotency_key like 'worker-test:%') as sent,
+    (select count(*)::integer from private.notification_jobs where status='dead_letter' and idempotency_key like 'worker-test:%') as dead,
+    (select count(*)::integer from private.notification_jobs where status='canceled' and idempotency_key like 'worker-test:%') as canceled`)).rows[0];
+  assert(notificationWorkerTrace.sent === 1 && notificationWorkerTrace.dead === 3 && notificationWorkerTrace.canceled === 1,
+    "The notification worker did not leave the expected terminal job states.");
+
+  // ── Document delivery over email and secure_link (phase_4_document_delivery_channels) ───────────
+  // Off-portal delivery is only real once the worker can drain the queue. These assertions prove the
+  // delivery row tracks what ACTUALLY happened rather than optimistically claiming success.
+  await db.exec(`reset role; update auth.users set email='resident.recipient@example.com' where id='${invitedResidentUser}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+
+  // Channel/parameter guards.
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','secure_link',0,'doc-secure-badttl-1')`), "INVALID_SECURE_LINK_TTL");
+  await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',72,'doc-email-ttl-1')`), "SECURE_LINK_TTL_NOT_APPLICABLE");
+
+  // EMAIL: the delivery is queued, not "delivered", and a notification job is enqueued for it.
+  const emailDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',null,'doc-deliver-email-0001') as r`)).rows[0].r;
+  assert(emailDelivery.deliveryChannel === "email" && emailDelivery.status === "queued" && emailDelivery.deliveredAt === null,
+    "An email delivery must start queued — claiming 'delivered' before the worker sends is a lie to the operator.");
+  const emailDeliveryReplay = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',null,'doc-deliver-email-0001') as r`)).rows[0].r;
+  assert(emailDeliveryReplay.documentDeliveryId === emailDelivery.documentDeliveryId, "Email delivery replay returned a different delivery.");
+  await db.exec("reset role");
+  const emailJob = (await db.query(`select id,template_code,channel,recipient_address,payload->>'documentDeliveryId' as delivery_id
+    from private.notification_jobs where idempotency_key='document-delivery:${emailDelivery.documentDeliveryId}'`)).rows[0];
+  assert(emailJob && emailJob.template_code === "document_delivered" && emailJob.channel === "email"
+    && emailJob.recipient_address === "resident.recipient@example.com" && emailJob.delivery_id === emailDelivery.documentDeliveryId,
+    "The email delivery did not enqueue a document_delivered job addressed to the recipient.");
+  assert(!JSON.stringify(emailJob.payload ?? {}).includes("Token") , "The notification payload must never carry a secret token.");
+
+  // Draining the queue advances the delivery to 'sent' — the worker's outcome drives the delivery row.
+  await db.exec("set role service_role");
+  const docClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-docdeliver-01') as r`)).rows[0].r;
+  assert(docClaim.claimed === 1 && docClaim.jobs[0].templateCode === "document_delivered", "The document-delivery email was not claimable by the worker.");
+  await db.query(`select public.complete_notification_job('${docClaim.jobs[0].notificationJobId}','relay','relay-msg-doc-1')`);
+  await db.exec("reset role");
+  const emailDeliveryRow = (await db.query(`select status,last_error from public.document_deliveries where id='${emailDelivery.documentDeliveryId}'`)).rows[0];
+  assert(emailDeliveryRow.status === "sent", "A sent notification did not advance its document delivery to 'sent'.");
+
+  // A dead letter must mark the delivery FAILED — an operator must never see 'queued' for a message
+  // the system already gave up on.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const failedDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',null,'doc-deliver-email-0002') as r`)).rows[0].r;
+  await db.exec("reset role; set role service_role");
+  const failClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-docdeliver-02') as r`)).rows[0].r;
+  assert(failClaim.claimed === 1, "The second document-delivery email was not claimable.");
+  await db.query(`select public.fail_notification_job('${failClaim.jobs[0].notificationJobId}','INVALID_RECIPIENT_ADDRESS',false)`);
+  await db.exec("reset role");
+  const failedDeliveryRow = (await db.query(`select status,last_error from public.document_deliveries where id='${failedDelivery.documentDeliveryId}'`)).rows[0];
+  assert(failedDeliveryRow.status === "failed" && failedDeliveryRow.last_error === "INVALID_RECIPIENT_ADDRESS",
+    "A dead-lettered notification did not mark its document delivery failed.");
+
+  // SECURE_LINK: the database mints the token, persists only its hash, and returns the plaintext once.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const secureDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','secure_link',72,'doc-deliver-secure-0001') as r`)).rows[0].r;
+  assert(secureDelivery.deliveryChannel === "secure_link" && secureDelivery.status === "queued" && secureDelivery.expiresAt, "The secure-link delivery did not mint a time-boxed, queued delivery.");
+  assert(typeof secureDelivery.secureLinkToken === "string" && secureDelivery.secureLinkToken.length >= 32, "The command did not return a one-time secure-link token.");
+  const secureTokenRaw = secureDelivery.secureLinkToken;
+  await db.exec("reset role");
+  const secureRow = (await db.query(`select secure_link_token_hash,expires_at from public.document_deliveries where id='${secureDelivery.documentDeliveryId}'`)).rows[0];
+  const expectedHash = (await db.query(`select encode(sha256(convert_to('${secureTokenRaw}','UTF8')),'hex') as h`)).rows[0].h;
+  assert(secureRow.secure_link_token_hash === expectedHash, "The delivery row must store the token hash, never the token.");
+  assert(secureRow.secure_link_token_hash !== secureTokenRaw, "The plaintext token was persisted on the delivery row.");
+
+  // Replaying the idempotency key must NOT re-issue the one-time secret.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const secureReplay = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','secure_link',72,'doc-deliver-secure-0001') as r`)).rows[0].r;
+  assert(secureReplay.documentDeliveryId === secureDelivery.documentDeliveryId, "Secure-link replay returned a different delivery.");
+  assert(!secureReplay.secureLinkToken, "An idempotent replay re-read a one-time secure-link token.");
+
+  // The worker needs the token in flight; once the job terminates it must be scrubbed from the queue.
+  await db.exec("reset role");
+  const inFlightToken = (await db.query(`select payload->>'secureLinkToken' as t from private.notification_jobs where idempotency_key='document-delivery:${secureDelivery.documentDeliveryId}'`)).rows[0].t;
+  assert(inFlightToken === secureTokenRaw, "The worker cannot build the link: the in-flight job carries no token.");
+  await db.exec("set role service_role");
+  const secureClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-secure-0001') as r`)).rows[0].r;
+  assert(secureClaim.claimed === 1 && secureClaim.jobs[0].payload.secureLinkToken === secureTokenRaw, "The claimed secure-link job did not expose the token to the worker.");
+  await db.query(`select public.complete_notification_job('${secureClaim.jobs[0].notificationJobId}','relay','relay-msg-secure-1')`);
+  await db.exec("reset role");
+  const scrubbed = (await db.query(`select payload ? 'secureLinkToken' as still_there from private.notification_jobs where idempotency_key='document-delivery:${secureDelivery.documentDeliveryId}'`)).rows[0].still_there;
+  assert(scrubbed === false, "A terminal job still holds the plaintext secure-link token.");
+
+  // Redemption is anonymous by necessity; every rejection returns one sentinel so the token space
+  // cannot be probed for which hashes exist.
+  await db.exec("set role anon");
+  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('short')`), "SECURE_LINK_NOT_REDEEMABLE");
+  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('${"e".repeat(64)}')`), "SECURE_LINK_NOT_REDEEMABLE");
+  // DECISIVE: the STORED HASH must not redeem. Only the plaintext token does, so the column is not a
+  // bearer credential for this anon-callable command.
+  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('${expectedHash}')`), "SECURE_LINK_NOT_REDEEMABLE");
+  const redeemed = (await db.query(`select public.redeem_document_secure_link('${secureTokenRaw}') as r`)).rows[0].r;
+  assert(redeemed.storageBucket === scanCleanDoc.grant.storageBucket && redeemed.storagePath === scanCleanDoc.grant.storagePath
+    && redeemed.documentTitle === "Quiet hours notice",
+    "Redeeming a secure link did not return the document's storage coordinates.");
+  assert(!Object.keys(redeemed).some((k) => /token|recipient|email|user/i.test(k)), "The secure-link DTO leaked a token or recipient identity.");
+  await db.exec("reset role");
+  const redeemedRow = (await db.query(`select status,redeemed_at from public.document_deliveries where id='${secureDelivery.documentDeliveryId}'`)).rows[0];
+  assert(redeemedRow.status === "delivered" && redeemedRow.redeemed_at !== null, "Redemption did not mark the delivery delivered.");
+
+  // An expired link is dead even though its row still exists.
+  await db.exec(`update public.document_deliveries set expires_at=now()-interval '1 hour' where id='${secureDelivery.documentDeliveryId}'`);
+  await db.exec("set role anon");
+  await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('${expectedHash}')`), "SECURE_LINK_NOT_REDEEMABLE");
+  await db.exec("reset role");
+
+  // A recipient who switched OFF document emails must not silently lose the delivery: the job is
+  // canceled and the delivery is marked failed, so the operator can see it never went out and follow
+  // up another way. (A legally-significant document quietly vanishing is the failure mode here.)
+  await db.exec(`reset role; insert into public.notification_preferences(user_id,category,channel,enabled)
+    values ('${invitedResidentUser}','documents','email',false)
+    on conflict (user_id,category,channel) do update set enabled=false`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const optedOutDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','email',null,'doc-deliver-email-0003') as r`)).rows[0].r;
+  await db.exec("reset role; set role service_role");
+  const optOutClaim = (await db.query(`select public.claim_notification_jobs('email',10,'worker-run-optout-0001') as r`)).rows[0].r;
+  assert(optOutClaim.suppressed === 1 && optOutClaim.claimed === 0, "The opted-out document email was not suppressed at claim time.");
+  await db.exec("reset role");
+  const optedOutRow = (await db.query(`select status,last_error from public.document_deliveries where id='${optedOutDelivery.documentDeliveryId}'`)).rows[0];
+  assert(optedOutRow.status === "failed" && optedOutRow.last_error === "RECIPIENT_OPTED_OUT",
+    "A preference-suppressed document email left its delivery looking queued — the operator would never know it did not go out.");
+  await db.exec(`update public.notification_preferences set enabled=true where user_id='${invitedResidentUser}' and category='documents' and channel='email'`);
+
+  // The legacy 6-argument signature still works and is still portal-only.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const legacyPortal = (await db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','portal','doc-deliver-legacy-0001') as r`)).rows[0].r;
+  assert(legacyPortal.deliveryChannel === "portal" && legacyPortal.status === "delivered", "The legacy 6-argument deliver_document signature regressed.");
+  await db.exec("reset role");
+
+  // ── Runtime scheduler: per-property time zones (phase_4_runtime_scheduler, v4.2 Batch A2) ────────
+  // generate_recurring_charges takes ONE p_run_date and applies it to every due schedule. A scheduler
+  // that passed a naive UTC current_date would charge a Los Angeles property on the 1st while it is
+  // still the 31st there — wrong due date, wrong journal effective date, every single month. File 27
+  // §5.A2 makes the property's own zone binding, so the selector partitions by zone and computes the
+  // operational date in each one.
+  //
+  // Three materially different North American zones, evaluated across UTC midnight and a month
+  // boundary. On 2026-09-01 the offsets are EDT -4, PDT -7, HST -10 (Hawaii observes no DST).
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  const zoneFixtures = [
+    { key: "ny", zone: "America/New_York", name: "Hudson Row", city: "Brooklyn", region: "NY", postal: "11201" },
+    { key: "la", zone: "America/Los_Angeles", name: "Sunset Terrace", city: "Los Angeles", region: "CA", postal: "90013" },
+    { key: "hi", zone: "Pacific/Honolulu", name: "Kalia Court", city: "Honolulu", region: "HI", postal: "96815" },
+  ];
+  const zoneWorld = {};
+  for (const [index, fixture] of zoneFixtures.entries()) {
+    const created = (await db.query(`select public.create_property('${organization.organizationId}','${entity.operatingEntityId}','${entity.accountingBookId}','US_NATIONAL','${fixture.name}','multifamily','${100 + index} Zone Street',null,'${fixture.city}','${fixture.region}','${fixture.postal}','US','${fixture.zone}','tz-property-${fixture.key}-01') as result`)).rows[0].result;
+    const createdUnit = (await db.query(`select public.create_unit('${organization.organizationId}','${created.propertyId}',null,'TZ-${fixture.key.toUpperCase()}','Apartment',1,1,600,'tz-unit-${fixture.key}-01') as result`)).rows[0].result;
+    zoneWorld[fixture.key] = { ...fixture, propertyId: created.propertyId, unitId: createdUnit.unitId };
+  }
+  // Households, leases, tenancies and schedules are seeded directly: this test is about WHICH schedules
+  // the selector considers due in each zone, not about lease activation (covered elsewhere).
+  await db.exec("reset role");
+  for (const fixture of Object.values(zoneWorld)) {
+    const seeded = (await db.query(`
+      with household as (
+        insert into public.households(organization_id,display_name,status)
+        values ('${organization.organizationId}','${fixture.name} household','resident') returning id
+      ), receivable as (
+        insert into public.receivable_accounts(organization_id,accounting_book_id,public_reference,currency_code,status)
+        values ('${organization.organizationId}','${entity.accountingBookId}','TZ-${fixture.key.toUpperCase()}-AR','USD','active') returning id
+      ), lease as (
+        insert into public.leases(organization_id,property_id,unit_id,household_id,country_profile_id,start_date,rent_amount_minor,currency_code,status,executed_at,created_by)
+        select '${organization.organizationId}','${fixture.propertyId}','${fixture.unitId}',h.id,cp.id,'2026-08-01',150000,'USD','active',now(),'${admin}'
+        from household h, public.country_profiles cp where cp.code='US_NATIONAL' returning id, household_id
+      ), tenancy as (
+        insert into public.tenancies(organization_id,property_id,unit_id,household_id,lease_id,receivable_account_id,possession_start,status)
+        select '${organization.organizationId}','${fixture.propertyId}','${fixture.unitId}',l.household_id,l.id,r.id,'2026-08-01','active'
+        from lease l, receivable r returning id
+      )
+      insert into public.charge_schedules(organization_id,accounting_book_id,tenancy_id,receivable_account_id,charge_type,amount_minor,currency_code,cadence,due_day,starts_on,next_run_on,status)
+      select '${organization.organizationId}','${entity.accountingBookId}',t.id,r.id,'rent',150000,'USD','monthly',1,'2026-08-01','2026-09-01','active'
+      from tenancy t, receivable r
+      returning id, tenancy_id`)).rows[0];
+    fixture.scheduleId = seeded.id;
+    fixture.tenancyId = seeded.tenancy_id;
+  }
+
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.list_due_charge_schedule_batches(now(),50)`), "permission denied for function list_due_charge_schedule_batches");
+  await expectDatabaseError(() => db.query(`select public.sweep_expired_operational_records(100)`), "permission denied for function sweep_expired_operational_records");
+  await db.exec("reset role; set role service_role");
+  await expectDatabaseError(() => db.query(`select public.list_due_charge_schedule_batches(now(),0)`), "INVALID_SCHEDULE_BATCH_SIZE");
+  await expectDatabaseError(() => db.query(`select public.list_due_charge_schedule_batches(now(),501)`), "INVALID_SCHEDULE_BATCH_SIZE");
+
+  const batchesAt = async (instant) =>
+    (await db.query(`select public.list_due_charge_schedule_batches('${instant}'::timestamptz,50) as r`)).rows[0].r;
+  const zoneBatch = (result, zone) => result.batches.find((b) => b.timeZone === zone) ?? null;
+
+  // 03:00Z on Sep 1 — still Aug 31 in ALL THREE zones. A naive UTC date would already read 2026-09-01.
+  const earlyUtc = await batchesAt("2026-09-01T03:00:00Z");
+  for (const fixture of Object.values(zoneWorld)) {
+    const batch = zoneBatch(earlyUtc, fixture.zone);
+    assert(!batch || !batch.scheduleIds.includes(fixture.scheduleId),
+      `A schedule due 2026-09-01 was selected in ${fixture.zone} while it was still 2026-08-31 there.`);
+  }
+
+  // 06:00Z — DECISIVE. It is 02:00 on Sep 1 in New York but still 23:00 on Aug 31 in Los Angeles and
+  // 20:00 on Aug 31 in Honolulu. A single naive UTC current_date would charge all three.
+  const boundaryUtc = await batchesAt("2026-09-01T06:00:00Z");
+  const nyBatch = zoneBatch(boundaryUtc, "America/New_York");
+  assert(nyBatch && nyBatch.localDate === "2026-09-01" && nyBatch.scheduleIds.includes(zoneWorld.ny.scheduleId),
+    "The New York schedule was not due once its own local date reached 2026-09-01.");
+  for (const key of ["la", "hi"]) {
+    const batch = zoneBatch(boundaryUtc, zoneWorld[key].zone);
+    assert(!batch || !batch.scheduleIds.includes(zoneWorld[key].scheduleId),
+      `The ${zoneWorld[key].zone} schedule was charged on 2026-09-01 while it was still August there.`);
+  }
+
+  // 09:00Z — Sep 1 in New York and Los Angeles, still Aug 31 in Honolulu.
+  const pacificUtc = await batchesAt("2026-09-01T09:00:00Z");
+  assert(zoneBatch(pacificUtc, "America/Los_Angeles")?.localDate === "2026-09-01", "Los Angeles did not reach its own 2026-09-01.");
+  const hawaiiAtNine = zoneBatch(pacificUtc, "Pacific/Honolulu");
+  assert(!hawaiiAtNine || !hawaiiAtNine.scheduleIds.includes(zoneWorld.hi.scheduleId), "Honolulu was charged while it was still 2026-08-31 there.");
+  // 11:00Z — every zone has crossed into September.
+  const allDue = await batchesAt("2026-09-01T11:00:00Z");
+  for (const fixture of Object.values(zoneWorld)) {
+    const batch = zoneBatch(allDue, fixture.zone);
+    assert(batch && batch.localDate === "2026-09-01" && batch.scheduleIds.includes(fixture.scheduleId),
+      `${fixture.zone} was still not due once its own local date reached 2026-09-01.`);
+  }
+  assert(new Set(allDue.batches.map((b) => b.workerRunId)).size === allDue.batchCount,
+    "Two zones shared a worker-run id, so one zone's run would replay the other's response.");
+
+  // Repeated and overlapping invocations must be duplicate-safe: an identical due set yields an
+  // identical worker-run id, and generate_recurring_charges replays rather than double-charging.
+  const allDueAgain = await batchesAt("2026-09-01T11:00:00Z");
+  assert(JSON.stringify(allDue.batches.map((b) => b.workerRunId).sort()) === JSON.stringify(allDueAgain.batches.map((b) => b.workerRunId).sort()),
+    "The worker-run id was not stable across two evaluations of the same due set.");
+
+  const laBatch = zoneBatch(allDue, "America/Los_Angeles");
+  const laRun = (await db.query(`select public.generate_recurring_charges('${laBatch.localDate}'::date, '{${laBatch.scheduleIds.join(",")}}'::uuid[], '${laBatch.workerRunId}') as r`)).rows[0].r;
+  assert(laRun.generatedCount === 1 && laRun.replayed === false, "The Los Angeles batch did not generate exactly its own charge.");
+  const laReplay = (await db.query(`select public.generate_recurring_charges('${laBatch.localDate}'::date, '{${laBatch.scheduleIds.join(",")}}'::uuid[], '${laBatch.workerRunId}') as r`)).rows[0].r;
+  assert(laReplay.replayed === true && JSON.stringify(laReplay.chargeIds) === JSON.stringify(laRun.chargeIds),
+    "A repeated scheduler invocation for the same batch double-charged instead of replaying.");
+  await db.exec("reset role");
+  const laCharge = (await db.query(`select c.due_date::text as due_date, jt.effective_date::text as effective_date, c.tenancy_id
+    from public.charges c join public.journal_transactions jt on jt.id=c.journal_transaction_id
+    where c.charge_schedule_id='${zoneWorld.la.scheduleId}'`)).rows;
+  assert(laCharge.length === 1 && laCharge[0].due_date === "2026-09-01" && laCharge[0].effective_date === "2026-09-01",
+    "The Los Angeles charge did not land on its own local operational date.");
+  const untouched = (await db.query(`select count(*)::integer as c from public.charges
+    where charge_schedule_id in ('${zoneWorld.ny.scheduleId}','${zoneWorld.hi.scheduleId}')`)).rows[0].c;
+  assert(untouched === 0, "Running one zone's batch charged another zone's schedules.");
+  const laAdvanced = (await db.query(`select next_run_on::text as next_run_on from public.charge_schedules where id='${zoneWorld.la.scheduleId}'`)).rows[0].next_run_on;
+  assert(laAdvanced === "2026-10-01", "The charged schedule did not advance to its next monthly run.");
+  await db.exec("set role service_role");
+  const laAfterRun = zoneBatch(await batchesAt("2026-09-01T11:00:00Z"), "America/Los_Angeles");
+  assert(!laAfterRun || !laAfterRun.scheduleIds.includes(zoneWorld.la.scheduleId),
+    "An already-charged schedule was still offered as due.");
+
+  // An unrecognized property time zone must not abort the whole evaluation.
+  await db.exec(`reset role; update public.properties set time_zone='Mars/Olympus' where id='${zoneWorld.hi.propertyId}'; set role service_role`);
+  const withInvalidZone = await batchesAt("2026-09-01T11:00:00Z");
+  assert(withInvalidZone.invalidTimeZones.includes("Mars/Olympus"), "An unknown property time zone was not reported.");
+  assert(zoneBatch(withInvalidZone, "America/New_York")?.scheduleIds.includes(zoneWorld.ny.scheduleId),
+    "One unknown time zone stopped rent generation for every other property.");
+  await db.exec(`reset role; update public.properties set time_zone='Pacific/Honolulu' where id='${zoneWorld.hi.propertyId}'; set role service_role`);
+
+  // A paused schedule or an inactive tenancy is never offered, so the scheduler cannot resurrect one.
+  await db.exec(`reset role; update public.charge_schedules set status='paused' where id='${zoneWorld.ny.scheduleId}'; set role service_role`);
+  const withPaused = await batchesAt("2026-09-01T11:00:00Z");
+  assert(!zoneBatch(withPaused, "America/New_York")?.scheduleIds.includes(zoneWorld.ny.scheduleId), "A paused schedule was offered as due.");
+  await db.exec(`reset role; update public.charge_schedules set status='active' where id='${zoneWorld.ny.scheduleId}';
+    update public.tenancies set status='closed' where id='${zoneWorld.ny.tenancyId}'; set role service_role`);
+  const withEndedTenancy = await batchesAt("2026-09-01T11:00:00Z");
+  assert(!zoneBatch(withEndedTenancy, "America/New_York")?.scheduleIds.includes(zoneWorld.ny.scheduleId),
+    "A schedule on a closed tenancy was offered as due, which generate_recurring_charges would reject with TENANCY_NOT_ACTIVE.");
+  await db.exec(`reset role; update public.tenancies set status='active' where id='${zoneWorld.ny.tenancyId}'; set role service_role`);
+
+  // Operational recovery sweep: expired upload grants and expired idempotency records.
+  await db.exec("reset role");
+  const staleGrants = (await db.query(`update private.upload_grants set expires_at=now()-interval '1 day'
+    where status='issued' returning id`)).rows.length;
+  await db.exec(`update private.idempotency_records set expires_at=now()-interval '1 day' where route='FinalizeDocument'`);
+  const expirableRecords = (await db.query(`select count(*)::integer as c from private.idempotency_records where expires_at<=now()`)).rows[0].c;
+  await db.exec("set role service_role");
+  await expectDatabaseError(() => db.query(`select public.sweep_expired_operational_records(0)`), "INVALID_SWEEP_LIMIT");
+  const swept = (await db.query(`select public.sweep_expired_operational_records(1000) as r`)).rows[0].r;
+  assert(swept.expiredUploadGrants === staleGrants && swept.purgedIdempotencyRecords === expirableRecords,
+    "The operational sweep did not expire every stale upload grant and purge every expired idempotency record.");
+  await db.exec("reset role");
+  const sweptState = (await db.query(`select
+    (select count(*)::integer from private.upload_grants where status='issued' and expires_at<=now()) as stale_grants,
+    (select count(*)::integer from private.idempotency_records where expires_at<=now()) as stale_records`)).rows[0];
+  assert(sweptState.stale_grants === 0 && sweptState.stale_records === 0, "The operational sweep left stale rows behind.");
+  await db.exec("set role service_role");
+  const sweptAgain = (await db.query(`select public.sweep_expired_operational_records(1000) as r`)).rows[0].r;
+  assert(sweptAgain.expiredUploadGrants === 0 && sweptAgain.purgedIdempotencyRecords === 0, "The operational sweep was not idempotent.");
+  await db.exec("reset role");
+
+  const schedulerTimeZones = {
+    zones: zoneFixtures.length,
+    boundaryDueZones: boundaryUtc.batches.length,
+    expiredUploadGrants: swept.expiredUploadGrants,
+    purgedIdempotencyRecords: swept.purgedIdempotencyRecords,
+  };
+
+  // ── Canonical active-organization context (phase_8_active_organization_context, v4.2 A3) ─────────
+  // The defect: operator ctxSurfaces carried no organization. Collection RPCs returned every row the
+  // caller could see ACROSS ALL their organizations, and the two that accepted an organization
+  // defaulted it to `order by created_at limit 1`. For an operator in two tenants the dashboard,
+  // maintenance queue, payment summary and global search all showed MIXED ROWS.
+  //
+  // This builds a genuine second organization for the same operator and proves each surface follows
+  // the organization it is given — and only that one.
+  const secondOperator = admin;
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${secondOperator}'; set request.jwt.claim.aal='aal2'`);
+  const ctxOrgB = (await createOrganizationAsServer(db, secondOperator, `'Second Harbor','second-harbor','property_manager','US','en-US','America/Chicago','operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','orgctx-create-0001'`, { aal: "aal2" })).rows[0].result;
+  const ctxEntityB = (await db.query(`select public.create_operating_entity_and_book('${ctxOrgB.organizationId}','Second Harbor LLC','Second Harbor','US','company','USD','Operating book','orgctx-book-0001') as result`)).rows[0].result;
+  const ctxPropertyB = (await db.query(`select public.create_property('${ctxOrgB.organizationId}','${ctxEntityB.operatingEntityId}','${ctxEntityB.accountingBookId}','US_NATIONAL','Beacon Flats','multifamily','9 Beacon Way',null,'Chicago','IL','60601','US','America/Chicago','orgctx-property-0001') as result`)).rows[0].result;
+  await db.query(`select public.create_unit('${ctxOrgB.organizationId}','${ctxPropertyB.propertyId}',null,'B-1','Apartment',1,1,500,'orgctx-unit-0001')`);
+
+  // (1) The switcher's canonical source lists BOTH organizations, and nothing else.
+  const operatorOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  const operatorOrgIds = operatorOrgs.map((o) => o.organizationId);
+  assert(operatorOrgIds.includes(organization.organizationId) && operatorOrgIds.includes(ctxOrgB.organizationId) && operatorOrgs.length === 2,
+    "list_operator_organizations did not return exactly the operator's two active organizations.");
+  assert(operatorOrgs.every((o) => o.displayName && o.roleCode === "org_owner"),
+    "The switcher source did not carry the display name and role for each organization.");
+
+  // (2) No unscoped collection surface is reachable any more. This is what makes "a fetcher forgot to
+  // pass the organization" a permission error instead of a silent cross-tenant read.
+  for (const unscoped of [
+    "get_operator_maintenance_workspace","get_operator_announcement_workspace","get_operator_vendor_directory",
+    "get_operator_owner_statement_workspace","get_operator_owner_approval_workspace","get_operator_payment_summary",
+    "get_operator_receivables_summary","get_settlement_reconciliation_workspace","get_manual_payment_options",
+    "get_payment_connection_settings",
+  ]) {
+    await expectDatabaseError(() => db.query(`select public.${unscoped}()`), `permission denied for function ${unscoped}`);
+  }
+  await expectDatabaseError(() => db.query("select public.get_operator_global_search('Map',24)"), "permission denied for function get_operator_global_search");
+
+  // (3) DECISIVE: every audited surface follows the organization it is given, with no mixed rows.
+  const ctxSurfaces = [
+    ["maintenance", "get_operator_maintenance_workspace", (r) => r.items.length],
+    ["communications", "get_operator_announcement_workspace", (r) => r.items.length],
+    ["owners", "get_operator_owner_statement_workspace", (r) => r.owners.length],
+    ["payments", "get_operator_payment_summary", (r) => (r.items ?? []).length],
+    ["receivables", "get_operator_receivables_summary", (r) => (r.items ?? []).length],
+  ];
+  for (const [label, fn, count] of ctxSurfaces) {
+    const ctxInA = (await db.query(`select public.${fn}('${organization.organizationId}') as r`)).rows[0].r;
+    const ctxInB = (await db.query(`select public.${fn}('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+    assert(count(ctxInA) > 0, `The ${label} surface returned nothing for the organization that owns the data.`);
+    assert(count(ctxInB) === 0, `The ${label} surface leaked the first organization's rows into the second.`);
+  }
+
+  // An organization-level surface, gated ONLY by private.has_org_permission rather than by property
+  // access. The Stripe connection belongs to the first organization's operating entity, so the second
+  // organization must see none of it even though the same operator administers both.
+  const ctxPaymentsA = (await db.query(`select public.get_payment_connection_settings('${organization.organizationId}') as r`)).rows[0].r;
+  const ctxPaymentsB = (await db.query(`select public.get_payment_connection_settings('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+  // The invariant that matters is not a count but provenance: EVERY row must belong to the
+  // organization that was asked for. Both organizations have operating entities, so both surfaces are
+  // non-empty — which makes this a real mixing test rather than an "empty means isolated" one.
+  assert(ctxPaymentsA.items.length > 0 && ctxPaymentsB.items.length > 0,
+    "The payment-connection surface returned nothing for one of the organizations, so mixing could not be observed.");
+  assert(ctxPaymentsA.items.every((item) => item.organizationId === organization.organizationId),
+    "The payment-connection surface returned a row belonging to another organization.");
+  assert(ctxPaymentsB.items.every((item) => item.organizationId === ctxOrgB.organizationId),
+    "The payment-connection surface leaked the first organization's rows into the second.");
+  assert(ctxPaymentsA.items.some((item) => item.chargesEnabled !== undefined),
+    "The payment-connection surface did not return provider state for the organization that owns the connection.");
+
+  // Global search: the surface that previously could not be steered at all.
+  const ctxSearchA = (await db.query(`select public.get_operator_global_search('${organization.organizationId}','Maple',24) as r`)).rows[0].r;
+  const ctxSearchB = (await db.query(`select public.get_operator_global_search('${ctxOrgB.organizationId}','Maple',24) as r`)).rows[0].r;
+  const ctxSearchBOwn = (await db.query(`select public.get_operator_global_search('${ctxOrgB.organizationId}','Beacon',24) as r`)).rows[0].r;
+  assert(ctxSearchA.items.some((i) => i.kind === "property"), "Global search did not find the first organization's property.");
+  assert(ctxSearchB.items.length === 0, "Global search leaked the first organization's property into the second.");
+  assert(ctxSearchBOwn.items.some((i) => i.kind === "property"), "Global search could not find the SECOND organization's own property — it was still pinned to the first.");
+
+  // The dashboard and team ctxSurfaces already accepted an organization; prove they honor it.
+  const ctxDashA = (await db.query(`select public.get_operator_command_center('${organization.organizationId}',null,null,current_date-29,current_date) as r`)).rows[0].r;
+  const ctxDashB = (await db.query(`select public.get_operator_command_center('${ctxOrgB.organizationId}',null,null,current_date-29,current_date) as r`)).rows[0].r;
+  assert(ctxDashA.scope.organizationId === organization.organizationId && ctxDashB.scope.organizationId === ctxOrgB.organizationId,
+    "The dashboard did not follow the organization it was given.");
+  assert(ctxDashA.scope.propertyCount > 1 && ctxDashB.scope.propertyCount === 1
+    && ctxDashB.filters.properties.length === 1 && ctxDashB.filters.properties[0].propertyId === ctxPropertyB.propertyId,
+    "The dashboard mixed properties across the operator's two organizations.");
+  const ctxTeamA = (await db.query(`select public.get_staff_management_workspace('${organization.organizationId}') as r`)).rows[0].r;
+  const ctxTeamB = (await db.query(`select public.get_staff_management_workspace('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+  assert(ctxTeamA.organization.organizationId === organization.organizationId && ctxTeamB.organization.organizationId === ctxOrgB.organizationId,
+    "The team workspace did not follow the organization it was given.");
+
+  // (4) A context is never established for an organization the caller is not an active member of, and
+  // there is no silent fallback to one they ARE in.
+  await expectDatabaseError(() => db.query("select public.get_operator_maintenance_workspace(null)"), "ORGANIZATION_REQUIRED");
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_maintenance_workspace('${"f".repeat(8)}-0000-4000-8000-000000000000')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const outsiderOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(outsiderOrgs.length === 0, "The switcher source listed organizations for a user with no membership.");
+  await expectDatabaseError(() => db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}')`), "ORGANIZATION_SCOPE_DENIED");
+
+  // (5) A revoked membership stops working on the very next call — no cached grant anywhere.
+  await db.exec(`reset role;
+    insert into public.organization_memberships(organization_id,user_id,role_code,status,starts_at)
+    values ('${ctxOrgB.organizationId}','${outsider}','property_manager','active',now()-interval '1 day');`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const revocableOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(revocableOrgs.length === 1 && revocableOrgs[0].organizationId === ctxOrgB.organizationId,
+    "A newly active membership did not appear in the switcher source.");
+  const beforeRevoke = (await db.query(`select public.get_operator_maintenance_workspace('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+  assert(Array.isArray(beforeRevoke.items), "An active member could not read their own organization's maintenance surface.");
+  await db.exec(`reset role;
+    update public.organization_memberships set status='revoked'
+    where organization_id='${ctxOrgB.organizationId}' and user_id='${outsider}';
+    set role authenticated; set request.jwt.claim.sub='${outsider}';`);
+  const afterRevoke = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(afterRevoke.length === 0, "A revoked membership was still offered by the switcher source.");
+  await expectDatabaseError(() => db.query(`select public.get_operator_maintenance_workspace('${ctxOrgB.organizationId}')`), "ORGANIZATION_SCOPE_DENIED");
+  // An expired membership is refused for the same reason, without anyone revoking it.
+  await db.exec(`reset role;
+    update public.organization_memberships set status='active', ends_at=now()-interval '1 hour'
+    where organization_id='${ctxOrgB.organizationId}' and user_id='${outsider}';
+    set role authenticated; set request.jwt.claim.sub='${outsider}';`);
+  assert((await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations.length === 0,
+    "An expired membership was still offered by the switcher source.");
+  await expectDatabaseError(() => db.query(`select public.get_operator_maintenance_workspace('${ctxOrgB.organizationId}')`), "ORGANIZATION_SCOPE_DENIED");
+  await db.exec(`reset role; delete from public.organization_memberships where organization_id='${ctxOrgB.organizationId}' and user_id='${outsider}';`);
+
+  // (6) The context is transaction-local: it must never survive into the next statement.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await db.query(`select public.get_operator_maintenance_workspace('${ctxOrgB.organizationId}')`);
+  await db.exec("reset role");
+  const leaked = (await db.query("select private.active_organization_id() as r")).rows[0].r;
+  assert(leaked === null, "The active-organization context leaked out of the statement that established it.");
+  await db.exec("reset role");
+
+  const organizationContext = {
+    switcherOrganizations: operatorOrgs.length,
+    unscopedSurfacesClosed: 11,
+    auditedSurfaces: ctxSurfaces.length + 3,
+  };
+
+  // ── Batch A review corrections (phase_8_batch_a_review_corrections) ──────────────────────────────
+  // Three defects the first pass shipped, two of them confirmed by execution rather than by reading.
+
+  // (1) A schedule the command would REFUSE must not be carried into a batch: generate_recurring_charges
+  // raises from inside its loop, so one bad row rolled back every healthy schedule beside it, the
+  // charge_generation_runs row included — and the next run derived the identical worker-run id and
+  // failed identically. Forever.
+  await db.exec("reset role");
+  const brokenReceivable = (await db.query(`select id from public.receivable_accounts
+    where organization_id='${organization.organizationId}' and public_reference='TZ-NY-AR'`)).rows[0].id;
+  await db.exec(`update public.receivable_accounts set status='closed' where id='${brokenReceivable}'`);
+  await db.exec(`update public.charge_schedules set next_run_on='2026-09-01', status='active'
+    where id in ('${zoneWorld.ny.scheduleId}','${zoneWorld.hi.scheduleId}')`);
+  // A second, HEALTHY New York schedule that must still be charged despite its broken neighbour.
+  const healthyNy = (await db.query(`
+    with household as (
+      insert into public.households(organization_id,display_name,status)
+      values ('${organization.organizationId}','Healthy NY household','resident') returning id
+    ), receivable as (
+      insert into public.receivable_accounts(organization_id,accounting_book_id,public_reference,currency_code,status)
+      values ('${organization.organizationId}','${entity.accountingBookId}','TZ-NY-AR-2','USD','active') returning id
+    ), unit as (
+      insert into public.units(organization_id,property_id,unit_code,operational_status)
+      values ('${organization.organizationId}','${zoneWorld.ny.propertyId}','TZ-NY-2','active') returning id
+    ), lease as (
+      insert into public.leases(organization_id,property_id,unit_id,household_id,country_profile_id,start_date,rent_amount_minor,currency_code,status,executed_at,created_by)
+      select '${organization.organizationId}','${zoneWorld.ny.propertyId}',u.id,h.id,cp.id,'2026-08-01',120000,'USD','active',now(),'${admin}'
+      from household h, unit u, public.country_profiles cp where cp.code='US_NATIONAL' returning id, household_id, unit_id
+    ), tenancy as (
+      insert into public.tenancies(organization_id,property_id,unit_id,household_id,lease_id,receivable_account_id,possession_start,status)
+      select '${organization.organizationId}','${zoneWorld.ny.propertyId}',l.unit_id,l.household_id,l.id,r.id,'2026-08-01','active'
+      from lease l, receivable r returning id
+    )
+    insert into public.charge_schedules(organization_id,accounting_book_id,tenancy_id,receivable_account_id,charge_type,amount_minor,currency_code,cadence,due_day,starts_on,next_run_on,status)
+    select '${organization.organizationId}','${entity.accountingBookId}',t.id,r.id,'rent',120000,'USD','monthly',1,'2026-08-01','2026-09-01','active'
+    from tenancy t, receivable r returning id`)).rows[0].id;
+
+  await db.exec("set role service_role");
+  const withBroken = (await db.query(`select public.list_due_charge_schedule_batches('2026-09-01T11:00:00Z'::timestamptz,50) as r`)).rows[0].r;
+  const nyBatchAfterBreak = withBroken.batches.find((b) => b.timeZone === "America/New_York");
+  assert(nyBatchAfterBreak && nyBatchAfterBreak.scheduleIds.includes(healthyNy),
+    "A healthy schedule was dropped from its zone's batch because a neighbour was misconfigured.");
+  assert(!nyBatchAfterBreak.scheduleIds.includes(zoneWorld.ny.scheduleId),
+    "A schedule whose receivable account is closed was carried into a batch the command would reject.");
+  const blockedNy = withBroken.blockedSchedules.find((b) => b.scheduleId === zoneWorld.ny.scheduleId);
+  assert(blockedNy && blockedNy.reason === "RECEIVABLE_ACCOUNT_NOT_ACTIVE",
+    "The refused schedule was silently dropped instead of being reported with its reason.");
+  // DECISIVE: the batch the selector now hands out actually succeeds, where the old one rolled back.
+  const brokenZoneRun = (await db.query(`select public.generate_recurring_charges('${nyBatchAfterBreak.localDate}'::date, '{${nyBatchAfterBreak.scheduleIds.join(",")}}'::uuid[], '${nyBatchAfterBreak.workerRunId}') as r`)).rows[0].r;
+  assert(brokenZoneRun.generatedCount === nyBatchAfterBreak.scheduleIds.length,
+    "The zone still failed to generate rent while one of its schedules was misconfigured.");
+  await db.exec("reset role");
+  const healthyCharged = (await db.query(`select count(*)::integer as c from public.charges where charge_schedule_id='${healthyNy}'`)).rows[0].c;
+  assert(healthyCharged === 1, "The healthy New York schedule was still not charged.");
+
+  // (2) Arrears must clear more than one period per local day. The worker-run id now covers
+  // (schedule, next_run_on) PAIRS, so a charged period changes the id and the next run advances.
+  //
+  // Honolulu is used because it holds exactly ONE healthy schedule: the id set is therefore identical
+  // across both runs, which is what makes this a test of the pairs and not of the set changing anyway.
+  await db.exec(`update public.charge_schedules set next_run_on='2026-06-01' where id='${zoneWorld.hi.scheduleId}'`);
+  await db.exec("set role service_role");
+  const hiBatch = async () => (await db.query(`select public.list_due_charge_schedule_batches('2026-09-01T11:00:00Z'::timestamptz,50) as r`))
+    .rows[0].r.batches.find((b) => b.timeZone === "Pacific/Honolulu");
+  const arrearsOne = await hiBatch();
+  assert(arrearsOne && arrearsOne.scheduleIds.length === 1 && arrearsOne.scheduleIds[0] === zoneWorld.hi.scheduleId,
+    "The arrears fixture is not the single-schedule batch this test needs.");
+  const arrearsRunOne = (await db.query(`select public.generate_recurring_charges('${arrearsOne.localDate}'::date, '{${arrearsOne.scheduleIds.join(",")}}'::uuid[], '${arrearsOne.workerRunId}') as r`)).rows[0].r;
+  assert(arrearsRunOne.generatedCount === 1, "The first arrears run did not charge the overdue period.");
+
+  const arrearsTwo = await hiBatch();
+  assert(arrearsTwo && JSON.stringify(arrearsTwo.scheduleIds) === JSON.stringify(arrearsOne.scheduleIds),
+    "The arrears fixture stopped being a stable single-schedule batch.");
+  assert(arrearsTwo.workerRunId !== arrearsOne.workerRunId,
+    "An identical schedule ID SET produced an identical worker-run id even though its due date advanced, so arrears would clear at one period per local day.");
+  const arrearsRunTwo = (await db.query(`select public.generate_recurring_charges('${arrearsTwo.localDate}'::date, '{${arrearsTwo.scheduleIds.join(",")}}'::uuid[], '${arrearsTwo.workerRunId}') as r`)).rows[0].r;
+  assert(arrearsRunTwo.replayed === false && arrearsRunTwo.generatedCount === 1,
+    "The second catch-up run replayed instead of charging the next arrears period.");
+
+  // An UNCHANGED due set must still replay — duplicate safety is not traded away for catch-up.
+  const arrearsReplay = (await db.query(`select public.generate_recurring_charges('${arrearsTwo.localDate}'::date, '{${arrearsTwo.scheduleIds.join(",")}}'::uuid[], '${arrearsTwo.workerRunId}') as r`)).rows[0].r;
+  assert(arrearsReplay.replayed === true && JSON.stringify(arrearsReplay.chargeIds) === JSON.stringify(arrearsRunTwo.chargeIds),
+    "An identical repeated invocation no longer replays — it would double-charge.");
+  await db.exec("reset role");
+  const arrearsCharges = (await db.query(`select count(*)::integer as c from public.charges where charge_schedule_id='${zoneWorld.hi.scheduleId}'`)).rows[0].c;
+  assert(arrearsCharges === 2, `Two catch-up runs on one local date produced ${arrearsCharges} charges instead of 2.`);
+
+  // (3) get_privacy_request_workspace is gated by private.is_active_org_member, the one membership
+  // helper the first pass left un-narrowed — so it offered BOTH of the caller's organizations while
+  // claiming to be scoped to one.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const privacyA = (await db.query(`select public.get_privacy_request_workspace('${organization.organizationId}') as r`)).rows[0].r;
+  const privacyB = (await db.query(`select public.get_privacy_request_workspace('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+  const privacyOrgIds = (workspace) => (workspace.organizations ?? []).map((o) => o.organizationId ?? o.id);
+  assert(privacyOrgIds(privacyA).every((id) => id === organization.organizationId),
+    "The privacy workspace offered another organization while scoped to the first.");
+  assert(privacyOrgIds(privacyB).every((id) => id === ctxOrgB.organizationId),
+    "The privacy workspace offered another organization while scoped to the second.");
+  assert(privacyOrgIds(privacyA).length === 1 && privacyOrgIds(privacyB).length === 1,
+    "The privacy workspace did not offer exactly the organization it was scoped to.");
+  // The old shared form is gone for the browser entirely — that was the escape hatch, since its
+  // organization scope was `is_active_org_member OR has a relationship`, so an operator calling it
+  // directly unioned every organization they administer.
+  await expectDatabaseError(() => db.query("select public.get_privacy_request_workspace()"), "permission denied for function get_privacy_request_workspace");
+  await expectDatabaseError(() => db.query("select public.get_conversation_workspace()"), "permission denied for function get_conversation_workspace");
+  // The RELATIONSHIP projection replaces it for portal callers, and is structurally incapable of the
+  // union: this operator holds memberships in two organizations and relationships in neither.
+  const privacyRelationship = (await db.query("select public.get_relationship_privacy_request_workspace() as r")).rows[0].r;
+  assert(privacyOrgIds(privacyRelationship).length === 0,
+    "The relationship privacy projection offered organizations the caller only has an operator membership in.");
+  const conversationsRelationship = (await db.query("select public.get_relationship_conversation_workspace() as r")).rows[0].r;
+  assert(!conversationsRelationship.items.some((item) => item.audienceLabel === "Property management"),
+    "The relationship conversation projection returned conversations the caller only reaches as an operator.");
+  await db.exec("reset role");
+
+  const reviewCorrections = {
+    blockedSchedulesReported: withBroken.blockedSchedules.length,
+    arrearsPeriodsClearedInOneDay: arrearsCharges,
+    privacyOrganizationsWhenScoped: 1,
+  };
+
+  // ── A.1: dead-letter scan recovery, and one correlation id per scan state change ────────────────
+  // A1 built the retry ladder but no way OUT of a dead letter, so a relay outage lasting longer than
+  // the attempt budget left every document uploaded during it permanently unusable — with a manual SQL
+  // edit as the only escape, which is precisely what A1 set out to abolish.
+  //
+  // The scenario end to end: scanner outage -> retries exhausted -> dead-lettered -> document
+  // unavailable -> scanner restored -> AUTHORIZED retry -> queued -> scanned clean -> document usable.
+  const recoveryDoc = await finalizeScannableDocument("Outage notice", "outage.pdf", "7".repeat(64), "scan-recovr");
+  await db.exec("reset role; set role service_role");
+  const recoveryClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-recovery1') as r`)).rows[0].r;
+  const recoveryJob = recoveryClaim.jobs.find((j) => j.documentVersionId === recoveryDoc.finalized.versionId);
+  assert(recoveryJob, "The recovery fixture was not claimable.");
+
+  // The outage: every attempt fails until the budget is gone.
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set attempts=max_attempts where id='${recoveryJob.documentScanJobId}'`);
+  await db.exec("set role service_role");
+  const recoveryDead = (await db.query(`select public.fail_document_scan('${recoveryJob.documentScanJobId}','SCANNER_UNREACHABLE',true) as r`)).rows[0].r;
+  assert(recoveryDead.status === "dead_letter", "The exhausted scan did not dead-letter.");
+  await db.exec("reset role");
+  const deadState = (await db.query(`select upload_status from public.document_versions where id='${recoveryDoc.finalized.versionId}'`)).rows[0].upload_status;
+  assert(deadState === "quarantined", "A dead-lettered scan left its document somewhere other than quarantine.");
+  // The document is unavailable while the job is dead-lettered — that part was always right.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.deliver_document('${organization.organizationId}','${recoveryDoc.finalized.versionId}','resident_person','${invitedResidentPerson}','portal','scan-dead-deliv-1')`),
+    "DOCUMENT_NOT_DELIVERABLE",
+  );
+
+  // Recovery is authorization-controlled and requires a reason: this is a human overriding an
+  // automated decision, and the next person needs to know who and why.
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}',null,'scan-retry-noreason')`), "SCAN_RETRY_REASON_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','short','scan-retry-shortrsn')`), "SCAN_RETRY_REASON_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Relay restored after outage','tiny')`), "INVALID_IDEMPOTENCY_KEY");
+  // Residents and unrelated users cannot manipulate scan state.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Relay restored after outage','resident-retry-01')`), "DOCUMENT_SCOPE_DENIED");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Relay restored after outage','outsider-retry-1')`), "DOCUMENT_SCOPE_DENIED");
+  await db.exec("reset role; set role anon");
+  await expectDatabaseError(() => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Relay restored after outage','anon-retry-0001')`), "permission denied for function retry_document_scan");
+
+  // The scanner is restored; an authorized operator retries.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const retried = (await db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Scan relay restored after provider outage','scan-retry-0001') as r`)).rows[0].r;
+  assert(retried.status === "queued", "The retry did not return the job to a claimable state.");
+  // DECISIVE: recovery re-opens the question, it does NOT answer it. The document is still unusable.
+  assert(retried.uploadStatus === "quarantined", "The retry made the document usable without a scan verdict.");
+  const retryReplay = (await db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Scan relay restored after provider outage','scan-retry-0001') as r`)).rows[0].r;
+  assert(retryReplay.documentScanJobId === retried.documentScanJobId && retryReplay.correlationId === retried.correlationId,
+    "Replaying the retry was not idempotent.");
+  await db.exec("reset role");
+  const retriedState = (await db.query(`select
+    (select status from private.document_scan_jobs where id='${recoveryJob.documentScanJobId}') as job_status,
+    (select attempts from private.document_scan_jobs where id='${recoveryJob.documentScanJobId}') as attempts,
+    (select upload_status from public.document_versions where id='${recoveryDoc.finalized.versionId}') as version_status,
+    (select count(*)::integer from audit.audit_events where action_code='document.scanRetried' and resource_id='${recoveryDoc.finalized.versionId}') as audits,
+    (select reason from audit.audit_events where action_code='document.scanRetried' and resource_id='${recoveryDoc.finalized.versionId}' limit 1) as reason`)).rows[0];
+  assert(retriedState.job_status === "queued" && retriedState.attempts === 0, "The retry did not reset the attempt budget.");
+  assert(retriedState.version_status === "quarantined", "The retry released the document before it was scanned.");
+  assert(retriedState.audits === 1 && retriedState.reason === "Scan relay restored after provider outage",
+    "The retry was not audited with the operator's reason.");
+
+  // The restored scanner now produces a real verdict, and only THAT makes the document usable.
+  await db.exec("set role service_role");
+  const recoveryReclaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-recovery2') as r`)).rows[0].r;
+  assert(recoveryReclaim.jobs.some((j) => j.documentScanJobId === recoveryJob.documentScanJobId), "The recovered job was not claimable again.");
+  const recoveryVerdict = (await db.query(`select public.complete_document_scan('${recoveryJob.documentScanJobId}','clean','${"7".repeat(64)}','test-scanner','ref-recovered') as r`)).rows[0].r;
+  assert(recoveryVerdict.uploadStatus === "clean", "The recovered scan did not clean the document.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const recoveredDelivery = (await db.query(`select public.deliver_document('${organization.organizationId}','${recoveryDoc.finalized.versionId}','resident_person','${invitedResidentPerson}','portal','scan-recovered-dl1') as r`)).rows[0].r;
+  assert(recoveredDelivery.status === "delivered", "The recovered document was still unusable after a clean verdict.");
+
+  // A retry is not a way to re-decide a finished scan, nor to launder a rejected document.
+  await expectDatabaseError(
+    () => db.query(`select public.retry_document_scan('${organization.organizationId}','${recoveryJob.documentScanJobId}','Trying to re-open a finished scan','scan-retry-done01')`),
+    "DOCUMENT_SCAN_JOB_NOT_DEAD_LETTERED",
+  );
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set status='dead_letter' where document_version_id='${scanInfectedDoc.finalized.versionId}'`);
+  const infectedJobId = (await db.query(`select id from private.document_scan_jobs where document_version_id='${scanInfectedDoc.finalized.versionId}'`)).rows[0]?.id;
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  if (infectedJobId) {
+    await expectDatabaseError(
+      () => db.query(`select public.retry_document_scan('${organization.organizationId}','${infectedJobId}','Trying to launder an infected document','scan-retry-infect1')`),
+      "DOCUMENT_VERSION_NOT_SCANNABLE",
+    );
+  }
+
+  // (7) One logical state change, one correlation id. These were two independent gen_random_uuid()
+  // calls, so a scan verdict could not be joined across its audit row and its outbox event.
+  await db.exec("reset role");
+  const scanTrace = (await db.query(`select
+    (select correlation_id from audit.audit_events where action_code='document.scanned' and resource_id='${recoveryDoc.finalized.versionId}') as audit_correlation,
+    (select correlation_id from private.outbox_events where event_type='document.scanned' and aggregate_id='${recoveryDoc.finalized.versionId}') as outbox_correlation`)).rows[0];
+  assert(scanTrace.audit_correlation && scanTrace.audit_correlation === scanTrace.outbox_correlation,
+    "A single scan verdict wrote two different correlation ids, so its audit and outbox halves cannot be joined.");
+  assert(scanTrace.audit_correlation === recoveryVerdict.correlationId,
+    "The scan response did not return the correlation id it actually wrote.");
+  const retryTrace = (await db.query(`select
+    (select correlation_id from audit.audit_events where action_code='document.scanRetried' and resource_id='${recoveryDoc.finalized.versionId}') as audit_correlation,
+    (select correlation_id from private.outbox_events where event_type='document.scanRetried' and aggregate_id='${recoveryDoc.finalized.versionId}') as outbox_correlation`)).rows[0];
+  assert(retryTrace.audit_correlation && retryTrace.audit_correlation === retryTrace.outbox_correlation,
+    "The scan retry wrote two different correlation ids.");
+
+  const scanRecovery = {
+    deadLetterRetried: 1,
+    recoveredToClean: 1,
+    unauthorizedRetriesBlocked: 3,
+  };
+
+  // ── A.1: the organization-creation write boundary ────────────────────────────────────────────────
+  // A4 put the published-document gate in the Next server action. That was not a boundary: a signed-in
+  // browser could call public.create_organization directly with ANY p_terms_version — "", "2026-07-20",
+  // "I agree" — and record a consent row against a document that was never published or shown.
+  const boundaryActor = "e9000000-0000-4000-8000-0000000000c1";
+  const boundaryOutsider = "e9000000-0000-4000-8000-0000000000c2";
+  await db.exec(`reset role; insert into auth.users(id) values ('${boundaryActor}'),('${boundaryOutsider}')`);
+
+  // (1) Anonymous cannot create, by either surface.
+  await db.exec("set role anon");
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization('Anon Co','anon-co','property_manager','US','en-US','America/New_York','operator_terms@1#0123456789abcdef','anon-create-0001')`),
+    "permission denied for function create_organization",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization_as_actor('${boundaryActor}','Anon Co','anon-co','property_manager','US','en-US','America/New_York','operator_terms@1#0123456789abcdef','anon-create-0002')`),
+    "permission denied for function create_organization_as_actor",
+  );
+
+  // (2) DECISIVE: a signed-in browser cannot reach the privileged creation command at all. The trusted
+  // actor parameter only means something if the browser can never supply it.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${boundaryActor}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization_as_actor('${boundaryActor}','Direct Co','direct-co','property_manager','US','en-US','America/New_York','operator_terms@1#0123456789abcdef','direct-create-0001')`),
+    "permission denied for function create_organization_as_actor",
+  );
+  // Nor can it impersonate someone else through it.
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization_as_actor('${boundaryOutsider}','Impersonated Co','impersonated-co','property_manager','US','en-US','America/New_York','operator_terms@1#0123456789abcdef','direct-create-0002')`),
+    "permission denied for function create_organization_as_actor",
+  );
+
+  // (3) An arbitrary consent version cannot create an organization. Two independent reasons, and the
+  // test asserts BOTH, because either alone would be a thinner guarantee than it looks.
+  //
+  // First: after the contract release the browser cannot reach the creation surface at all, whatever
+  // version string it carries.
+  for (const bogus of ["", "  ", "2026", "short", "operator_terms@1#0123456789abcdef"]) {
+    await expectDatabaseError(
+      () => db.query(`select public.create_organization('Bogus Co','bogus-co','property_manager','US','en-US','America/New_York','${bogus}','bogus-create-${bogus.length}')`),
+      "permission denied for function create_organization",
+    );
+  }
+  // Second: even a trusted service_role caller — the server action itself, if it ever shipped a bug —
+  // cannot record consent evidence that names no artifact.
+  await db.exec("reset role; set role service_role");
+  for (const bogus of ["", "  ", "2026", "short"]) {
+    await expectDatabaseError(
+      () => db.query(`select public.create_organization_as_actor('${boundaryActor}','Bogus Co','bogus-co','property_manager','US','en-US','America/New_York','${bogus}','bogus-svc-${bogus.length}')`),
+      "CONSENT_VERSION_REQUIRED",
+    );
+  }
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${boundaryActor}'`);
+  await db.exec("reset role");
+  const bogusOrganizations = (await db.query("select count(*)::integer as c from public.organizations where slug in ('anon-co','direct-co','impersonated-co','bogus-co')")).rows[0].c;
+  assert(bogusOrganizations === 0, "A bypass attempt created an organization.");
+
+  // (4) A server-created organization records the exact resolved binding, and (7) a replay of the same
+  // server action creates exactly one organization.
+  const serverBinding = "operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef";
+  await db.exec("set role service_role");
+  const serverCreated = (await db.query(`select public.create_organization_as_actor(
+    '${boundaryActor}','Boundary Works','boundary-works','property_manager','US','en-US','America/New_York','${serverBinding}','boundary-create-0001'
+  ) as r`)).rows[0].r;
+  assert(serverCreated.organizationId && serverCreated.roleCode === "org_owner", "The server boundary did not create the organization.");
+  const serverReplay = (await db.query(`select public.create_organization_as_actor(
+    '${boundaryActor}','Boundary Works','boundary-works','property_manager','US','en-US','America/New_York','${serverBinding}','boundary-create-0001'
+  ) as r`)).rows[0].r;
+  assert(serverReplay.organizationId === serverCreated.organizationId, "An idempotent replay created a second organization.");
+  await db.exec("reset role");
+  const boundaryRows = (await db.query(`select
+    (select count(*)::integer from public.organizations where slug='boundary-works') as organizations,
+    (select count(*)::integer from public.organization_memberships where organization_id='${serverCreated.organizationId}' and user_id='${boundaryActor}' and role_code='org_owner' and status='active') as memberships,
+    (select legal_document_version from public.consent_records where organization_id='${serverCreated.organizationId}') as consent_version,
+    (select count(*)::integer from audit.audit_events where resource_id='${serverCreated.organizationId}' and action_code='organization.created') as audits,
+    (select count(*)::integer from private.outbox_events where aggregate_id='${serverCreated.organizationId}' and event_type='organization.created') as events`)).rows[0];
+  assert(boundaryRows.organizations === 1, `A replay produced ${boundaryRows.organizations} organizations.`);
+  assert(boundaryRows.memberships === 1, "The creating actor did not become the active owner.");
+  assert(boundaryRows.consent_version === serverBinding,
+    `Consent recorded "${boundaryRows.consent_version}" instead of the exact resolved binding.`);
+  assert(boundaryRows.audits === 1 && boundaryRows.events === 1, "The server boundary lost the audit or outbox trace.");
+
+  // An actor id that resolves to nobody is refused, so a trusted caller still cannot invent an owner.
+  await db.exec("set role service_role");
+  await expectDatabaseError(
+    () => db.query(`select public.create_organization_as_actor('${"c".repeat(8)}-0000-4000-8000-000000000000','Ghost Co','ghost-co','property_manager','US','en-US','America/New_York','${serverBinding}','ghost-create-0001')`),
+    "ACTOR_NOT_FOUND",
+  );
+
+  // The Growth trial is the 30 days file 11 specifies, not the 14 that shipped.
+  await db.exec("reset role");
+  const trialRow = (await db.query(`select
+    extract(day from (trial_ends_at - created_at))::integer as trial_days,
+    extract(day from (current_period_end - current_period_start))::integer as period_days,
+    plan_code, status
+    from public.organization_subscriptions where organization_id='${serverCreated.organizationId}'`)).rows[0];
+  assert(trialRow.plan_code === "growth" && trialRow.status === "trialing", "The new organization did not start a Growth trial.");
+  assert(trialRow.trial_days === 30, `The Growth trial expires after ${trialRow.trial_days} days, not the authoritative 30.`);
+  assert(trialRow.period_days === 30, `The initial billing period is ${trialRow.period_days} days, not the authoritative 30.`);
+  const responseTrialDays = Math.round(
+    (new Date(serverCreated.trial.endsAt).getTime() - Date.now()) / 86_400_000,
+  );
+  assert(serverCreated.trial.planCode === "growth" && responseTrialDays === 30,
+    `The command response advertised a ${responseTrialDays}-day trial.`);
+
+  const organizationBoundary = {
+    bypassAttemptsBlocked: 13,
+    trialDays: trialRow.trial_days,
+    consentBoundToBinding: boundaryRows.consent_version === serverBinding,
+  };
+
+  // ── A.1: a newly created organization becomes the active one ─────────────────────────────────────
+  // Onboarding used to redirect straight to /onboarding/entity without establishing the returned
+  // organizationId as context. For an operator who already belongs to another organization that is
+  // not cosmetic: the entity, book and first property would have been created inside whichever
+  // organization the context already pointed at — silently, in the WRONG tenant.
+  //
+  // This proves the database half of that journey: with A already active, creating B and then acting
+  // under B's context puts every subsequent row in B and none in A.
+  const twoOrgOperator = "e9000000-0000-4000-8000-0000000000d9";
+  await db.exec(`reset role; insert into auth.users(id) values ('${twoOrgOperator}')`);
+  await db.exec("set role service_role");
+  const onboardOrgA = (await db.query(`select public.create_organization_as_actor(
+    '${twoOrgOperator}','Existing Alpha','existing-alpha','property_manager','US','en-US','America/New_York',
+    'operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','onboard-a-0001'
+  ) as r`)).rows[0].r;
+  const onboardOrgB = (await db.query(`select public.create_organization_as_actor(
+    '${twoOrgOperator}','Created Beta','created-beta','property_manager','US','en-US','America/Chicago',
+    'operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','onboard-b-0001'
+  ) as r`)).rows[0].r;
+  assert(onboardOrgA.organizationId !== onboardOrgB.organizationId, "The onboarding fixture did not create two organizations.");
+
+  // The switcher source offers both; nothing has been chosen for the operator.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${twoOrgOperator}'; set request.jwt.claim.aal='aal2'`);
+  const onboardOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(onboardOrgs.length === 2, "The operator did not end up in both organizations.");
+
+  // Continue onboarding under B — the organization just created, named explicitly, never inferred.
+  const onboardEntity = (await db.query(`select public.create_operating_entity_and_book(
+    '${onboardOrgB.organizationId}','Created Beta LLC','Created Beta','US','company','USD','Operating book','onboard-entity-0001'
+  ) as r`)).rows[0].r;
+  const onboardProperty = (await db.query(`select public.create_property(
+    '${onboardOrgB.organizationId}','${onboardEntity.operatingEntityId}','${onboardEntity.accountingBookId}','US_NATIONAL',
+    'Beta House','single_family','1 Beta Way',null,'Chicago','IL','60601','US','America/Chicago','onboard-property-0001'
+  ) as r`)).rows[0].r;
+
+  await db.exec("reset role");
+  const onboardRows = (await db.query(`select
+    (select count(*)::integer from public.operating_entities where organization_id='${onboardOrgB.organizationId}') as entities_b,
+    (select count(*)::integer from public.accounting_books where organization_id='${onboardOrgB.organizationId}') as books_b,
+    (select count(*)::integer from public.properties where organization_id='${onboardOrgB.organizationId}') as properties_b,
+    (select count(*)::integer from public.operating_entities where organization_id='${onboardOrgA.organizationId}') as entities_a,
+    (select count(*)::integer from public.accounting_books where organization_id='${onboardOrgA.organizationId}') as books_a,
+    (select count(*)::integer from public.properties where organization_id='${onboardOrgA.organizationId}') as properties_a`)).rows[0];
+  assert(onboardRows.entities_b === 1 && onboardRows.books_b === 1 && onboardRows.properties_b === 1,
+    "Onboarding did not create the entity, book and property in the organization it just created.");
+  // DECISIVE: the organization the operator already belonged to receives nothing.
+  assert(onboardRows.entities_a === 0 && onboardRows.books_a === 0 && onboardRows.properties_a === 0,
+    "Onboarding leaked rows into the organization the operator already belonged to.");
+  assert(onboardProperty.propertyId && onboardEntity.operatingEntityId, "Onboarding did not return its own identifiers.");
+
+  // Acting under A's context cannot reach B's property, and vice versa — the context is what decides.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${twoOrgOperator}'`);
+  const betaUnderB = (await db.query(`select public.get_operator_maintenance_workspace('${onboardOrgB.organizationId}') as r`)).rows[0].r;
+  const betaUnderA = (await db.query(`select public.get_operator_maintenance_workspace('${onboardOrgA.organizationId}') as r`)).rows[0].r;
+  assert(Array.isArray(betaUnderB.items) && Array.isArray(betaUnderA.items),
+    "The operator could not read either of their own organizations after onboarding.");
+  await db.exec("reset role");
+
+  // And the normal FIRST-organization path is unaffected: an operator with no prior membership gets
+  // exactly one organization, which the context selects automatically.
+  const firstTimeOperator = "e9000000-0000-4000-8000-0000000000da";
+  await db.exec(`insert into auth.users(id) values ('${firstTimeOperator}'); set role service_role`);
+  const firstOrg = (await db.query(`select public.create_organization_as_actor(
+    '${firstTimeOperator}','First Timer','first-timer','self_managing','CA','en-CA','America/Toronto',
+    'operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','onboard-first-0001'
+  ) as r`)).rows[0].r;
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${firstTimeOperator}'`);
+  const firstOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(firstOrgs.length === 1 && firstOrgs[0].organizationId === firstOrg.organizationId,
+    "The first-organization onboarding path no longer yields exactly one organization.");
+  await db.exec("reset role");
+
+  const twoOrgOnboarding = { organizationsForOperator: onboardOrgs.length, rowsLeakedToPriorOrganization: 0 };
+
+  // ── A.1: sanitized runtime diagnostics ───────────────────────────────────────────────────────────
+  // Batch A created failure states that live only in private tables or a cron response body: a
+  // dead-lettered scan, a dead-lettered notification, a schedule the generator would refuse, a
+  // property whose time zone is not a real zone. Each silently stops work and nothing surfaced any of
+  // them. This proves the surface reports all four AND leaks none of the underlying data.
+  await db.exec("reset role");
+  await db.exec(`update public.properties set time_zone='Mars/Olympus' where id='${zoneWorld.hi.propertyId}'`);
+  // The earlier support tests ended this agent's session and exercised suspension; diagnostics is a
+  // support surface, so it needs its own live session like any other support query.
+  await db.exec(`update private.platform_actors set status='active' where user_id='${platformAgent}'`);
+  // One active session per actor is an invariant, so end whatever a previous test left open rather
+  // than assuming the fixture's state.
+  await db.exec(`update private.support_sessions set status='ended', ended_at=now()
+    where platform_actor_id in (select id from private.platform_actors where user_id='${platformAgent}') and status='active'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await db.query(`select public.start_support_session('${organization.organizationId}','Reviewing stuck runtime work for this customer.',60,'support-diagnostics-01')`);
+  const diagnostics = (await db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100) as r`)).rows[0].r;
+
+  // All five operational states are distinguished, because the operator's response differs: retrying
+  // needs patience, dead_letter needs a human, blocked needs a configuration fix.
+  const scanStates = new Set(diagnostics.documentScans.map((s) => s.state));
+  assert(diagnostics.counts.deadLetterScans >= 1, "The diagnostics did not report the dead-lettered scan.");
+  assert(scanStates.has("dead_letter"), "The diagnostics did not distinguish a dead-lettered scan from a retrying one.");
+  assert(diagnostics.counts.blockedSchedules >= 1, "The diagnostics did not report the blocked charge schedule.");
+  assert(diagnostics.chargeSchedules.every((s) => s.state === "blocked" && /^[A-Z_]+$/.test(s.reasonCode)),
+    "A blocked schedule was reported without a safe reason code.");
+  assert(diagnostics.counts.invalidTimeZones === 1 && diagnostics.propertyTimeZones[0].reasonCode === "UNKNOWN_TIME_ZONE",
+    "The diagnostics did not report the property whose time zone is not a real zone.");
+  assert(Array.isArray(diagnostics.notifications), "The diagnostics did not report notification jobs.");
+
+  // DECISIVE: nothing sensitive travels. A diagnostic surface that leaks is worse than none.
+  const diagnosticsText = JSON.stringify(diagnostics);
+  for (const [label, needle] of [
+    ["a storage bucket", "private-documents"],
+    ["a storage path", "organizations/"],
+    ["a document title", "Quiet hours notice"],
+    ["a content digest", "a".repeat(64)],
+    ["a secure-link token", secureTokenRaw],
+    ["a recipient address", "@example.com"],
+    ["a provider reference", "ref-clean-1"],
+  ]) {
+    assert(!diagnosticsText.includes(needle), `The runtime diagnostics leaked ${label}.`);
+  }
+  // Raw provider errors are classified, never echoed: a last_error can contain anything, including a
+  // URL with a token in it.
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set last_error='https://relay.example/secret?token=abc123'
+    where organization_id='${organization.organizationId}' and status='dead_letter'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const classified = (await db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100) as r`)).rows[0].r;
+  const classifiedText = JSON.stringify(classified);
+  assert(!classifiedText.includes("token=abc123") && !classifiedText.includes("relay.example"),
+    "The runtime diagnostics echoed a raw provider error verbatim.");
+  assert(classified.documentScans.some((s) => s.reasonCode === "UNCLASSIFIED"),
+    "An unrecognized failure reason was dropped instead of being reported as unclassified.");
+
+  // Reading diagnostics is itself audited, like every other support query.
+  await db.exec("reset role");
+  const diagnosticsAudits = (await db.query(`select count(*)::integer as c from audit.audit_events
+    where action_code='support.viewed_runtime_diagnostics' and organization_id='${organization.organizationId}'`)).rows[0].c;
+  assert(diagnosticsAudits === 2, `Diagnostics reads wrote ${diagnosticsAudits} audit rows instead of 2.`);
+
+  // It is a SUPPORT surface, gated twice. An organization's own administrator is not a platform actor
+  // and is refused before any session question is asked; so is a resident.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100)`), "NOT_PLATFORM_ACTOR");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100)`), "NOT_PLATFORM_ACTOR");
+  // And a platform actor WITHOUT a live session for this organization is refused too, so the session
+  // requirement is real rather than implied by the actor check.
+  await db.exec("reset role");
+  await db.exec(`update private.support_sessions set status='ended', ended_at=now()
+    where platform_actor_id in (select id from private.platform_actors where user_id='${platformAgent}') and status='active'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100)`), "SUPPORT_SESSION_REQUIRED");
+  await db.exec("reset role; set role anon");
+  await expectDatabaseError(() => db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100)`), "permission denied for function support_get_runtime_diagnostics");
+
+  await db.exec(`reset role; update public.properties set time_zone='Pacific/Honolulu' where id='${zoneWorld.hi.propertyId}'`);
+
+  const runtimeDiagnostics = {
+    deadLetterScans: diagnostics.counts.deadLetterScans,
+    blockedSchedules: diagnostics.counts.blockedSchedules,
+    invalidTimeZones: diagnostics.counts.invalidTimeZones,
+  };
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean , onboardingRowsLeaked: twoOrgOnboarding.rowsLeakedToPriorOrganization , diagnosticDeadLetters: runtimeDiagnostics.deadLetterScans, diagnosticBlocked: runtimeDiagnostics.blockedSchedules };
 }
 
 try {
