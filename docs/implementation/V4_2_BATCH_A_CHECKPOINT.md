@@ -20,9 +20,9 @@ corrections).
 
 ## 2. Files and migrations added
 
-**92 files changed, +5,200 / −305** since `13b01f4` (40 added, 51 modified).
+**96 files changed, +6,015 / −315** since `13b01f4` (43 added, 53 modified).
 
-**Four forward-only migrations, none applied to the live project:**
+**Five forward-only migrations, none applied to the live project:**
 
 | Migration | Adds |
 | --- | --- |
@@ -53,9 +53,12 @@ Newly proven in `test:db` against real RPCs:
 - **Rent time zones** — EDT/PDT/HST across UTC midnight and a month boundary; at `2026-09-01T06:00Z`
   only New York is due, and the Los Angeles charge lands on its own local date in both `charges.due_date`
   and `journal_transactions.effective_date`.
-- **Organization isolation** — a real second organization for the same operator; eight audited surfaces
+- **Organization isolation** — a real second organization for the same operator; ten audited surfaces
   return the owning organization's rows and **zero** in the other; revoked and expired memberships stop
   working on the next call; the context never outlives its statement.
+- **The review corrections** — a healthy schedule is charged despite a misconfigured neighbour in the
+  same zone; two arrears periods clear on one local date while an unchanged due set still replays; the
+  privacy workspace offers exactly the organization it was scoped to.
 
 **Mutation testing:** 25 mutations across the four migrations. 23 caught. The 2 survivors are
 *equivalent mutants* — redundant SHA checks in `complete_document_scan`, where either alone rejects a
@@ -136,8 +139,8 @@ So: a production deployment exists and serves the pre-Batch-A product. Batch A i
 ## 13. Connected E2E counts
 
 **0 connected runs this batch.** 12 connected specs exist (1 new: `organization-switch.spec.ts`); none
-were executed, because the three Batch A migrations are not on the live project and no fixture exists
-for an operator with two organizations.
+were executed, because the five Batch A migrations are not on the live project and no fixture exists for
+an operator with two organizations.
 
 Previously certified connected workflows are unchanged and were **not** re-verified against Batch A.
 
