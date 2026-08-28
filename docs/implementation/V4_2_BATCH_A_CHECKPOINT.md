@@ -9,13 +9,14 @@ the launch is complete.** External gates are stated as gates, not converted into
 
 | | |
 | --- | --- |
-| **Working head** | `dd09ce1` (branch `claude/mvp-progress-assessment-axvajc`, PR #35) |
+| **Working head** | `9c166e7` (branch `claude/mvp-progress-assessment-axvajc`, PR #35) |
 | **Batch A base** | `13b01f4` |
 | **`origin/main`** | `6eaf5b0` |
 | **Head vs main** | 19 commits ahead, 0 behind |
 
-Batch A is the last 6 commits: `f8f748e` (A1), `c4536ed` (A2), `c836289` + `6ec4cec` (A3),
-`4c34c7d` (A4), `dd09ce1` (deploy-ordering split).
+Batch A is the last 8 commits: `f8f748e` (A1), `c4536ed` (A2), `c836289` + `6ec4cec` (A3),
+`4c34c7d` (A4), `dd09ce1` (deploy-ordering split), `e13edcc` (this report), `9c166e7` (review
+corrections).
 
 ## 2. Files and migrations added
 
@@ -29,6 +30,7 @@ Batch A is the last 6 commits: `f8f748e` (A1), `c4536ed` (A2), `c836289` + `6ec4
 | `20260828110000_phase_4_runtime_scheduler.sql` | `list_due_charge_schedule_batches`, `sweep_expired_operational_records`, 2 `private` helpers |
 | `20260828120000_phase_8_active_organization_context.sql` | `list_operator_organizations`, context gate, 3 narrowed helpers, 20 scoped RPC wrappers, reproduced global search — **additive** |
 | `20260828130000_phase_8_close_unscoped_operator_surfaces.sql` | 11 `revoke execute` — **NOT deploy-order independent** |
+| `20260828140000_phase_8_batch_a_review_corrections.sql` | narrows `is_active_org_member`; rebuilds the batch selector with per-schedule health and pair-based run ids |
 
 Authority counts: **77 tables / 59 policies** (was 76/59 — `private.document_scan_jobs` is the one new
 table, added to doc 12).
@@ -39,7 +41,7 @@ New app modules: `src/lib/runtime/*` (7), `src/lib/organization/*` (3), `src/lib
 
 ## 3. Product workflows passed
 
-`npm run check` green end to end: ESLint, TypeScript, **237 Vitest tests / 42 files**, embedded-Postgres
+`npm run check` green end to end: ESLint, TypeScript, **241 Vitest tests / 42 files**, embedded-Postgres
 `test:db`, `schedule:check`, production build. **58/58 demo Playwright tests.**
 
 Newly proven in `test:db` against real RPCs:
@@ -55,7 +57,7 @@ Newly proven in `test:db` against real RPCs:
   return the owning organization's rows and **zero** in the other; revoked and expired memberships stop
   working on the next call; the context never outlives its statement.
 
-**Mutation testing:** 22 mutations across the three migrations. 20 caught. The 2 survivors are
+**Mutation testing:** 25 mutations across the four migrations. 23 caught. The 2 survivors are
 *equivalent mutants* — redundant SHA checks in `complete_document_scan`, where either alone rejects a
 mismatch and removing **both** is caught.
 
@@ -141,12 +143,35 @@ Previously certified connected workflows are unchanged and were **not** re-verif
 
 ## 14. Defects
 
+### Found by adversarial review of this batch — all fixed in `9c166e7`
+
+A full adversarial pass ran over the diff after the four slices were complete. It found **eight real
+defects in my own work**, two of them confirmed by executing them against the migration chain rather
+than by reading. Each is now covered by a test that fails when the fix is reverted.
+
+| # | Defect | How found |
+| --- | --- | --- |
+| 1 | **One misconfigured schedule blocked its entire time zone, forever.** The selector filtered three conditions; the command raises on four more, from inside its loop — so one bad row rolled back every healthy schedule beside it, including the run record, and the next hourly run failed identically. | **Executed** — five healthy New York schedules got 0 charges |
+| 2 | **A skipped time zone reported HTTP 200.** `invalidTimeZones` never reached the status calculation — the exact failure `health.ts` exists to prevent. | Code-traced |
+| 3 | **`get_privacy_request_workspace` was not actually scoped.** It gates on `is_active_org_member`, the one membership helper A3 did not narrow, so the wrapper set the context and the body ignored it. | **Executed** — returned both organizations |
+| 4 | **A literal NUL byte in `registry.ts`** made git treat the module defining consent derivation as *binary* — no reviewable diff — and left every hash at the mercy of any editor that strips control characters. | `cat -v` |
+| 5 | **`.env.example` shipped `CRECY_DEPLOYMENT_ENV=development`**, which an operator copying it into production would use to relax the gate meant to fail closed. | Config review |
+| 6 | **`/settings/team` and `/settings/payments` were dead ends** for a multi-organization operator with no selection — outside the operator layout, so no switcher and no way to choose. | Code-traced |
+| 7 | **Onboarding resolved consent with a jurisdiction in the action and without one on the page.** Latent while both documents are `*`; the first country-specific document would have locked onboarding permanently behind a message that misdiagnoses the cause. | Code-traced |
+| 8 | **Arrears cleared at most one period per local day**, and the run reported it as healthy. | Reasoned from the run-id derivation |
+
+Also corrected: an e2e assertion weaker than its own comment, an overstated audited-surface count, and
+an overstated claim about the reach of the wrapper pattern.
+
+**One review finding was wrong.** #12 claimed unauthenticated `/app` now redirects to onboarding rather
+than login. `src/proxy.ts` is Next 16's middleware and redirects to `/login` first; the layout never runs.
+
 ### Critical
 
-**None found or introduced**, on the evidence available: `npm run check` green, 22 mutations run,
-58/58 browser tests.
+**None found or introduced**, on the evidence available: `npm run check` green, 25 mutations run,
+58/58 browser tests, and a full adversarial pass whose findings are all closed above.
 
-### High — one, found by me and fixed inside this batch
+### High — found by me during the batch and fixed inside it
 
 **A cron run where every batch failed answered `200`.** Indistinguishable from healthy in an invocation
 log — the same class of failure as a worker with no caller. Fixed: `200` / `207` partial / `502` nothing
