@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { classifyRelayStatus, type TransportFailure } from "@/lib/notifications/transport";
+import { SCAN_RELAY_TIMEOUT_MS } from "@/lib/runtime/budget";
 
 /**
  * Provider-neutral malware scanning for uploaded document versions.
@@ -84,7 +85,7 @@ export function getDocumentScanner(): DocumentScanner | null {
       const observedSha256Hex = createHash("sha256").update(bytes).digest("hex");
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60_000);
+      const timeout = setTimeout(() => controller.abort(), SCAN_RELAY_TIMEOUT_MS);
       try {
         const response = await fetch(config.url, {
           method: "POST",

@@ -6,6 +6,7 @@ import { secureLinkUrl } from "@/lib/notifications/secure-link";
 import { getDocumentScanner, type DocumentObjectSource } from "@/lib/documents/scanner";
 import { claimedNotificationJobSchema } from "@/lib/validation/notification-worker";
 import { claimedDocumentScanJobSchema } from "@/lib/validation/document-scan-worker";
+import { SCAN_WORKER_CONCURRENCY } from "@/lib/runtime/budget";
 
 /**
  * The bodies of the scheduled workers, extracted so the manual POST routes and the cron GET routes run
@@ -153,12 +154,23 @@ export async function runDocumentScanDispatch(
   let cleaned = 0;
   let rejected = 0;
   let failed = 0;
-  for (const job of jobs.data) {
-    const result = await scanner.scan(
+
+  // Scanned with BOUNDED parallelism, then recorded sequentially. Sequential scanning made the run's
+  // worst case (batch size x relay timeout) exceed any serverless duration budget, and a function
+  // killed mid-run leaves every claimed job in 'scanning' until the stall sweep — so one timeout
+  // stranded the whole batch. Bounded rather than unbounded because the relay is someone else's
+  // service, and a cron that fans out arbitrarily wide causes the outage it was meant to survive.
+  const scanned: { job: (typeof jobs.data)[number]; result: Awaited<ReturnType<typeof scanner.scan>> }[] = [];
+  for (let offset = 0; offset < jobs.data.length; offset += SCAN_WORKER_CONCURRENCY) {
+    const wave = jobs.data.slice(offset, offset + SCAN_WORKER_CONCURRENCY);
+    const results = await Promise.all(wave.map((job) => scanner.scan(
       { documentScanJobId: job.documentScanJobId, storageBucket: job.storageBucket, storagePath: job.storagePath },
       source,
-    );
+    )));
+    wave.forEach((job, index) => scanned.push({ job, result: results[index] }));
+  }
 
+  for (const { job, result } of scanned) {
     if (result.ok) {
       // The digest travels with the verdict. complete_document_scan re-proves it against the job AND
       // the live version, so a scanner that read a different object cannot clean this one.

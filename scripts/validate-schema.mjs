@@ -65,6 +65,7 @@ const batchAReviewCorrectionsSql = await readFile(resolve(root, "supabase/migrat
 const organizationCreationBoundarySql = await readFile(resolve(root, "supabase/migrations/20260829100000_phase_1_organization_creation_boundary.sql"), "utf8");
 const scanRecoveryTracingSql = await readFile(resolve(root, "supabase/migrations/20260829110000_phase_2_scan_recovery_and_tracing.sql"), "utf8");
 const relationshipProjectionsSql = await readFile(resolve(root, "supabase/migrations/20260829120000_phase_8_relationship_projections.sql"), "utf8");
+const runtimeDiagnosticsSql = await readFile(resolve(root, "supabase/migrations/20260829130000_phase_8_runtime_diagnostics.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -846,6 +847,7 @@ async function validateRecurringCharges() {
   await db.exec(organizationCreationBoundarySql);
   await db.exec(scanRecoveryTracingSql);
   await db.exec(relationshipProjectionsSql);
+  await db.exec(runtimeDiagnosticsSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
@@ -5275,8 +5277,168 @@ async function validateRecurringCharges() {
     consentBoundToBinding: boundaryRows.consent_version === serverBinding,
   };
 
+  // ── A.1: a newly created organization becomes the active one ─────────────────────────────────────
+  // Onboarding used to redirect straight to /onboarding/entity without establishing the returned
+  // organizationId as context. For an operator who already belongs to another organization that is
+  // not cosmetic: the entity, book and first property would have been created inside whichever
+  // organization the context already pointed at — silently, in the WRONG tenant.
+  //
+  // This proves the database half of that journey: with A already active, creating B and then acting
+  // under B's context puts every subsequent row in B and none in A.
+  const twoOrgOperator = "e9000000-0000-4000-8000-0000000000d9";
+  await db.exec(`reset role; insert into auth.users(id) values ('${twoOrgOperator}')`);
+  await db.exec("set role service_role");
+  const onboardOrgA = (await db.query(`select public.create_organization_as_actor(
+    '${twoOrgOperator}','Existing Alpha','existing-alpha','property_manager','US','en-US','America/New_York',
+    'operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','onboard-a-0001'
+  ) as r`)).rows[0].r;
+  const onboardOrgB = (await db.query(`select public.create_organization_as_actor(
+    '${twoOrgOperator}','Created Beta','created-beta','property_manager','US','en-US','America/Chicago',
+    'operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','onboard-b-0001'
+  ) as r`)).rows[0].r;
+  assert(onboardOrgA.organizationId !== onboardOrgB.organizationId, "The onboarding fixture did not create two organizations.");
+
+  // The switcher source offers both; nothing has been chosen for the operator.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${twoOrgOperator}'; set request.jwt.claim.aal='aal2'`);
+  const onboardOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(onboardOrgs.length === 2, "The operator did not end up in both organizations.");
+
+  // Continue onboarding under B — the organization just created, named explicitly, never inferred.
+  const onboardEntity = (await db.query(`select public.create_operating_entity_and_book(
+    '${onboardOrgB.organizationId}','Created Beta LLC','Created Beta','US','company','USD','Operating book','onboard-entity-0001'
+  ) as r`)).rows[0].r;
+  const onboardProperty = (await db.query(`select public.create_property(
+    '${onboardOrgB.organizationId}','${onboardEntity.operatingEntityId}','${onboardEntity.accountingBookId}','US_NATIONAL',
+    'Beta House','single_family','1 Beta Way',null,'Chicago','IL','60601','US','America/Chicago','onboard-property-0001'
+  ) as r`)).rows[0].r;
+
+  await db.exec("reset role");
+  const onboardRows = (await db.query(`select
+    (select count(*)::integer from public.operating_entities where organization_id='${onboardOrgB.organizationId}') as entities_b,
+    (select count(*)::integer from public.accounting_books where organization_id='${onboardOrgB.organizationId}') as books_b,
+    (select count(*)::integer from public.properties where organization_id='${onboardOrgB.organizationId}') as properties_b,
+    (select count(*)::integer from public.operating_entities where organization_id='${onboardOrgA.organizationId}') as entities_a,
+    (select count(*)::integer from public.accounting_books where organization_id='${onboardOrgA.organizationId}') as books_a,
+    (select count(*)::integer from public.properties where organization_id='${onboardOrgA.organizationId}') as properties_a`)).rows[0];
+  assert(onboardRows.entities_b === 1 && onboardRows.books_b === 1 && onboardRows.properties_b === 1,
+    "Onboarding did not create the entity, book and property in the organization it just created.");
+  // DECISIVE: the organization the operator already belonged to receives nothing.
+  assert(onboardRows.entities_a === 0 && onboardRows.books_a === 0 && onboardRows.properties_a === 0,
+    "Onboarding leaked rows into the organization the operator already belonged to.");
+  assert(onboardProperty.propertyId && onboardEntity.operatingEntityId, "Onboarding did not return its own identifiers.");
+
+  // Acting under A's context cannot reach B's property, and vice versa — the context is what decides.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${twoOrgOperator}'`);
+  const betaUnderB = (await db.query(`select public.get_operator_maintenance_workspace('${onboardOrgB.organizationId}') as r`)).rows[0].r;
+  const betaUnderA = (await db.query(`select public.get_operator_maintenance_workspace('${onboardOrgA.organizationId}') as r`)).rows[0].r;
+  assert(Array.isArray(betaUnderB.items) && Array.isArray(betaUnderA.items),
+    "The operator could not read either of their own organizations after onboarding.");
+  await db.exec("reset role");
+
+  // And the normal FIRST-organization path is unaffected: an operator with no prior membership gets
+  // exactly one organization, which the context selects automatically.
+  const firstTimeOperator = "e9000000-0000-4000-8000-0000000000da";
+  await db.exec(`insert into auth.users(id) values ('${firstTimeOperator}'); set role service_role`);
+  const firstOrg = (await db.query(`select public.create_organization_as_actor(
+    '${firstTimeOperator}','First Timer','first-timer','self_managing','CA','en-CA','America/Toronto',
+    'operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','onboard-first-0001'
+  ) as r`)).rows[0].r;
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${firstTimeOperator}'`);
+  const firstOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(firstOrgs.length === 1 && firstOrgs[0].organizationId === firstOrg.organizationId,
+    "The first-organization onboarding path no longer yields exactly one organization.");
+  await db.exec("reset role");
+
+  const twoOrgOnboarding = { organizationsForOperator: onboardOrgs.length, rowsLeakedToPriorOrganization: 0 };
+
+  // ── A.1: sanitized runtime diagnostics ───────────────────────────────────────────────────────────
+  // Batch A created failure states that live only in private tables or a cron response body: a
+  // dead-lettered scan, a dead-lettered notification, a schedule the generator would refuse, a
+  // property whose time zone is not a real zone. Each silently stops work and nothing surfaced any of
+  // them. This proves the surface reports all four AND leaks none of the underlying data.
+  await db.exec("reset role");
+  await db.exec(`update public.properties set time_zone='Mars/Olympus' where id='${zoneWorld.hi.propertyId}'`);
+  // The earlier support tests ended this agent's session and exercised suspension; diagnostics is a
+  // support surface, so it needs its own live session like any other support query.
+  await db.exec(`update private.platform_actors set status='active' where user_id='${platformAgent}'`);
+  // One active session per actor is an invariant, so end whatever a previous test left open rather
+  // than assuming the fixture's state.
+  await db.exec(`update private.support_sessions set status='ended', ended_at=now()
+    where platform_actor_id in (select id from private.platform_actors where user_id='${platformAgent}') and status='active'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await db.query(`select public.start_support_session('${organization.organizationId}','Reviewing stuck runtime work for this customer.',60,'support-diagnostics-01')`);
+  const diagnostics = (await db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100) as r`)).rows[0].r;
+
+  // All five operational states are distinguished, because the operator's response differs: retrying
+  // needs patience, dead_letter needs a human, blocked needs a configuration fix.
+  const scanStates = new Set(diagnostics.documentScans.map((s) => s.state));
+  assert(diagnostics.counts.deadLetterScans >= 1, "The diagnostics did not report the dead-lettered scan.");
+  assert(scanStates.has("dead_letter"), "The diagnostics did not distinguish a dead-lettered scan from a retrying one.");
+  assert(diagnostics.counts.blockedSchedules >= 1, "The diagnostics did not report the blocked charge schedule.");
+  assert(diagnostics.chargeSchedules.every((s) => s.state === "blocked" && /^[A-Z_]+$/.test(s.reasonCode)),
+    "A blocked schedule was reported without a safe reason code.");
+  assert(diagnostics.counts.invalidTimeZones === 1 && diagnostics.propertyTimeZones[0].reasonCode === "UNKNOWN_TIME_ZONE",
+    "The diagnostics did not report the property whose time zone is not a real zone.");
+  assert(Array.isArray(diagnostics.notifications), "The diagnostics did not report notification jobs.");
+
+  // DECISIVE: nothing sensitive travels. A diagnostic surface that leaks is worse than none.
+  const diagnosticsText = JSON.stringify(diagnostics);
+  for (const [label, needle] of [
+    ["a storage bucket", "private-documents"],
+    ["a storage path", "organizations/"],
+    ["a document title", "Quiet hours notice"],
+    ["a content digest", "a".repeat(64)],
+    ["a secure-link token", secureTokenRaw],
+    ["a recipient address", "@example.com"],
+    ["a provider reference", "ref-clean-1"],
+  ]) {
+    assert(!diagnosticsText.includes(needle), `The runtime diagnostics leaked ${label}.`);
+  }
+  // Raw provider errors are classified, never echoed: a last_error can contain anything, including a
+  // URL with a token in it.
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set last_error='https://relay.example/secret?token=abc123'
+    where organization_id='${organization.organizationId}' and status='dead_letter'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  const classified = (await db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100) as r`)).rows[0].r;
+  const classifiedText = JSON.stringify(classified);
+  assert(!classifiedText.includes("token=abc123") && !classifiedText.includes("relay.example"),
+    "The runtime diagnostics echoed a raw provider error verbatim.");
+  assert(classified.documentScans.some((s) => s.reasonCode === "UNCLASSIFIED"),
+    "An unrecognized failure reason was dropped instead of being reported as unclassified.");
+
+  // Reading diagnostics is itself audited, like every other support query.
+  await db.exec("reset role");
+  const diagnosticsAudits = (await db.query(`select count(*)::integer as c from audit.audit_events
+    where action_code='support.viewed_runtime_diagnostics' and organization_id='${organization.organizationId}'`)).rows[0].c;
+  assert(diagnosticsAudits === 2, `Diagnostics reads wrote ${diagnosticsAudits} audit rows instead of 2.`);
+
+  // It is a SUPPORT surface, gated twice. An organization's own administrator is not a platform actor
+  // and is refused before any session question is asked; so is a resident.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100)`), "NOT_PLATFORM_ACTOR");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100)`), "NOT_PLATFORM_ACTOR");
+  // And a platform actor WITHOUT a live session for this organization is refused too, so the session
+  // requirement is real rather than implied by the actor check.
+  await db.exec("reset role");
+  await db.exec(`update private.support_sessions set status='ended', ended_at=now()
+    where platform_actor_id in (select id from private.platform_actors where user_id='${platformAgent}') and status='active'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100)`), "SUPPORT_SESSION_REQUIRED");
+  await db.exec("reset role; set role anon");
+  await expectDatabaseError(() => db.query(`select public.support_get_runtime_diagnostics('${organization.organizationId}',100)`), "permission denied for function support_get_runtime_diagnostics");
+
+  await db.exec(`reset role; update public.properties set time_zone='Pacific/Honolulu' where id='${zoneWorld.hi.propertyId}'`);
+
+  const runtimeDiagnostics = {
+    deadLetterScans: diagnostics.counts.deadLetterScans,
+    blockedSchedules: diagnostics.counts.blockedSchedules,
+    invalidTimeZones: diagnostics.counts.invalidTimeZones,
+  };
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean , onboardingRowsLeaked: twoOrgOnboarding.rowsLeakedToPriorOrganization , diagnosticDeadLetters: runtimeDiagnostics.deadLetterScans, diagnosticBlocked: runtimeDiagnostics.blockedSchedules };
 }
 
 try {
