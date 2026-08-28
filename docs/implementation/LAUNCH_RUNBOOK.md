@@ -16,7 +16,7 @@ so and names what is missing rather than describing a workaround.
 | Gate | `npm run check` green |
 | Deployed | **Nothing.** No Crecy build has been deployed anywhere. |
 | Supabase | **`Property` / `alrirkvfcmhqumqaidxj`** — restored and `ACTIVE_HEALTHY`. Schema present, **no data**: 0 auth users, 0 organizations, 0 journal entries. |
-| Migrations | **26 of the repo's 60 are unapplied.** The database is at 2026-07-25. |
+| Migrations | **All 60 applied.** The 26-file expand step ran on 2026-08-28 and was verified against a local replay — see §2. |
 | Providers | Scan relay, mail relay and Stripe Connect are all unconfigured. |
 
 ---
@@ -70,10 +70,31 @@ down with `permission denied`.
 1. **Restore the Supabase project** if it has auto-paused again. Free-tier organizations allow only
    **2 active projects** and `couranr-market` (a different product, with real users) occupies one, so
    restoring Crecy may require pausing the empty `Property-management` project first.
-2. **Expand.** Apply the 26 unapplied files from `supabase/migrations/` in timestamp order. The
-   database is at `20260725020649`; everything from `20260725090000` onward is missing — relationship
-   invitations, maintenance cost, receivable write-off, the platform control plane, document delivery,
-   every import leg, the notification worker, and all of Batch A and A.1. All additive.
+2. **Expand — DONE.** All 26 pending files were applied in timestamp order, and the ledger versions
+   were corrected to match the filenames (`apply_migration` stamps wall-clock time, which would have
+   made `supabase db push` try to re-run every one of them).
+
+   **How it was verified.** The MCP tool takes SQL as a parameter, so the statements passed through an
+   agent rather than a file handle. A syntax error would surface loudly, but "loudly" is not a
+   verification, so `scripts/schema-inventory.mjs` replays all 60 migrations into in-memory Postgres
+   and prints a canonical object inventory; the same query was run against the live database and the
+   two were diffed:
+
+   | | local replay | live | verdict |
+   |---|---:|---:|---|
+   | tables (with columns) | 78 | 78 | identical |
+   | RLS policies | 63 | 63 | identical |
+   | triggers | 43 | 43 | identical |
+   | constraints | 1504 | 799 | explained — see below |
+   | indexes | 350 | 351 | +1, the orphan's index (§6) |
+   | functions | 296 | 260 | explained — see below |
+
+   The constraint gap is exactly 705, and the live database reports exactly **705 not-nullable columns
+   with 0 `pg_constraint` rows of type `n`**: PostgreSQL 17.6 does not catalogue NOT NULL as constraint
+   rows, while the newer engine PGlite embeds does. Every NOT NULL is present. The function gap is
+   extension placement — pgcrypto and citext install into `public` in PGlite and into `extensions` on
+   Supabase — plus the single orphan function in §6. **Nothing in the diff is a missing or altered
+   object.**
 3. **Deploy the application build** from this branch.
 4. **Verify the deployed build actually calls the scoped RPCs** — not merely that it built. Open the
    operator dashboard, properties, documents and search on the deployed URL and confirm they return
