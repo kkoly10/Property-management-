@@ -19,6 +19,9 @@ export default defineConfig({
     launchOptions: { executablePath: "/opt/pw-browsers/chromium" },
   },
   webServer: {
+    // The demo harness is not a production deployment. Saying so keeps the legal fail-closed gate
+    // honest: it stays strict everywhere that has not explicitly declared otherwise.
+    env: { CRECY_DEPLOYMENT_ENV: "test" },
     command: "npx next start -p 3100 -H 127.0.0.1",
     url: "http://127.0.0.1:3100/login",
     timeout: 120_000,

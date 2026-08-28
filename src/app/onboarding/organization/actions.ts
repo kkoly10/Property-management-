@@ -3,12 +3,43 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { organizationSchema } from "@/lib/validation/onboarding";
+import { resolveOrganizationConsent, requiresPublishedLegalDocuments } from "@/lib/legal/registry";
 import type { ActionState } from "@/lib/actions/state";
+import type { LegalJurisdiction } from "@/lib/legal/types";
 
 export async function createOrganizationAction(_previousState: ActionState, formData: FormData): Promise<ActionState> {
   const result = organizationSchema.safeParse(Object.fromEntries(formData));
   if (!result.success) {
     return { status: "error", message: "Check the highlighted fields.", fieldErrors: result.error.flatten().fieldErrors };
+  }
+
+  // The version sent to the command is DERIVED from the documents that were actually shown, not a
+  // literal. This previously sent `p_terms_version: "2026-07-20"` — a date with no corresponding
+  // artifact anywhere in the product, next to a checkbox that linked to nothing.
+  const consent = resolveOrganizationConsent({
+    jurisdiction: result.data.headquartersCountryCode as LegalJurisdiction,
+    requirePublished: requiresPublishedLegalDocuments(),
+  });
+  if (!consent.ok) {
+    // Fail closed. Recording consent against a document that is not published would be inventing
+    // evidence, which is worse than refusing to create the workspace (file 27 §5.A4).
+    const detail = consent.missing.join(", ");
+    return {
+      status: "error",
+      message: consent.reason === "LEGAL_DOCUMENT_NOT_PUBLISHED"
+        ? `Crecy cannot create a workspace until its binding legal documents are published (${detail}). This is a configuration gate, not a problem with your details.`
+        : `A required legal document is missing from this deployment (${detail}). Contact Crecy support.`,
+    };
+  }
+
+  // The exact versions the form displayed must be the ones being accepted. A mismatch means the page
+  // was rendered against a different build than the one handling this submission.
+  const displayed = formData.get("consentVersion");
+  if (typeof displayed === "string" && displayed && displayed !== consent.binding.version) {
+    return {
+      status: "error",
+      message: "The Terms or Privacy Notice changed while you were on this page. Reload and review the current version before continuing.",
+    };
   }
 
   try {
@@ -23,7 +54,7 @@ export async function createOrganizationAction(_previousState: ActionState, form
       p_headquarters_country_code: result.data.headquartersCountryCode,
       p_default_locale: result.data.defaultLocale,
       p_default_time_zone: result.data.defaultTimeZone,
-      p_terms_version: "2026-07-20",
+      p_terms_version: consent.binding.version,
       p_idempotency_key: result.data.idempotencyKey,
     });
 
