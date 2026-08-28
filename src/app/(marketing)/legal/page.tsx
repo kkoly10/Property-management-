@@ -1,20 +1,27 @@
 import Link from "next/link";
-import { Wordmark } from "@/components/brand/wordmark";
+import type { Metadata } from "next";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { listLegalDocuments } from "@/lib/legal/registry";
+import { marketingMetadata } from "@/lib/marketing/metadata";
 
 export const dynamic = "force-static";
 
-export const metadata = { title: "Legal documents · Crecy" };
+export const metadata: Metadata = marketingMetadata({
+  title: "Legal documents",
+  description:
+    "Every legal document Crecy has published, its version, its effective date and whether it is published or still a draft.",
+  path: "/legal",
+});
 
 /** The index of every legal artifact, with its version, effective date and publication state. */
 export default function LegalIndexPage() {
   const documents = listLegalDocuments();
   return (
-    <main className="mx-auto max-w-3xl px-5 py-12">
-      <Link href="/" className="inline-block"><Wordmark /></Link>
-      <h1 className="mt-8 text-3xl font-semibold tracking-[-0.035em]">Legal documents</h1>
+    // The public header and footer come from the marketing layout, so this renders content only — a
+    // nested <main> inside the layout's would be invalid, and a second wordmark would be a duplicate.
+    <div className="mx-auto max-w-3xl px-5 py-12 lg:py-16">
+      <h1 className="text-3xl font-semibold tracking-[-0.035em]">Legal documents</h1>
       <p className="mt-2 text-sm text-muted-foreground">
         Every version Crecy has published, and the state it is in. A document is only binding once it is
         published.
@@ -38,6 +45,6 @@ export default function LegalIndexPage() {
           </Card>
         ))}
       </div>
-    </main>
+    </div>
   );
 }

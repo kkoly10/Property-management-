@@ -1,15 +1,28 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { CircleAlert } from "lucide-react";
-import { Wordmark } from "@/components/brand/wordmark";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { findLegalDocumentByRoute, listLegalDocuments } from "@/lib/legal/registry";
+import { marketingMetadata } from "@/lib/marketing/metadata";
 
 export const dynamic = "force-static";
 
 export function generateStaticParams() {
   return listLegalDocuments().map((document) => ({ documentSlug: document.route.split("/").pop() as string }));
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ documentSlug: string }> }): Promise<Metadata> {
+  const { documentSlug } = await params;
+  const document = findLegalDocumentByRoute(`/legal/${documentSlug}`);
+  if (!document) return {};
+  return marketingMetadata({
+    title: document.title,
+    // The state belongs in the description: a draft that reads as binding is the exact failure the
+    // legal registry exists to prevent, and a search result is a place someone reads it out of context.
+    description: `Crecy ${document.title}, version ${document.version}, effective ${document.effectiveDate}. This version is ${document.state}.`,
+    path: document.route,
+  });
 }
 
 /**
@@ -26,10 +39,8 @@ export default async function LegalDocumentPage({ params }: { params: Promise<{ 
   const paragraphs = document.body.split("\n\n");
 
   return (
-    <main className="mx-auto max-w-3xl px-5 py-12">
-      <Link href="/legal" className="inline-block"><Wordmark /></Link>
-
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+    <div className="mx-auto max-w-3xl px-5 py-12 lg:py-16">
+      <div className="flex flex-wrap items-center gap-3">
         <Badge variant={document.state === "published" ? "success" : "warning"}>{document.state}</Badge>
         <span className="text-sm text-muted-foreground">
           Version {document.version} · effective {document.effectiveDate}
@@ -66,6 +77,6 @@ export default async function LegalDocumentPage({ params }: { params: Promise<{ 
       <p className="mt-10 break-all border-t pt-4 font-mono text-xs text-muted-foreground" data-testid="legal-content-hash">
         Content hash (SHA-256): {document.contentHash}
       </p>
-    </main>
+    </div>
   );
 }

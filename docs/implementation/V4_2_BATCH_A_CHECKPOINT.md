@@ -2,6 +2,11 @@
 
 > **Batch A.1 is reported separately below (§16).** Batch A's own record is preserved unchanged
 > above it, including every defect the adversarial review found, so the two can be judged apart.
+>
+> **Batch B is reported separately again**, in
+> [`V4_2_BATCH_B_REPORT.md`](./V4_2_BATCH_B_REPORT.md). This document is not rewritten to absorb it;
+> the two batches are judged on their own evidence. The only Batch A file Batch B touched is
+> `src/lib/supabase/proxy.ts`, and that change is described in full in the Batch B report §6.
 
 Reported in the fields file 27 §15 requires. **Nothing here is a claim that the product, the pilot or
 the launch is complete.** External gates are stated as gates, not converted into success.
@@ -81,8 +86,11 @@ does not exist on `main` and Batch A is not merged.
 
 ## 5. Public marketing pages passed
 
-**Not applicable — Batch B, not started.** The only public pages added here are `/legal` and
-`/legal/[documentSlug]`, which pass 7 browser tests.
+**As of Batch A: not applicable — Batch B not started.** The only public pages added in Batch A were
+`/legal` and `/legal/[documentSlug]`, which pass 7 browser tests.
+
+**Superseded by Batch B** — see [`V4_2_BATCH_B_REPORT.md`](./V4_2_BATCH_B_REPORT.md) §7. Left here
+unedited so the Batch A record stays readable as what was true when Batch A closed.
 
 ## 6. Legal documents
 
@@ -249,6 +257,9 @@ Mitigated by splitting it into its own migration whose header states the require
 ---
 
 ## The five states, reported separately
+
+*As of the close of Batch A. Batch B's position is reported in its own document; the "Public launch"
+row is the only one it moves.*
 
 | State | Status |
 | --- | --- |

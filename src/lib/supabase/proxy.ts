@@ -1,13 +1,21 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
-
-const protectedPrefixes = ["/app", "/home", "/maintenance", "/messages", "/onboarding", "/owner", "/payments", "/platform", "/receipts", "/settings"];
+import { isCacheablePublicPage, requiresSession } from "@/lib/marketing/navigation";
 
 export async function updateSession(request: NextRequest) {
   const config = getPublicSupabaseConfig();
 
   if (!config) {
+    return NextResponse.next({ request });
+  }
+
+  // Public marketing and legal pages are handled BEFORE the session client is created, and this
+  // ordering is a security requirement rather than an optimization. `createServerClient` below can
+  // rotate the session and write Set-Cookie onto the response; a shared cache that stored such a
+  // response would hand one visitor's session to the next. These pages are identical for every
+  // visitor and need no session, so the safe thing is to never touch one here.
+  if (isCacheablePublicPage(request.nextUrl.pathname)) {
     return NextResponse.next({ request });
   }
 
@@ -24,7 +32,7 @@ export async function updateSession(request: NextRequest) {
   });
 
   const { data, error } = await supabase.auth.getUser();
-  const isProtected = protectedPrefixes.some((prefix) => request.nextUrl.pathname.startsWith(prefix));
+  const isProtected = requiresSession(request.nextUrl.pathname);
 
   if (isProtected && (error || !data.user)) {
     const signInUrl = request.nextUrl.clone();
@@ -33,6 +41,8 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(signInUrl);
   }
 
+  // Anything still here has been through the session client and may carry a rotated cookie, so it is
+  // uncacheable without exception. Classification happened above; this is not a second decision.
   response.headers.set("Cache-Control", "private, no-store");
   return response;
 }
