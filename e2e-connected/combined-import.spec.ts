@@ -7,8 +7,10 @@ import { expect, test } from "@playwright/test";
  * commit — then assert the operator is told what was actually created. The DB postconditions (balanced
  * 1100/3900 journal, armed rent schedule) are asserted out of band after the run.
  *
- * Requires a seeded organization whose source document is a scanned-clean CSV; the malware scanner
- * does not exist in any environment yet, so `clean` is necessarily set out of band.
+ * Requires a seeded organization whose source document has been cleaned by the real scan lifecycle
+ * (finalize -> claim_document_scan_jobs -> complete_document_scan). Since v4.2 Batch A1 that lifecycle
+ * exists, so the source must be cleaned by running the scan worker against a configured scan relay —
+ * a manual upload_status edit is not a valid substitute (file 27 §5.A1).
  *
  * The fixture must be FRESH — a source whose units have not already been imported. Re-running against
  * a consumed source correctly fails validation with TENANCY_OVERLAP, because a unit cannot hold two

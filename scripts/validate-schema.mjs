@@ -57,6 +57,7 @@ const combinedImportSql = await readFile(resolve(root, "supabase/migrations/2026
 const residentBalanceImportSql = await readFile(resolve(root, "supabase/migrations/20260729110000_phase_3_resident_and_balance_imports.sql"), "utf8");
 const xlsxSourceDocumentsSql = await readFile(resolve(root, "supabase/migrations/20260729120000_phase_3_xlsx_source_documents.sql"), "utf8");
 const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/20260729130000_phase_4_secure_link_raw_token.sql"), "utf8");
+const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -136,7 +137,7 @@ async function validateAuthority() {
   await db.exec(rlsSql);
   const tableResult = await db.query(`select count(*)::integer as count from information_schema.tables where table_schema in ('public','private','audit','reporting')`);
   const policyResult = await db.query(`select count(*)::integer as count from pg_policies where schemaname in ('public','reporting')`);
-  assert(tableResult.rows[0].count === 76, "Authority schema table count changed unexpectedly.");
+  assert(tableResult.rows[0].count === 77, "Authority schema table count changed unexpectedly.");
   assert(policyResult.rows[0].count === 59, "Authority RLS policy count changed unexpectedly.");
 
   const admin = "d0000000-0000-4000-8000-000000000001";
@@ -813,6 +814,7 @@ async function validateRecurringCharges() {
   await db.exec(residentBalanceImportSql);
   await db.exec(xlsxSourceDocumentsSql);
   await db.exec(secureLinkRawTokenSql);
+  await db.exec(documentScanLifecycleSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -3699,24 +3701,195 @@ async function validateRecurringCharges() {
     "The overview did not deterministically report the current Growth trial over the historical canceled Starter.");
   await db.exec("reset role");
 
+  // ── Document malware-scan lifecycle (phase_2_document_scan_lifecycle, v4.2 Batch A1) ─────────────
+  // Before this slice finalize_document parked every version in 'quarantined' and nothing ever moved
+  // it, so the only way a document became usable was a manual SQL edit. File 27 §5.A1 forbids treating
+  // that as certification, so the clean version used by the delivery tests below is now produced by
+  // driving the real worker surface: finalize -> claim -> verdict.
+  const scanProperty = (await db.query(`select id from public.properties where organization_id='${organization.organizationId}' order by created_at limit 1`)).rows[0].id;
+  const scanCleanSha = "a".repeat(64);
+  const scanInfectedSha = "b".repeat(64);
+  const scanRetrySha = "c".repeat(64);
+  const scanStallSha = "d".repeat(64);
+
+  async function finalizeScannableDocument(title, filename, sha, key) {
+    await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+    const g = (await db.query(`select public.create_document_upload_grant('${organization.organizationId}','property','${scanProperty}','notice','${title.replace(/'/g, "''")}','${filename}','application/pdf',2048,'${key}-grant') as r`)).rows[0].r;
+    await db.exec("reset role; set role service_role");
+    const f = (await db.query(`select public.finalize_document('${admin}','${g.grantId}','${sha}','${key}-final') as r`)).rows[0].r;
+    return { grant: g, finalized: f };
+  }
+
+  const scanCleanDoc = await finalizeScannableDocument("Quiet hours notice", "notice.pdf", scanCleanSha, "scan-clean");
+  await db.exec("reset role");
+  const scanEnqueued = (await db.query(`select status, attempts, expected_sha256_hex, storage_bucket, storage_path, id
+    from private.document_scan_jobs where document_version_id='${scanCleanDoc.finalized.versionId}'`)).rows[0];
+  assert(scanEnqueued && scanEnqueued.status === "queued" && scanEnqueued.attempts === 0,
+    "finalize_document did not enqueue a queued scan job for the new version.");
+  assert(scanEnqueued.expected_sha256_hex === scanCleanSha
+    && scanEnqueued.storage_bucket === scanCleanDoc.grant.storageBucket
+    && scanEnqueued.storage_path === scanCleanDoc.grant.storagePath,
+    "The scan job did not bind the version's own bucket/path/digest.");
+  const scanVersionAtRest = (await db.query(`select upload_status from public.document_versions where id='${scanCleanDoc.finalized.versionId}'`)).rows[0].upload_status;
+  assert(scanVersionAtRest === "quarantined", "A newly finalized version did not stay quarantined.");
+
+  // (A1-2, first half) A quarantined version is unusable downstream — proven against a real gate.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.deliver_document('${organization.organizationId}','${scanCleanDoc.finalized.versionId}','resident_person','${invitedResidentPerson}','portal','scan-predeliver-01')`),
+    "DOCUMENT_NOT_DELIVERABLE",
+  );
+
+  // The worker surface is service_role only: a signed-in operator cannot self-serve a verdict.
+  await expectDatabaseError(() => db.query(`select public.claim_document_scan_jobs(10,'scan-run-forbidden')`), "permission denied for function claim_document_scan_jobs");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${scanCleanSha}','test-scanner','ref-1')`), "permission denied for function complete_document_scan");
+  await expectDatabaseError(() => db.query(`select public.fail_document_scan('${scanEnqueued.id}','X',true)`), "permission denied for function fail_document_scan");
+  await expectDatabaseError(() => db.query(`select public.requeue_stalled_document_scans(5)`), "permission denied for function requeue_stalled_document_scans");
+
+  await db.exec("reset role; set role service_role");
+  await expectDatabaseError(() => db.query(`select public.claim_document_scan_jobs(0,'scan-run-000001')`), "INVALID_SCAN_BATCH_SIZE");
+  await expectDatabaseError(() => db.query(`select public.claim_document_scan_jobs(10,'short')`), "INVALID_WORKER_RUN_ID");
+
+  const scanClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000001') as r`)).rows[0].r;
+  assert(scanClaim.claimed >= 1, "The scan worker claimed no due jobs.");
+  const scanCleanJob = scanClaim.jobs.find((j) => j.documentVersionId === scanCleanDoc.finalized.versionId);
+  assert(scanCleanJob && scanCleanJob.expectedSha256Hex === scanCleanSha && scanCleanJob.attempt === 1,
+    "The claimed job DTO did not carry the version's binding digest and attempt counter.");
+  await db.exec("reset role");
+  const scanClaimedState = (await db.query(`select
+    (select status from private.document_scan_jobs where id='${scanEnqueued.id}') as job_status,
+    (select upload_status from public.document_versions where id='${scanCleanDoc.finalized.versionId}') as version_status`)).rows[0];
+  assert(scanClaimedState.job_status === "scanning" && scanClaimedState.version_status === "scanning",
+    "Claiming a scan job did not advance BOTH the job and its version to 'scanning'.");
+  await db.exec("reset role; set role service_role");
+  const scanReclaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000002') as r`)).rows[0].r;
+  assert(!scanReclaim.jobs.some((j) => j.documentScanJobId === scanEnqueued.id),
+    "A second worker re-claimed a job that was already being scanned.");
+
+  // (A1-3) A verdict whose observed bytes do not match the bound digest cannot clean anything.
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${"9".repeat(64)}','test-scanner','ref-mismatch')`), "SCAN_TARGET_MISMATCH");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','maybe','${scanCleanSha}','test-scanner','ref-x')`), "INVALID_SCAN_VERDICT");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','not-a-digest','test-scanner','ref-x')`), "INVALID_CHECKSUM");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${scanCleanSha}',null,'ref-x')`), "SCAN_PROVIDER_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('e9000000-0000-4000-8000-0000000000fa','clean','${scanCleanSha}','test-scanner','ref-x')`), "DOCUMENT_SCAN_JOB_NOT_FOUND");
+  await db.exec("reset role");
+  const scanAfterMismatch = (await db.query(`select upload_status from public.document_versions where id='${scanCleanDoc.finalized.versionId}'`)).rows[0].upload_status;
+  assert(scanAfterMismatch === "scanning", "A rejected verdict still moved the version out of 'scanning'.");
+
+  // (A1-1) The one path that produces a usable document.
+  await db.exec("reset role; set role service_role");
+  const scanCleanResult = (await db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${scanCleanSha}','test-scanner','ref-clean-1') as r`)).rows[0].r;
+  assert(scanCleanResult.verdict === "clean" && scanCleanResult.uploadStatus === "clean" && scanCleanResult.duplicate === false,
+    "A clean verdict did not clean the version.");
+  const scanCleanReplay = (await db.query(`select public.complete_document_scan('${scanEnqueued.id}','clean','${scanCleanSha}','test-scanner','ref-clean-1') as r`)).rows[0].r;
+  assert(scanCleanReplay.duplicate === true && scanCleanReplay.verdict === "clean", "Replaying a completed scan was not idempotent.");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanEnqueued.id}','infected','${scanCleanSha}','test-scanner','ref-clean-1')`), "SCAN_VERDICT_CONFLICT");
+  await db.exec("reset role");
+  const scanCleanedVersion = (await db.query(`select upload_status, malware_scan_provider, malware_scan_reference, rejected_reason, malware_scanned_at is not null as scanned
+    from public.document_versions where id='${scanCleanDoc.finalized.versionId}'`)).rows[0];
+  assert(scanCleanedVersion.upload_status === "clean" && scanCleanedVersion.malware_scan_provider === "test-scanner"
+    && scanCleanedVersion.malware_scan_reference === "ref-clean-1" && scanCleanedVersion.rejected_reason === null && scanCleanedVersion.scanned,
+    "The cleaned version did not record its provider receipt.");
+  const scanCleanTraces = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where action_code='document.scanned' and resource_id='${scanCleanDoc.finalized.versionId}') as audits,
+    (select count(*)::integer from private.outbox_events where event_type='document.scanned' and aggregate_id='${scanCleanDoc.finalized.versionId}') as events`)).rows[0];
+  assert(scanCleanTraces.audits === 1 && scanCleanTraces.events === 1, "A scan verdict did not write exactly one audit and one outbox trace.");
+
+  // (A1-2) An infected verdict rejects the version, and downstream use stays blocked forever.
+  const scanInfectedDoc = await finalizeScannableDocument("Infected notice", "infected.pdf", scanInfectedSha, "scan-infect");
+  await db.exec("reset role; set role service_role");
+  const scanInfectedClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000003') as r`)).rows[0].r;
+  const scanInfectedJob = scanInfectedClaim.jobs.find((j) => j.documentVersionId === scanInfectedDoc.finalized.versionId);
+  assert(scanInfectedJob, "The infected fixture's job was not claimable.");
+  // A verdict carrying ANOTHER version's (valid) digest must not be accepted against this job.
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanInfectedJob.documentScanJobId}','clean','${scanCleanSha}','test-scanner','ref-crossver')`), "SCAN_TARGET_MISMATCH");
+  const scanInfectedResult = (await db.query(`select public.complete_document_scan('${scanInfectedJob.documentScanJobId}','infected','${scanInfectedSha}','test-scanner','ref-eicar-1') as r`)).rows[0].r;
+  assert(scanInfectedResult.uploadStatus === "rejected", "An infected verdict did not reject the version.");
+  await db.exec("reset role");
+  const scanRejectedVersion = (await db.query(`select upload_status, rejected_reason from public.document_versions where id='${scanInfectedDoc.finalized.versionId}'`)).rows[0];
+  assert(scanRejectedVersion.upload_status === "rejected" && scanRejectedVersion.rejected_reason === "MALWARE_DETECTED:ref-eicar-1",
+    "The rejected version did not record why it was rejected.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.deliver_document('${organization.organizationId}','${scanInfectedDoc.finalized.versionId}','resident_person','${invitedResidentPerson}','portal','scan-infect-deliv1')`),
+    "DOCUMENT_NOT_DELIVERABLE",
+  );
+  // A rejected version can never be talked back into 'clean', even by a fresh job on the same row.
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set status='scanning', verdict=null, completed_at=null where id='${scanInfectedJob.documentScanJobId}'`);
+  await db.exec("set role service_role");
+  await expectDatabaseError(() => db.query(`select public.complete_document_scan('${scanInfectedJob.documentScanJobId}','clean','${scanInfectedSha}','test-scanner','ref-resurrect')`), "DOCUMENT_VERSION_NOT_SCANNABLE");
+
+  // A failed scan ATTEMPT is not a verdict: the version falls back to quarantined, never to clean.
+  const scanRetryDoc = await finalizeScannableDocument("Flaky notice", "flaky.pdf", scanRetrySha, "scan-retry0");
+  await db.exec("reset role; set role service_role");
+  const scanRetryClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000004') as r`)).rows[0].r;
+  const scanRetryJob = scanRetryClaim.jobs.find((j) => j.documentVersionId === scanRetryDoc.finalized.versionId);
+  const scanRetryFail = (await db.query(`select public.fail_document_scan('${scanRetryJob.documentScanJobId}','SCANNER_TIMEOUT',true) as r`)).rows[0].r;
+  assert(scanRetryFail.status === "queued", "A retryable scan failure did not return the job to the queue.");
+  await db.exec("reset role");
+  const scanRetryState = (await db.query(`select
+    (select upload_status from public.document_versions where id='${scanRetryDoc.finalized.versionId}') as version_status,
+    (select available_at > now() from private.document_scan_jobs where id='${scanRetryJob.documentScanJobId}') as backed_off,
+    (select attempts from private.document_scan_jobs where id='${scanRetryJob.documentScanJobId}') as attempts`)).rows[0];
+  assert(scanRetryState.version_status === "quarantined" && scanRetryState.backed_off === true && scanRetryState.attempts === 1,
+    "A failed scan attempt did not quarantine the version behind a backoff.");
+  // Exhausting the retry budget dead-letters the job — and STILL leaves the document unusable.
+  await db.exec(`update private.document_scan_jobs set attempts=max_attempts-1, available_at=now()-interval '1 minute' where id='${scanRetryJob.documentScanJobId}'`);
+  await db.exec("set role service_role");
+  const scanRetryClaim2 = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000005') as r`)).rows[0].r;
+  assert(scanRetryClaim2.jobs.some((j) => j.documentScanJobId === scanRetryJob.documentScanJobId), "The backed-off job did not become due again.");
+  const scanDead = (await db.query(`select public.fail_document_scan('${scanRetryJob.documentScanJobId}','SCANNER_UNAVAILABLE',true) as r`)).rows[0].r;
+  assert(scanDead.status === "dead_letter", "An exhausted scan job did not dead-letter.");
+  const scanDeadReplay = (await db.query(`select public.fail_document_scan('${scanRetryJob.documentScanJobId}','SCANNER_UNAVAILABLE',true) as r`)).rows[0].r;
+  assert(scanDeadReplay.duplicate === true, "Re-failing a dead-lettered scan job was not idempotent.");
+  await db.exec("reset role");
+  const scanDeadState = (await db.query(`select
+    (select upload_status from public.document_versions where id='${scanRetryDoc.finalized.versionId}') as version_status,
+    (select count(*)::integer from audit.audit_events where action_code='document.scanDeadLettered' and resource_id='${scanRetryDoc.finalized.versionId}') as audits`)).rows[0];
+  assert(scanDeadState.version_status === "quarantined" && scanDeadState.audits === 1,
+    "A dead-lettered scan left the version usable or wrote no incident audit.");
+
+  // A worker that dies mid-scan must not strand its document in 'scanning' forever.
+  const scanStallDoc = await finalizeScannableDocument("Stalled notice", "stalled.pdf", scanStallSha, "scan-stall0");
+  await db.exec("reset role; set role service_role");
+  const scanStallClaim = (await db.query(`select public.claim_document_scan_jobs(10,'scan-run-000006') as r`)).rows[0].r;
+  const scanStallJob = scanStallClaim.jobs.find((j) => j.documentVersionId === scanStallDoc.finalized.versionId);
+  await expectDatabaseError(() => db.query(`select public.requeue_stalled_document_scans(0)`), "INVALID_STALL_WINDOW");
+  const scanNoStall = (await db.query(`select public.requeue_stalled_document_scans(30) as r`)).rows[0].r;
+  assert(scanNoStall.requeued === 0, "The stall sweep requeued a freshly claimed job.");
+  await db.exec("reset role");
+  await db.exec(`update private.document_scan_jobs set claimed_at=now()-interval '2 hours' where id='${scanStallJob.documentScanJobId}'`);
+  await db.exec("set role service_role");
+  const scanSwept = (await db.query(`select public.requeue_stalled_document_scans(30) as r`)).rows[0].r;
+  assert(scanSwept.requeued === 1 && scanSwept.deadLettered === 0, "The stall sweep did not requeue the abandoned scan.");
+  await db.exec("reset role");
+  const scanSweptState = (await db.query(`select
+    (select status from private.document_scan_jobs where id='${scanStallJob.documentScanJobId}') as job_status,
+    (select upload_status from public.document_versions where id='${scanStallDoc.finalized.versionId}') as version_status`)).rows[0];
+  assert(scanSweptState.job_status === "queued" && scanSweptState.version_status === "quarantined",
+    "The stall sweep left the job or its version in 'scanning'.");
+
+  const scanLifecycle = {
+    enqueued: (await db.query(`select count(*)::integer as c from private.document_scan_jobs where organization_id='${organization.organizationId}'`)).rows[0].c,
+    cleanedByWorker: scanCleanDoc.finalized.versionId,
+    rejectedByWorker: scanInfectedDoc.finalized.versionId,
+    deadLettered: 1,
+    stallSwept: 1,
+  };
+
   // Document delivery & acknowledgement (phase_2_document_delivery). Operator delivers a finalized,
   // clean document version to a portal recipient identified by their active user_relationship; the
   // recipient records an append-only acknowledgement. Covers RLS isolation, replay, and the per-type
   // acknowledgement guard.
-  const deliveryDoc = "e9000000-0000-4000-8000-0000000000d1";
-  const deliveryVersion = "e9000000-0000-4000-8000-0000000000d2";
-  const deliveryQuarantineDoc = "e9000000-0000-4000-8000-0000000000d5";
-  const deliveryQuarantineVersion = "e9000000-0000-4000-8000-0000000000d6";
+  // The delivered document is the one the SCAN WORKER cleaned above, not a hand-written 'clean' row:
+  // file 27 §5.A1 forbids a manual upload_status edit standing in for the lifecycle.
+  const deliveryDoc = scanCleanDoc.finalized.documentId;
+  const deliveryVersion = scanCleanDoc.finalized.versionId;
+  const deliveryQuarantineDoc = scanInfectedDoc.finalized.documentId;
+  const deliveryQuarantineVersion = scanInfectedDoc.finalized.versionId;
   const deliveryOutsider = "e9000000-0000-4000-8000-0000000000d4";
-  await db.exec(`reset role;
-    insert into auth.users(id) values ('${deliveryOutsider}');
-    insert into public.documents(id,organization_id,property_id,document_type,title,source,status,created_by)
-      select '${deliveryDoc}','${organization.organizationId}',p.id,'notice','Quiet hours notice','operator_supplied','active','${admin}' from public.properties p where p.organization_id='${organization.organizationId}' limit 1;
-    insert into public.documents(id,organization_id,property_id,document_type,title,source,status,created_by)
-      select '${deliveryQuarantineDoc}','${organization.organizationId}',p.id,'notice','Unscanned notice','operator_supplied','active','${admin}' from public.properties p where p.organization_id='${organization.organizationId}' limit 1;
-    insert into public.document_versions(id,organization_id,document_id,version_number,storage_bucket,storage_path,mime_type,size_bytes,sha256_hex,original_filename,uploaded_by,upload_status) values
-      ('${deliveryVersion}','${organization.organizationId}','${deliveryDoc}',1,'documents','org/notice-v1.pdf','application/pdf',2048,'${"a".repeat(64)}','notice.pdf','${admin}','clean'),
-      ('${deliveryQuarantineVersion}','${organization.organizationId}','${deliveryQuarantineDoc}',1,'documents','org/notice-q.pdf','application/pdf',2048,'${"b".repeat(64)}','notice-q.pdf','${admin}','quarantined');`);
+  await db.exec(`reset role; insert into auth.users(id) values ('${deliveryOutsider}');`);
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
   await expectDatabaseError(() => db.query(`select public.deliver_document('${organization.organizationId}','${deliveryVersion}','resident_person','${invitedResidentPerson}','carrier_pigeon','doc-deliver-badchan-1')`), "UNSUPPORTED_DELIVERY_CHANNEL");
@@ -4348,7 +4521,8 @@ async function validateRecurringCharges() {
   // bearer credential for this anon-callable command.
   await expectDatabaseError(() => db.query(`select public.redeem_document_secure_link('${expectedHash}')`), "SECURE_LINK_NOT_REDEEMABLE");
   const redeemed = (await db.query(`select public.redeem_document_secure_link('${secureTokenRaw}') as r`)).rows[0].r;
-  assert(redeemed.storageBucket === "documents" && redeemed.storagePath && redeemed.documentTitle === "Quiet hours notice",
+  assert(redeemed.storageBucket === scanCleanDoc.grant.storageBucket && redeemed.storagePath === scanCleanDoc.grant.storagePath
+    && redeemed.documentTitle === "Quiet hours notice",
     "Redeeming a secure link did not return the document's storage coordinates.");
   assert(!Object.keys(redeemed).some((k) => /token|recipient|email|user/i.test(k)), "The secure-link DTO leaked a token or recipient identity.");
   await db.exec("reset role");
@@ -4385,7 +4559,7 @@ async function validateRecurringCharges() {
   await db.exec("reset role");
 
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept };
 }
 
 try {
