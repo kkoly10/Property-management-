@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { CircleAlert } from "lucide-react";
@@ -26,6 +27,28 @@ export async function generateMetadata({ params }: { params: Promise<{ documentS
 }
 
 /**
+ * Inline emphasis inside a legal paragraph.
+ *
+ * The body is authored in markdown and the block renderer below handles headings and lists, but not
+ * `**bold**` — so every emphasized span rendered as literal asterisks on the public page, including the
+ * "Status: DRAFT — not binding until published" line on both documents, where the emphasis is doing the
+ * most work.
+ *
+ * This builds React elements rather than injecting HTML, so nothing in a document body can become
+ * markup. It also does not touch `document.body`, which is what the content hash covers — rendering is
+ * a display concern and consent evidence must stay bound to the source text.
+ */
+function renderInline(text: string, key: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) =>
+    part.startsWith("**") && part.endsWith("**") && part.length > 4 ? (
+      <strong key={`${key}-i${index}`} className="font-semibold">{part.slice(2, -2)}</strong>
+    ) : (
+      part
+    ),
+  );
+}
+
+/**
  * The canonical public route for one legal artifact.
  *
  * This is what makes consent evidence point at something real: the version and content hash shown here
@@ -40,7 +63,14 @@ export default async function LegalDocumentPage({ params }: { params: Promise<{ 
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-12 lg:py-16">
-      <div className="flex flex-wrap items-center gap-3">
+      {/* Moving this page into the marketing shell replaced its wordmark, which used to link back to the
+          index. The header now goes to the homepage instead, so the way back to the other documents was
+          only in the footer — restore the direct route. */}
+      <Link href="/legal" className="text-sm font-medium text-muted-foreground hover:text-foreground">
+        &larr; All legal documents
+      </Link>
+
+      <div className="mt-8 flex flex-wrap items-center gap-3">
         <Badge variant={document.state === "published" ? "success" : "warning"}>{document.state}</Badge>
         <span className="text-sm text-muted-foreground">
           Version {document.version} · effective {document.effectiveDate}
@@ -66,11 +96,13 @@ export default async function LegalDocumentPage({ params }: { params: Promise<{ 
           if (block.startsWith("- ")) {
             return (
               <ul key={key} className="list-disc space-y-2 pl-5">
-                {block.split("\n").map((line, lineIndex) => <li key={`${key}-${lineIndex}`}>{line.replace(/^-\s*/, "")}</li>)}
+                {block.split("\n").map((line, lineIndex) => (
+                  <li key={`${key}-${lineIndex}`}>{renderInline(line.replace(/^-\s*/, ""), `${key}-${lineIndex}`)}</li>
+                ))}
               </ul>
             );
           }
-          return <p key={key}>{block}</p>;
+          return <p key={key}>{renderInline(block, key)}</p>;
         })}
       </article>
 

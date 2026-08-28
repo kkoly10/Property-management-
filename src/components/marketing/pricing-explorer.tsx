@@ -147,7 +147,16 @@ export function PricingExplorer() {
       <p className="mt-6 text-sm text-muted-foreground sm:hidden" aria-hidden="true">
         Scroll the table sideways to compare all four plans.
       </p>
-      <div className="mt-4 overflow-x-auto rounded-xl border sm:mt-8">
+      {/* A scrollable region must be reachable by keyboard (WCAG 2.1.1). Without tabIndex a keyboard-only
+          visitor cannot scroll this table at all, and on a phone it is the only way to see the Growth and
+          Pro columns — so the plan comparison would be unreadable for them on the page that decides
+          whether someone buys. role + label make it announce itself rather than being an unnamed stop. */}
+      <div
+        role="region"
+        aria-label="Plan feature comparison, scrollable"
+        tabIndex={0}
+        className="mt-4 overflow-x-auto rounded-xl border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:mt-8"
+      >
         <table className="w-full min-w-[44rem] border-collapse text-sm">
           <caption className="sr-only">Feature comparison across the Free, Starter, Growth and Pro plans</caption>
           <thead>

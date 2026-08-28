@@ -168,6 +168,11 @@ test.describe("pricing", () => {
     await page.goto("/pricing");
     const wrapper = page.locator("table").locator("xpath=..");
     await expect(wrapper).toHaveCSS("overflow-x", "auto");
+    // A scroll container that only a mouse or a touch can move is unusable by keyboard (WCAG 2.1.1),
+    // and on a phone scrolling it is the only way to see the Growth and Pro columns at all.
+    await expect(wrapper).toHaveAttribute("tabindex", "0");
+    await wrapper.focus();
+    await expect(wrapper).toBeFocused();
     await assertNoHorizontalOverflow(page, "/pricing (phone, comparison table)");
   });
 });

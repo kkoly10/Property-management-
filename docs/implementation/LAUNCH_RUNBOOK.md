@@ -15,7 +15,8 @@ so and names what is missing rather than describing a workaround.
 | Branch | `claude/mvp-progress-assessment-axvajc`, PR #35 (draft) |
 | Gate | `npm run check` green |
 | Deployed | **Nothing.** No Crecy build has been deployed anywhere. |
-| Supabase | The project is **paused**. Every migration call times out until it is restored. |
+| Supabase | **`Property` / `alrirkvfcmhqumqaidxj`** — restored and `ACTIVE_HEALTHY`. Schema present, **no data**: 0 auth users, 0 organizations, 0 journal entries. |
+| Migrations | **26 of the repo's 60 are unapplied.** The database is at 2026-07-25. |
 | Providers | Scan relay, mail relay and Stripe Connect are all unconfigured. |
 
 ---
@@ -66,10 +67,13 @@ Every migration in `supabase/migrations/` is additive and safe to apply at any t
 still calls with no arguments. Applying it before the compatible build is live takes operator screens
 down with `permission denied`.
 
-1. **Restore the Supabase project.** It is paused; nothing below works until it is running.
-2. **Expand.** Apply everything in `supabase/migrations/` in timestamp order. 60 files; the live
-   project was last seen at 52, so the Batch A and A.1 migrations are the delta. Additive — the
-   currently deployed code is unaffected.
+1. **Restore the Supabase project** if it has auto-paused again. Free-tier organizations allow only
+   **2 active projects** and `couranr-market` (a different product, with real users) occupies one, so
+   restoring Crecy may require pausing the empty `Property-management` project first.
+2. **Expand.** Apply the 26 unapplied files from `supabase/migrations/` in timestamp order. The
+   database is at `20260725020649`; everything from `20260725090000` onward is missing — relationship
+   invitations, maintenance cost, receivable write-off, the platform control plane, document delivery,
+   every import leg, the notification worker, and all of Batch A and A.1. All additive.
 3. **Deploy the application build** from this branch.
 4. **Verify the deployed build actually calls the scoped RPCs** — not merely that it built. Open the
    operator dashboard, properties, documents and search on the deployed URL and confirm they return
@@ -133,12 +137,27 @@ invariant turns out to have no protection.
 
 ---
 
-## 6. Launch blockers, in the order they block
+## 6. Known database drift
 
-1. **Supabase project is paused.** Nothing else can proceed.
-2. **Legal documents are drafts.** No production organization can be created.
-3. **`CRON_SECRET` is unset.** No rent generates, no mail sends, no document is ever scanned.
-4. **Scan relay unconfigured.** Every uploaded document stays quarantined and unusable.
-5. **Mail relay unconfigured.** Invitations never arrive, so no resident or owner can be onboarded.
-6. **Stripe unconfigured.** Online payments unavailable; manual recording still works, so this is the
-   only one of the six a pilot could survive without.
+`supabase_migrations.schema_migrations` records **`20260725020649_phase_8_payment_csv_export`**, which
+exists on no branch of record — it was added by `e8ad10c` on `origin/codex/phase-8-payment-csv-export`,
+which never merged, and applied to the database anyway. The live schema therefore carries
+`public.get_operator_payment_export`, a function the shipped codebase never calls.
+
+It is harmless — an orphan with no caller — and it is left in place deliberately: removing it is a
+contraction, and contractions get the ordering discipline in §2 rather than a convenient drop. It is
+recorded here so the next person who diffs the schema against the repo is not surprised by it.
+
+---
+
+## 7. Launch blockers, in the order they block
+
+1. **Legal documents are drafts.** No production organization can be created.
+2. **`CRON_SECRET` is unset.** No rent generates, no mail sends, no document is ever scanned.
+3. **Scan relay unconfigured.** Every uploaded document stays quarantined and unusable.
+4. **Mail relay unconfigured.** Invitations never arrive, so no resident or owner can be onboarded.
+5. **Stripe unconfigured.** Online payments unavailable; manual recording still works, so this is the
+   only one of the five a pilot could survive without.
+
+There is also **no seeded operator** on the database — 0 auth users — so the connected E2E suite has
+nothing to sign in as until one is created.
