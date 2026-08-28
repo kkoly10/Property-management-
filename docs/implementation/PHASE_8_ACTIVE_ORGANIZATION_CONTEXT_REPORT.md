@@ -35,7 +35,7 @@ chevron, no handler, no menu.
 | Gate | `private.has_active_organization_membership`, `private.enter_organization_context` |
 | Narrowed helpers | `has_property_access`, `has_org_permission`, `has_unscoped_org_permission` |
 | Scoped surfaces | 20 organization-scoped RPC overloads |
-| Closed surfaces | `EXECUTE` revoked from `authenticated` on 11 unscoped **collection** RPCs |
+| Closed surfaces | `supabase/migrations/20260828130000_phase_8_close_unscoped_operator_surfaces.sql` — `EXECUTE` revoked from `authenticated` on 11 unscoped **collection** RPCs |
 | Reproduced | `get_operator_global_search(uuid,text,integer)` |
 | Context | `src/lib/organization/context.ts`, `actions.ts` |
 | UI | `src/components/app/organization-switcher.tsx`, `organization-context-notice.tsx` |
@@ -81,6 +81,24 @@ one organization, so they cannot mix tenants; RLS already decides whether the ca
 earlier draft of this slice revoked them too, which broke a real capability — a resident inspecting
 their own payment's settlement history has no operator organization to supply. Their scoped overloads
 exist for operator callers, which additionally pins the context.
+
+## Deployment ordering — the one migration in this project that is not deploy-safe
+
+Every migration Crecy has shipped is additive and can be applied out of band ahead of a deploy. The
+revocations are not, and the split exists so that cannot be missed.
+
+The live Supabase project currently runs the code on `main`, whose fetchers call
+`get_operator_maintenance_workspace()` and friends **with no arguments**. Applying the revocations
+before that code is replaced would break the operator dashboard, maintenance queue, payments, vendors
+and search with `permission denied`. Verified against the deployed source, not assumed.
+
+So:
+
+1. `20260828120000_…_active_organization_context.sql` is **additive** — new scoped forms, and helpers
+   that narrow only when a context is set, which nothing does until the new code runs. Safe to apply
+   any time.
+2. Deploy the code.
+3. **Then** apply `20260828130000_…_close_unscoped_operator_surfaces.sql`.
 
 ## The app-layer rules
 

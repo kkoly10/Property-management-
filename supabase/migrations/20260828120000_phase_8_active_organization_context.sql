@@ -531,34 +531,16 @@ $$;
 revoke all on function public.get_owner_statement_detail(uuid,uuid) from public,anon;
 grant execute on function public.get_owner_statement_detail(uuid,uuid) to authenticated;
 
--- ── Close the unscoped operator surfaces ──────────────────────────────────────────────────────
--- A fetcher must not be ABLE to go unscoped. Revoking EXECUTE from `authenticated` on the unscoped form
--- turns "someone forgot to pass the organization" from a silent cross-tenant read into a permission
--- error. test:db asserts this revocation holds.
+-- ── Closing the unscoped operator surfaces happens in a SEPARATE migration ──────────────────────
+-- Everything above is ADDITIVE: it adds new organization-scoped forms and narrows helpers only when a
+-- context is set, which nothing does until the new code ships. This migration is therefore safe to
+-- apply ahead of a deploy, like every other migration in this project.
 --
--- The line is drawn at what can actually MIX TENANTS. These are the collection surfaces: they take no
--- resource and return every row the caller can see, so without an organization they union across every
--- organization the operator belongs to. That is the defect.
---
--- Deliberately NOT revoked:
---   * resource-id surfaces (get_payment_detail, get_import_job_detail, get_conversation_detail, ...).
---     They return ONE resource that belongs to exactly one organization, so they cannot mix tenants;
---     RLS already decides whether the caller may see it. Residents and owners legitimately call several
---     of them for their own records and have no operator organization to supply. Their scoped overloads
---     exist for operator callers, which additionally pins the context.
---   * get_conversation_workspace and get_privacy_request_workspace, which serve the resident and owner
---     portals as well as operators.
-
-revoke execute on function public.get_operator_announcement_workspace() from authenticated;
-revoke execute on function public.get_operator_maintenance_workspace() from authenticated;
-revoke execute on function public.get_operator_vendor_directory() from authenticated;
-revoke execute on function public.get_operator_owner_statement_workspace() from authenticated;
-revoke execute on function public.get_operator_owner_approval_workspace() from authenticated;
-revoke execute on function public.get_operator_payment_summary() from authenticated;
-revoke execute on function public.get_operator_receivables_summary() from authenticated;
-revoke execute on function public.get_settlement_reconciliation_workspace() from authenticated;
-revoke execute on function public.get_manual_payment_options() from authenticated;
-revoke execute on function public.get_payment_connection_settings() from authenticated;
+-- Revoking EXECUTE on the unscoped forms is NOT safe ahead of a deploy: the currently deployed code
+-- calls them with no arguments, so revoking first would break the operator surfaces with
+-- "permission denied" until the new build went live. That step lives in
+-- 20260828130000_phase_8_close_unscoped_operator_surfaces.sql and must be applied AFTER the code that
+-- uses the scoped forms is deployed.
 
 -- ── Global search: the one surface that could not be steered at all ────────────────────────
 -- get_operator_global_search had NO organization parameter and resolved one internally with
@@ -827,6 +809,5 @@ end;
 $$;
 revoke all on function public.get_operator_global_search(uuid,text,integer) from public,anon;
 grant execute on function public.get_operator_global_search(uuid,text,integer) to authenticated;
-revoke execute on function public.get_operator_global_search(text,integer) from authenticated;
 
 commit;

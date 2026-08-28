@@ -60,6 +60,7 @@ const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
+const closeUnscopedOperatorSurfacesSql = await readFile(resolve(root, "supabase/migrations/20260828130000_phase_8_close_unscoped_operator_surfaces.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -821,6 +822,7 @@ async function validateRecurringCharges() {
   await db.exec(documentScanLifecycleSql);
   await db.exec(runtimeSchedulerSql);
   await db.exec(activeOrganizationContextSql);
+  await db.exec(closeUnscopedOperatorSurfacesSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
