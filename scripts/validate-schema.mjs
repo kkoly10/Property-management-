@@ -59,6 +59,7 @@ const xlsxSourceDocumentsSql = await readFile(resolve(root, "supabase/migrations
 const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/20260729130000_phase_4_secure_link_raw_token.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
+const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -606,6 +607,8 @@ async function validateImports() {
   const orgB = orgBResult.rows[0].result.organizationId;
   const invisibleJobs = await db.query(`select count(*)::integer as count from public.import_jobs where organization_id='${orgA}'`);
   assert(invisibleJobs.rows[0].count === 0, "Import-job RLS exposed another organization's jobs.");
+  // validateImports replays only through the imports migration, so the unscoped form still exists here.
+  // The organization-scoped form is exercised in validateRecurringCharges, which replays the whole chain.
   await expectDatabaseError(() => db.query(`select public.get_import_job_detail('${importJob}')`), "IMPORT_NOT_FOUND");
 
   await db.exec("reset role");
@@ -817,6 +820,7 @@ async function validateRecurringCharges() {
   await db.exec(secureLinkRawTokenSql);
   await db.exec(documentScanLifecycleSql);
   await db.exec(runtimeSchedulerSql);
+  await db.exec(activeOrganizationContextSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -854,7 +858,7 @@ async function validateRecurringCharges() {
   ) as result`)).rows[0].result;
   assert(providerReplay.providerConnectionId === providerConnection.providerConnectionId && providerReplay.url === stripeLinkUrl, "Stripe onboarding replay did not return the canonical response.");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
-  const paymentSettings = (await db.query("select public.get_payment_connection_settings() as result")).rows[0].result;
+  const paymentSettings = (await db.query(`select public.get_payment_connection_settings('${organization.organizationId}') as result`)).rows[0].result;
   assert(paymentSettings.authenticatorLevel === "aal2" && paymentSettings.items.length === 1 && paymentSettings.items[0].status === "requirements_due", "Payment settings did not expose the MFA-gated provider state.");
   await expectDatabaseError(() => db.query(`insert into public.provider_connections(
     organization_id,operating_entity_id,provider_code,provider_account_id,account_configuration,dashboard_access,fees_payer,losses_collector,status
@@ -863,8 +867,13 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query(`select public.prepare_stripe_onboarding_link(
     '${organization.organizationId}','${entity.operatingEntityId}','${returnUrl}','${refreshUrl}','stripe-outsider-0001'
   )`), "ORGANIZATION_SCOPE_DENIED");
-  const outsiderPaymentSettings = (await db.query("select public.get_payment_connection_settings() as result")).rows[0].result;
-  assert(outsiderPaymentSettings.items.length === 0, "Provider connection settings leaked to an unrelated user.");
+  // Since v4.2 A3 the operator surfaces are organization-scoped, so an unrelated user is refused BEFORE
+  // any row is read rather than being handed a convincingly empty workspace.
+  await expectDatabaseError(
+    () => db.query(`select public.get_payment_connection_settings('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  await expectDatabaseError(() => db.query("select public.get_payment_connection_settings()"), "permission denied for function get_payment_connection_settings");
   await db.exec("reset role");
   const providerTraces = (await db.query(`select
     (select count(*)::integer from public.provider_connections where id='${providerConnection.providerConnectionId}') as connections,
@@ -1062,7 +1071,7 @@ async function validateRecurringCharges() {
   const outsiderMaintenance = (await db.query("select public.get_resident_maintenance_workspace() as result")).rows[0].result;
   assert(outsiderMaintenance.items.length === 0 && outsiderMaintenance.tenancies.length === 0, "Maintenance data leaked to an unrelated user.");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const operatorMaintenance = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const operatorMaintenance = (await db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(operatorMaintenance.summary.open === 1 && operatorMaintenance.summary.untriaged === 1 && operatorMaintenance.items[0].officialPriority === "medium", "Operator maintenance intake queue is incomplete.");
 
   const ownerEntityA = "cb000000-0000-4000-8000-000000000011";
@@ -1360,7 +1369,7 @@ async function validateRecurringCharges() {
     '${canceledAnnouncement.announcementId}',1,'announcement-cancel-0001'
   ) as result`)).rows[0].result;
   assert(canceledResult.status === "canceled" && canceledReplay.version === canceledResult.version, "Draft cancellation was not state-checked and idempotent.");
-  const operatorAnnouncements = (await db.query("select public.get_operator_announcement_workspace() as result")).rows[0].result;
+  const operatorAnnouncements = (await db.query(`select public.get_operator_announcement_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(
     operatorAnnouncements.items.length === 3
       && operatorAnnouncements.properties.length === 1
@@ -1902,7 +1911,7 @@ async function validateRecurringCharges() {
     set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}';
   `);
   await expectDatabaseError(() => db.query(`select public.create_vendor('${organization.organizationId}','Rogue Vendor',null,null,'vendor-scoped-0001')`), "ORGANIZATION_SCOPE_DENIED");
-  const scopedDirectory = (await db.query("select public.get_operator_vendor_directory() as result")).rows[0].result;
+  const scopedDirectory = (await db.query(`select public.get_operator_vendor_directory('${organization.organizationId}') as result`)).rows[0].result;
   assert(scopedDirectory.length === 0, "A property-scoped coordinator unexpectedly saw the unscoped vendor directory.");
 
   const workOrder = (await db.query(`select public.create_and_assign_work_order(
@@ -1918,7 +1927,7 @@ async function validateRecurringCharges() {
   await expectDatabaseError(() => db.query(`select public.create_and_assign_work_order(
     '${organization.organizationId}','${maintenance.maintenanceRequestId}',null,'Duplicate attempt.',null,null,null,null,false,null,'work-order-duplicate-0001'
   )`), "WORK_ORDER_ALREADY_EXISTS");
-  const operatorAfterTriage = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const operatorAfterTriage = (await db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(operatorAfterTriage.items[0].officialPriority === "high" && operatorAfterTriage.items[0].workOrder.workOrderId === workOrder.workOrderId && operatorAfterTriage.items[0].workOrder.vendorName === "Ready Fix Plumbing", "Operator workspace did not project the assigned work order.");
   const scopedVendorRead = (await db.query("select count(*)::integer as count from public.vendors")).rows[0].count;
   assert(scopedVendorRead === 1, "Property-scoped coordinator could not read the vendor already tied to their own work order.");
@@ -1998,9 +2007,9 @@ async function validateRecurringCharges() {
   assert(approvedClosed.status === "closed" && approvedClosed.version === 7, "The fully approved work order could not be closed.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const adminVendorDirectory = (await db.query("select public.get_operator_vendor_directory() as result")).rows[0].result;
+  const adminVendorDirectory = (await db.query(`select public.get_operator_vendor_directory('${organization.organizationId}') as result`)).rows[0].result;
   assert(adminVendorDirectory.length === 1 && adminVendorDirectory[0].vendorId === vendor.vendorId, "Org-wide admin did not see the vendor directory.");
-  const operatorApprovals = (await db.query("select public.get_operator_owner_approval_workspace() as result")).rows[0].result;
+  const operatorApprovals = (await db.query(`select public.get_operator_owner_approval_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(operatorApprovals.items.length === 2 && operatorApprovals.items.every((item) => item.status === "approved"), "The operator approval projection omitted an owner decision.");
 
   await db.exec(`reset role;
@@ -2243,7 +2252,7 @@ async function validateRecurringCharges() {
   assert(ownerBStatementRows === 1 && ownerBStatementWorkspace.remittances.length === 0, "Co-owner B crossed the exact owner-entity statement or remittance DTO boundary.");
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const operatorStatements = (await db.query("select public.get_operator_owner_statement_workspace() as result")).rows[0].result;
+  const operatorStatements = (await db.query(`select public.get_operator_owner_statement_workspace('${organization.organizationId}') as result`)).rows[0].result;
   const operatorOwnerA = operatorStatements.owners.find((item) => item.ownerEntityId === ownerEntityA);
   assert(operatorStatements.owners.length === 2 && operatorOwnerA?.latestStatement.versionNumber === 2 && operatorOwnerA.latestStatement.availableToRemitMinor === 40698 && operatorOwnerA.ownerPayableMinor === 40698 && operatorOwnerA.remittances.length === 1 && operatorOwnerA.evidenceDocuments.length === 1, "The operator statement workspace omitted the latest correction, payable, evidence, or remittance.");
 
@@ -2873,11 +2882,17 @@ async function validateRecurringCharges() {
   assert(settlementPosting.debits === 5000 && settlementPosting.credits === 5000 && settlementPosting.audits === 1 && settlementPosting.events === 1, "Settlement accounting or durable trace is incomplete.");
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const settlementWorkspace = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  const settlementWorkspace = (await db.query(`select public.get_settlement_reconciliation_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(settlementWorkspace.batches.length === 2 && settlementWorkspace.exceptions.length === 2 && settlementWorkspace.batches.find((batch) => batch.settlementId === settlement.settlementId)?.matchedCount === 1, "The operator reconciliation workspace is incomplete.");
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
   const residentSettlementRows = (await db.query("select count(*)::integer as count from public.settlement_batches")).rows[0].count;
-  const residentSettlementWorkspace = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  // A resident holds no operator membership, so the organization-scoped reconciliation workspace is
+  // refused outright; their own payment's sanitized settlement history still works unscoped.
+  await expectDatabaseError(
+    () => db.query(`select public.get_settlement_reconciliation_workspace('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  const residentSettlementWorkspace = { batches: [] };
   const residentSettlementHistory = (await db.query(`select public.get_payment_settlement_history('${settlementPreparation.paymentId}') as result`)).rows[0].result;
   assert(residentSettlementRows === 0 && residentSettlementWorkspace.batches.length === 0 && residentSettlementHistory.settlements.length === 1, "Settlement data leaked to a resident or their sanitized payment history is missing.");
 
@@ -3039,37 +3054,37 @@ async function validateRecurringCharges() {
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
   const propertySearch = (await db.query(
-    "select public.get_operator_global_search('Map',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Map',24) as result`,
   )).rows[0].result;
   const unitSearch = (await db.query(
-    "select public.get_operator_global_search('101',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','101',24) as result`,
   )).rows[0].result;
   const residentSearch = (await db.query(
-    "select public.get_operator_global_search('Avery',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Avery',24) as result`,
   )).rows[0].result;
   const leaseSearch = (await db.query(
-    "select public.get_operator_global_search('FIN-',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','FIN-',24) as result`,
   )).rows[0].result;
   const paymentSearch = (await db.query(
-    `select public.get_operator_global_search('${payment.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${payment.publicReference}',24) as result`,
   )).rows[0].result;
   const maintenanceSearch = (await db.query(
-    `select public.get_operator_global_search('${maintenance.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${maintenance.publicReference}',24) as result`,
   )).rows[0].result;
   const workOrderSearch = (await db.query(
-    `select public.get_operator_global_search('${workOrder.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${workOrder.publicReference}',24) as result`,
   )).rows[0].result;
   const documentSearch = (await db.query(
-    "select public.get_operator_global_search('Unit 101',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Unit 101',24) as result`,
   )).rows[0].result;
   const ownerSearch = (await db.query(
-    "select public.get_operator_global_search('Finance Atlas Owner',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Finance Atlas Owner',24) as result`,
   )).rows[0].result;
   const emailSearch = (await db.query(
-    "select public.get_operator_global_search('avery@example.com',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','avery@example.com',24) as result`,
   )).rows[0].result;
   const limitedSearch = (await db.query(
-    "select public.get_operator_global_search('Finance',1) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Finance',1) as result`,
   )).rows[0].result;
   const searchPayload = JSON.stringify({
     propertySearch,
@@ -3105,27 +3120,27 @@ async function validateRecurringCharges() {
     "Operator global search exposed resident contact data, maintenance access/detail, payment reasons, or provider identifiers.",
   );
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('x',24)"),
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','x',24)`),
     "SEARCH_QUERY_TOO_SHORT",
   );
   await expectDatabaseError(
-    () => db.query(`select public.get_operator_global_search('${"x".repeat(81)}',24)`),
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','${"x".repeat(81)}',24)`),
     "SEARCH_QUERY_TOO_LONG",
   );
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('Map',51)"),
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','Map',51)`),
     "SEARCH_LIMIT_OUT_OF_BOUNDS",
   );
 
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}'`);
   const scopedMaintenanceSearch = (await db.query(
-    `select public.get_operator_global_search('${maintenance.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${maintenance.publicReference}',24) as result`,
   )).rows[0].result;
   const scopedPaymentSearch = (await db.query(
-    `select public.get_operator_global_search('${payment.publicReference}',24) as result`,
+    `select public.get_operator_global_search('${organization.organizationId}','${payment.publicReference}',24) as result`,
   )).rows[0].result;
   const scopedOtherPropertySearch = (await db.query(
-    "select public.get_operator_global_search('Harbour',24) as result",
+    `select public.get_operator_global_search('${organization.organizationId}','Harbour',24) as result`,
   )).rows[0].result;
   assert(
     scopedMaintenanceSearch.items.some((item) => item.kind === "maintenance_request")
@@ -3140,8 +3155,8 @@ async function validateRecurringCharges() {
     "OPERATOR_ORGANIZATION_DENIED",
   );
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('Map',24)"),
-    "OPERATOR_ORGANIZATION_DENIED",
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','Map',24)`),
+    "ORGANIZATION_SCOPE_DENIED",
   );
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
   await expectDatabaseError(
@@ -3149,13 +3164,13 @@ async function validateRecurringCharges() {
     "OPERATOR_ORGANIZATION_DENIED",
   );
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('Map',24)"),
-    "OPERATOR_ORGANIZATION_DENIED",
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','Map',24)`),
+    "ORGANIZATION_SCOPE_DENIED",
   );
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${resident}'`);
   await expectDatabaseError(
-    () => db.query("select public.get_operator_global_search('Map',24)"),
-    "OPERATOR_ORGANIZATION_DENIED",
+    () => db.query(`select public.get_operator_global_search('${organization.organizationId}','Map',24)`),
+    "ORGANIZATION_SCOPE_DENIED",
   );
 
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${resident}'`);
@@ -3210,7 +3225,7 @@ async function validateRecurringCharges() {
   `)).rows[0];
   assert(costTraces.events === 1 && costTraces.audits === 1, "Work-order cost audit/outbox trace is incomplete.");
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const maintenanceAfterCost = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
+  const maintenanceAfterCost = (await db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}') as result`)).rows[0].result;
   const costedItem = maintenanceAfterCost.items.find((item) => item.workOrder && item.workOrder.workOrderId === workOrder.workOrderId);
   assert(costedItem && costedItem.workOrder.cost && costedItem.workOrder.cost.amountMinor === 32000 && costedItem.workOrder.cost.currencyCode === "USD", "Operator workspace did not surface the posted work-order cost.");
 
@@ -3352,7 +3367,7 @@ async function validateRecurringCharges() {
   `)).rows[0];
   assert(resolutionTraces.resolved_events === 2 && resolutionTraces.escalated_events === 1 && resolutionTraces.resolved_audits === 2 && resolutionTraces.escalated_audits === 1, "Reconciliation-resolution audit/outbox trace is incomplete.");
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const workspaceAfterResolution = (await db.query("select public.get_settlement_reconciliation_workspace() as result")).rows[0].result;
+  const workspaceAfterResolution = (await db.query(`select public.get_settlement_reconciliation_workspace('${organization.organizationId}') as result`)).rows[0].result;
   assert(!workspaceAfterResolution.exceptions.some((row) => row.settlementId === mismatch.settlementId), "Resolved/waived exceptions still appear on the operator reconciliation queue.");
 
   // Receivable write-off (phase_4_receivable_write_off). Generate two fresh rent charges (the schedule
@@ -3432,7 +3447,7 @@ async function validateRecurringCharges() {
       ('e6000000-0000-4000-8000-000000000066','${ownerInvitedOnlyUser}','${organization.organizationId}','owner_entity','${ownerInvitedOnly}','invited');
   `);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const inviteStateWorkspace = (await db.query("select public.get_operator_owner_statement_workspace() as result")).rows[0].result;
+  const inviteStateWorkspace = (await db.query(`select public.get_operator_owner_statement_workspace('${organization.organizationId}') as result`)).rows[0].result;
   const activeOwnerRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === invitedOwnerEntity);
   const notInvitedRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerNotInvited);
   const invitedOnlyRow = inviteStateWorkspace.owners.find((row) => row.ownerEntityId === ownerInvitedOnly);
@@ -3502,10 +3517,20 @@ async function validateRecurringCharges() {
   // DECISIVE INERT TEST: the agent holds an active session and is NOT a member of the org; the helper
   // is wired into no policy, so a normal tenant read still returns zero rows.
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
-  const agentMaintenance = (await db.query("select public.get_operator_maintenance_workspace() as result")).rows[0].result;
-  const agentReceivables = (await db.query("select public.get_operator_receivables_summary() as result")).rows[0].result;
-  assert(agentMaintenance.items.length === 0 && (agentReceivables.items ?? []).length === 0,
-    "An active support session leaked cross-org data — the grant must be inert until a policy wires the helper in.");
+  // Since v4.2 A3 the operator surfaces are organization-scoped, so an active support session is now
+  // refused at the context gate — earlier than before, and for the right reason: a support session is
+  // not an organization membership. The inertness this test exists to prove is unchanged and stronger.
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_receivables_summary('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  // And the unscoped collection surfaces are not reachable at all any more.
+  await expectDatabaseError(() => db.query("select public.get_operator_maintenance_workspace()"),
+    "permission denied for function get_operator_maintenance_workspace");
 
   await db.exec("reset role");
   const supportStartTrace = (await db.query(`select
@@ -4730,8 +4755,149 @@ async function validateRecurringCharges() {
     purgedIdempotencyRecords: swept.purgedIdempotencyRecords,
   };
 
+  // ── Canonical active-organization context (phase_8_active_organization_context, v4.2 A3) ─────────
+  // The defect: operator ctxSurfaces carried no organization. Collection RPCs returned every row the
+  // caller could see ACROSS ALL their organizations, and the two that accepted an organization
+  // defaulted it to `order by created_at limit 1`. For an operator in two tenants the dashboard,
+  // maintenance queue, payment summary and global search all showed MIXED ROWS.
+  //
+  // This builds a genuine second organization for the same operator and proves each surface follows
+  // the organization it is given — and only that one.
+  const secondOperator = admin;
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${secondOperator}'; set request.jwt.claim.aal='aal2'`);
+  const ctxOrgB = (await db.query(`select public.create_organization('Second Harbor','second-harbor','property_manager','US','en-US','America/Chicago','2026-07-20','orgctx-create-0001') as result`)).rows[0].result;
+  const ctxEntityB = (await db.query(`select public.create_operating_entity_and_book('${ctxOrgB.organizationId}','Second Harbor LLC','Second Harbor','US','company','USD','Operating book','orgctx-book-0001') as result`)).rows[0].result;
+  const ctxPropertyB = (await db.query(`select public.create_property('${ctxOrgB.organizationId}','${ctxEntityB.operatingEntityId}','${ctxEntityB.accountingBookId}','US_NATIONAL','Beacon Flats','multifamily','9 Beacon Way',null,'Chicago','IL','60601','US','America/Chicago','orgctx-property-0001') as result`)).rows[0].result;
+  await db.query(`select public.create_unit('${ctxOrgB.organizationId}','${ctxPropertyB.propertyId}',null,'B-1','Apartment',1,1,500,'orgctx-unit-0001')`);
+
+  // (1) The switcher's canonical source lists BOTH organizations, and nothing else.
+  const operatorOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  const operatorOrgIds = operatorOrgs.map((o) => o.organizationId);
+  assert(operatorOrgIds.includes(organization.organizationId) && operatorOrgIds.includes(ctxOrgB.organizationId) && operatorOrgs.length === 2,
+    "list_operator_organizations did not return exactly the operator's two active organizations.");
+  assert(operatorOrgs.every((o) => o.displayName && o.roleCode === "org_owner"),
+    "The switcher source did not carry the display name and role for each organization.");
+
+  // (2) No unscoped collection surface is reachable any more. This is what makes "a fetcher forgot to
+  // pass the organization" a permission error instead of a silent cross-tenant read.
+  for (const unscoped of [
+    "get_operator_maintenance_workspace","get_operator_announcement_workspace","get_operator_vendor_directory",
+    "get_operator_owner_statement_workspace","get_operator_owner_approval_workspace","get_operator_payment_summary",
+    "get_operator_receivables_summary","get_settlement_reconciliation_workspace","get_manual_payment_options",
+    "get_payment_connection_settings",
+  ]) {
+    await expectDatabaseError(() => db.query(`select public.${unscoped}()`), `permission denied for function ${unscoped}`);
+  }
+  await expectDatabaseError(() => db.query("select public.get_operator_global_search('Map',24)"), "permission denied for function get_operator_global_search");
+
+  // (3) DECISIVE: every audited surface follows the organization it is given, with no mixed rows.
+  const ctxSurfaces = [
+    ["maintenance", "get_operator_maintenance_workspace", (r) => r.items.length],
+    ["communications", "get_operator_announcement_workspace", (r) => r.items.length],
+    ["owners", "get_operator_owner_statement_workspace", (r) => r.owners.length],
+    ["payments", "get_operator_payment_summary", (r) => (r.items ?? []).length],
+    ["receivables", "get_operator_receivables_summary", (r) => (r.items ?? []).length],
+  ];
+  for (const [label, fn, count] of ctxSurfaces) {
+    const ctxInA = (await db.query(`select public.${fn}('${organization.organizationId}') as r`)).rows[0].r;
+    const ctxInB = (await db.query(`select public.${fn}('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+    assert(count(ctxInA) > 0, `The ${label} surface returned nothing for the organization that owns the data.`);
+    assert(count(ctxInB) === 0, `The ${label} surface leaked the first organization's rows into the second.`);
+  }
+
+  // An organization-level surface, gated ONLY by private.has_org_permission rather than by property
+  // access. The Stripe connection belongs to the first organization's operating entity, so the second
+  // organization must see none of it even though the same operator administers both.
+  const ctxPaymentsA = (await db.query(`select public.get_payment_connection_settings('${organization.organizationId}') as r`)).rows[0].r;
+  const ctxPaymentsB = (await db.query(`select public.get_payment_connection_settings('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+  // The invariant that matters is not a count but provenance: EVERY row must belong to the
+  // organization that was asked for. Both organizations have operating entities, so both surfaces are
+  // non-empty — which makes this a real mixing test rather than an "empty means isolated" one.
+  assert(ctxPaymentsA.items.length > 0 && ctxPaymentsB.items.length > 0,
+    "The payment-connection surface returned nothing for one of the organizations, so mixing could not be observed.");
+  assert(ctxPaymentsA.items.every((item) => item.organizationId === organization.organizationId),
+    "The payment-connection surface returned a row belonging to another organization.");
+  assert(ctxPaymentsB.items.every((item) => item.organizationId === ctxOrgB.organizationId),
+    "The payment-connection surface leaked the first organization's rows into the second.");
+  assert(ctxPaymentsA.items.some((item) => item.chargesEnabled !== undefined),
+    "The payment-connection surface did not return provider state for the organization that owns the connection.");
+
+  // Global search: the surface that previously could not be steered at all.
+  const ctxSearchA = (await db.query(`select public.get_operator_global_search('${organization.organizationId}','Maple',24) as r`)).rows[0].r;
+  const ctxSearchB = (await db.query(`select public.get_operator_global_search('${ctxOrgB.organizationId}','Maple',24) as r`)).rows[0].r;
+  const ctxSearchBOwn = (await db.query(`select public.get_operator_global_search('${ctxOrgB.organizationId}','Beacon',24) as r`)).rows[0].r;
+  assert(ctxSearchA.items.some((i) => i.kind === "property"), "Global search did not find the first organization's property.");
+  assert(ctxSearchB.items.length === 0, "Global search leaked the first organization's property into the second.");
+  assert(ctxSearchBOwn.items.some((i) => i.kind === "property"), "Global search could not find the SECOND organization's own property — it was still pinned to the first.");
+
+  // The dashboard and team ctxSurfaces already accepted an organization; prove they honor it.
+  const ctxDashA = (await db.query(`select public.get_operator_command_center('${organization.organizationId}',null,null,current_date-29,current_date) as r`)).rows[0].r;
+  const ctxDashB = (await db.query(`select public.get_operator_command_center('${ctxOrgB.organizationId}',null,null,current_date-29,current_date) as r`)).rows[0].r;
+  assert(ctxDashA.scope.organizationId === organization.organizationId && ctxDashB.scope.organizationId === ctxOrgB.organizationId,
+    "The dashboard did not follow the organization it was given.");
+  assert(ctxDashA.scope.propertyCount > 1 && ctxDashB.scope.propertyCount === 1
+    && ctxDashB.filters.properties.length === 1 && ctxDashB.filters.properties[0].propertyId === ctxPropertyB.propertyId,
+    "The dashboard mixed properties across the operator's two organizations.");
+  const ctxTeamA = (await db.query(`select public.get_staff_management_workspace('${organization.organizationId}') as r`)).rows[0].r;
+  const ctxTeamB = (await db.query(`select public.get_staff_management_workspace('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+  assert(ctxTeamA.organization.organizationId === organization.organizationId && ctxTeamB.organization.organizationId === ctxOrgB.organizationId,
+    "The team workspace did not follow the organization it was given.");
+
+  // (4) A context is never established for an organization the caller is not an active member of, and
+  // there is no silent fallback to one they ARE in.
+  await expectDatabaseError(() => db.query("select public.get_operator_maintenance_workspace(null)"), "ORGANIZATION_REQUIRED");
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_maintenance_workspace('${"f".repeat(8)}-0000-4000-8000-000000000000')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const outsiderOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(outsiderOrgs.length === 0, "The switcher source listed organizations for a user with no membership.");
+  await expectDatabaseError(() => db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}')`), "ORGANIZATION_SCOPE_DENIED");
+
+  // (5) A revoked membership stops working on the very next call — no cached grant anywhere.
+  await db.exec(`reset role;
+    insert into public.organization_memberships(organization_id,user_id,role_code,status,starts_at)
+    values ('${ctxOrgB.organizationId}','${outsider}','property_manager','active',now()-interval '1 day');`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const revocableOrgs = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(revocableOrgs.length === 1 && revocableOrgs[0].organizationId === ctxOrgB.organizationId,
+    "A newly active membership did not appear in the switcher source.");
+  const beforeRevoke = (await db.query(`select public.get_operator_maintenance_workspace('${ctxOrgB.organizationId}') as r`)).rows[0].r;
+  assert(Array.isArray(beforeRevoke.items), "An active member could not read their own organization's maintenance surface.");
+  await db.exec(`reset role;
+    update public.organization_memberships set status='revoked'
+    where organization_id='${ctxOrgB.organizationId}' and user_id='${outsider}';
+    set role authenticated; set request.jwt.claim.sub='${outsider}';`);
+  const afterRevoke = (await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations;
+  assert(afterRevoke.length === 0, "A revoked membership was still offered by the switcher source.");
+  await expectDatabaseError(() => db.query(`select public.get_operator_maintenance_workspace('${ctxOrgB.organizationId}')`), "ORGANIZATION_SCOPE_DENIED");
+  // An expired membership is refused for the same reason, without anyone revoking it.
+  await db.exec(`reset role;
+    update public.organization_memberships set status='active', ends_at=now()-interval '1 hour'
+    where organization_id='${ctxOrgB.organizationId}' and user_id='${outsider}';
+    set role authenticated; set request.jwt.claim.sub='${outsider}';`);
+  assert((await db.query("select public.list_operator_organizations() as r")).rows[0].r.organizations.length === 0,
+    "An expired membership was still offered by the switcher source.");
+  await expectDatabaseError(() => db.query(`select public.get_operator_maintenance_workspace('${ctxOrgB.organizationId}')`), "ORGANIZATION_SCOPE_DENIED");
+  await db.exec(`reset role; delete from public.organization_memberships where organization_id='${ctxOrgB.organizationId}' and user_id='${outsider}';`);
+
+  // (6) The context is transaction-local: it must never survive into the next statement.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await db.query(`select public.get_operator_maintenance_workspace('${ctxOrgB.organizationId}')`);
+  await db.exec("reset role");
+  const leaked = (await db.query("select private.active_organization_id() as r")).rows[0].r;
+  assert(leaked === null, "The active-organization context leaked out of the statement that established it.");
+  await db.exec("reset role");
+
+  const organizationContext = {
+    switcherOrganizations: operatorOrgs.length,
+    unscopedSurfacesClosed: 11,
+    auditedSurfaces: ctxSurfaces.length + 3,
+  };
+
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords };
+  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces };
 }
 
 try {
