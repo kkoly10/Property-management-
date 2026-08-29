@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createDirectChargeCheckoutSession, StripeConnectConfigurationError } from "@/lib/stripe/connect";
 import { createResidentPaymentSessionSchema } from "@/lib/validation/finance";
-import { isAllowedApplicationUrl } from "@/lib/validation/payment-connections";
+import { isAllowedResidentReturnUrl } from "@/lib/validation/payment-connections";
 
 const errorResponse = (code: string, message: string, status: number) => NextResponse.json({ error: message, code }, { status });
 
@@ -42,9 +42,11 @@ export async function POST(request: Request) {
   const parsed = createResidentPaymentSessionSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return errorResponse("INVALID_REQUEST", parsed.error.issues[0]?.message ?? "Check the payment details.", 400);
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
-  if (!siteUrl || !isAllowedApplicationUrl(parsed.data.returnUrl, siteUrl)) {
-    return errorResponse("INVALID_RETURN_URL", "Stripe can only return to the configured Crecy application.", 400);
+  // A resident Checkout returns to the Crecy Living origin it began on, never into Crecy OS.
+  // NEXT_PUBLIC_SITE_URL is the OPERATOR origin (app.crecyos.com), so validating against it would have
+  // sent residents into the operator application — or rejected their legitimate community origin.
+  if (!isAllowedResidentReturnUrl(parsed.data.returnUrl, request.headers.get("host"))) {
+    return errorResponse("INVALID_RETURN_URL", "Stripe can only return to the Crecy Living origin this payment started from.", 400);
   }
 
   const supabase = await createClient();

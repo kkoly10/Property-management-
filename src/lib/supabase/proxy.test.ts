@@ -18,8 +18,8 @@ vi.mock("@supabase/ssr", () => ({
 
 const { updateSession } = await import("./proxy");
 
-function request(path: string) {
-  return new NextRequest(new URL(path, "https://app.crecyos.com"));
+function request(path: string, origin = "https://crecyos.com") {
+  return new NextRequest(new URL(path, origin));
 }
 
 afterEach(() => {
@@ -28,6 +28,19 @@ afterEach(() => {
 
 describe("the session proxy, with Supabase configured", () => {
   config.value = { url: "https://project.supabase.co", publishableKey: "sb_publishable_test" };
+
+  it("treats a marketing PATH on a product host as uncacheable", async () => {
+    // Host is consulted before pathname. `/` and `/pricing` are cacheable marketing pages on
+    // crecyos.com and nowhere else: on the app, owner or a resident host the same pathname is a
+    // product surface, and letting it skip the session client on pathname alone is what would put an
+    // authenticated response into a shared cache.
+    for (const origin of ["https://app.crecyos.com", "https://owner.crecyos.com", "https://crecyliving.com", "https://lakewood.crecyliving.com"]) {
+      created.count = 0;
+      const response = await updateSession(request("/", origin));
+      expect(created.count, `${origin}/ skipped the session client`).toBe(1);
+      expect(response.headers.get("cache-control"), `${origin}/ is not private`).toBe("private, no-store");
+    }
+  });
 
   it("never creates a session client for a public page", async () => {
     // This is the load-bearing ordering. createServerClient can rotate the session and write

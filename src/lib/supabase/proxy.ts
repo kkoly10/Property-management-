@@ -1,7 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
-import { isCacheablePublicPage, requiresSession } from "@/lib/marketing/navigation";
+import { requiresSession } from "@/lib/marketing/navigation";
+import { isCacheablePublicRequest } from "@/lib/runtime/host-routing";
 
 export async function updateSession(request: NextRequest) {
   const config = getPublicSupabaseConfig();
@@ -15,7 +16,10 @@ export async function updateSession(request: NextRequest) {
   // rotate the session and write Set-Cookie onto the response; a shared cache that stored such a
   // response would hand one visitor's session to the next. These pages are identical for every
   // visitor and need no session, so the safe thing is to never touch one here.
-  if (isCacheablePublicPage(request.nextUrl.pathname)) {
+  // Host is consulted BEFORE the pathname. `app.crecyos.com/` and `owner.crecyos.com/` both have the
+  // pathname `/`, and treating either as the cacheable marketing homepage on pathname alone is exactly
+  // the confusion that would put an authenticated surface in a shared cache.
+  if (isCacheablePublicRequest(request.nextUrl.host || request.headers.get("host"), request.nextUrl.pathname)) {
     return NextResponse.next({ request });
   }
 

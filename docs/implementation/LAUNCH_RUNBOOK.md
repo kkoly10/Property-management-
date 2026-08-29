@@ -97,9 +97,12 @@ Supabase → Authentication → URL Configuration:
 - **Site URL:** `https://app.crecyos.com` — the operator app, not the marketing site.
 - **Redirect URLs:** add only the callbacks the flows actually use, e.g. `https://app.crecyos.com/auth/callback`
   and `https://owner.crecyos.com/auth/callback`. Do not add a broad wildcard for operator/auth callbacks.
-- Resident community subdomains must not be accommodated by weakening redirect validation. If resident auth
-  eventually needs `*.crecyliving.com`, enumerate the hosts or route resident auth through a single origin —
-  do not widen the operator allowlist to do it.
+- **Resident community callbacks.** Supabase supports wildcard redirect patterns; use the narrowest one the
+  flow actually needs. Prefer a single-label subdomain plus the exact callback route —
+  `https://*.crecyliving.com/auth/callback` — over an all-path globstar like
+  `https://*.crecyliving.com/**`, which would accept any path on any community host. The wildcard covers
+  ONE label only, which is the same shape the host classifier enforces (`a.b.crecyliving.com` is not a
+  community). Do not widen the operator/owner callbacks to accommodate residents.
 
 ### Stripe — required after the domains resolve
 
