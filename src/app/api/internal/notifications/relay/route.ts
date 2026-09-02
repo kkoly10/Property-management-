@@ -89,8 +89,13 @@ export async function POST(request: Request) {
   // that grants you access would lock you out. Residents have /more/preferences; operators and owners
   // have no preferences UI yet, so they get no header rather than a dead one.
   const headers: Record<string, string> = {};
-  if (sender.unsubscribable && sender.audience === "resident") {
-    headers["List-Unsubscribe"] = `<${originForAudience("resident")}/more/preferences>`;
+  const residentOrigin = sender.unsubscribable && sender.audience === "resident" ? originForAudience("resident") : "";
+  if (residentOrigin) {
+    // Only when an absolute origin actually resolves. originForAudience returns "" with no app origin
+    // configured, and `List-Unsubscribe: </more/preferences>` is a malformed header rather than a
+    // useful one — the same "do not advertise what does not resolve" rule that removed the fake
+    // workspace URL from onboarding.
+    headers["List-Unsubscribe"] = `<${residentOrigin}/more/preferences>`;
   }
 
   let response: Response;

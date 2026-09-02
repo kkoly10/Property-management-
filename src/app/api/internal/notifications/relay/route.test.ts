@@ -110,4 +110,12 @@ describe("relay audience handling", () => {
     await POST(message({ templateCode: "document_delivered", audience: "not-a-real-audience" }));
     expect(payload().from).toMatch(/^Crecy </);
   });
+
+  it("omits List-Unsubscribe entirely when no origin resolves", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_LIVING_ROOT_DOMAIN", "");
+    await POST(message({ templateCode: "announcement_published" }));
+    // A relative List-Unsubscribe is a malformed header, not a degraded one.
+    expect(payload().headers).toBeUndefined();
+  });
 });

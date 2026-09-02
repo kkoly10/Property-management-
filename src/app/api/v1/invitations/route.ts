@@ -37,7 +37,10 @@ export async function POST(request: Request) {
   // The recipient activates on their own portal origin, derived from the relationship, never from
   // the inviting operator's host. originForAudience collapses to the app origin in local development,
   // so this does not break the dev loop or Playwright.
-  const callbackUrl = new URL("/auth/callback", originForAudience(audienceForSurface[input.redirectSurface]));
+  // Falls back to the request origin when no app origin is configured: originForAudience
+  // returns "" there, and new URL(path, "") throws — which would turn an unconfigured preview
+  // or a bare local checkout into a 500 on every invitation.
+  const callbackUrl = new URL("/auth/callback", originForAudience(audienceForSurface[input.redirectSurface]) || request.url);
   callbackUrl.searchParams.set("next", activationPath);
 
   let admin;

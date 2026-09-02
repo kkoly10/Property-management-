@@ -50,7 +50,10 @@ export async function POST(request: Request) {
   const activationPath = `/settings/team/accept?token=${encodeURIComponent(rawToken)}`;
   // Staff activate in Crecy OS by definition, so the operator origin is correct here — but it is
   // stated explicitly rather than inherited from the request host.
-  const callbackUrl = new URL("/auth/callback", originForAudience("operator"));
+  // Falls back to the request origin when no app origin is configured: originForAudience
+  // returns "" there, and new URL(path, "") throws — which would turn an unconfigured preview
+  // or a bare local checkout into a 500 on every invitation.
+  const callbackUrl = new URL("/auth/callback", originForAudience("operator") || request.url);
   callbackUrl.searchParams.set("next", activationPath);
 
   let admin;

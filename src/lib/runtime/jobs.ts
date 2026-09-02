@@ -82,11 +82,15 @@ export async function runNotificationDispatch(
       // worth dead-lettering a document delivery.
       let audience = null as ReturnType<typeof audienceForRelationshipType>;
       const deliveryId = job.payload.documentDeliveryId;
-      if (job.templateCode === "document_delivered" && typeof deliveryId === "string") {
+      if (job.templateCode === "document_delivered" && typeof deliveryId === "string" && job.organizationId) {
+        // Scoped by organization as well as id. This client is service_role and bypasses RLS, so the
+        // tenant predicate is the only thing standing between a malformed payload and another
+        // organization's row — "the id came from our own command" is an argument, not a boundary.
         const { data: delivery } = await supabase
           .from("document_deliveries")
           .select("recipient_relationship_type")
           .eq("id", deliveryId)
+          .eq("organization_id", job.organizationId)
           .maybeSingle();
         audience = audienceForRelationshipType(delivery?.recipient_relationship_type);
       }

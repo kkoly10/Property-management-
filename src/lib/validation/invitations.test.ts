@@ -63,3 +63,21 @@ describe("activation origins follow the relationship, not the inviter", () => {
     }
   });
 });
+
+describe("the activation origin has a usable fallback", () => {
+  it("returns an empty origin when no app origin is configured", () => {
+    // originForAudience uses "" as a meaningful sentinel — templates.ts reads it as "emit a relative
+    // path". Callers that feed it to `new URL(path, base)` must not pass it through: new URL(x, "")
+    // throws a TypeError, which would turn an unconfigured preview into a 500 on every invitation.
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    expect(originForAudience("operator")).toBe("");
+    expect(() => new URL("/auth/callback", originForAudience("operator"))).toThrow(TypeError);
+  });
+
+  it("builds a valid callback once a base is supplied", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    const requestUrl = "https://preview.example.test/api/v1/invitations";
+    const url = new URL("/auth/callback", originForAudience("resident") || requestUrl);
+    expect(url.toString()).toBe("https://preview.example.test/auth/callback");
+  });
+});
