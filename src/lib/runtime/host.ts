@@ -160,7 +160,7 @@ export function appOrigin(): string {
  * https://crecyliving.com while running on localhost would emit a production URL into a dev inbox and
  * break Playwright, so the audience split only takes effect once the app origin is a real Crecy host.
  */
-function originsAreLocal(): boolean {
+export function originsAreLocal(): boolean {
   const origin = appOrigin();
   if (!origin) return true;
   try {
