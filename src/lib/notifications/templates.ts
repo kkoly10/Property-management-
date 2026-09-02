@@ -160,6 +160,9 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
 };
 
 /** True when the worker knows how to render this template — an unknown code is a non-retryable failure. */
+/** Every template code that exists, so other modules can assert they cover all of them. */
+export const TEMPLATE_CODES = Object.keys(TEMPLATES);
+
 export function hasTemplate(templateCode: string): boolean {
   return Object.hasOwn(TEMPLATES, templateCode);
 }
