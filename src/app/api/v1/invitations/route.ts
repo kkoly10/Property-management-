@@ -4,7 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requirePublicSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 import { invitationDatabaseError, invitationErrorResponse } from "@/lib/api/invitations";
-import { inviteRelationshipSchema } from "@/lib/validation/invitations";
+import { audienceForSurface, inviteRelationshipSchema } from "@/lib/validation/invitations";
+import { originForAudience } from "@/lib/runtime/host";
 
 export async function POST(request: Request) {
   const parsed = inviteRelationshipSchema.safeParse(await request.json().catch(() => null));
@@ -33,7 +34,10 @@ export async function POST(request: Request) {
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
   const tokenPrefix = tokenHash.slice(0, 10);
   const activationPath = `/invitations/accept?token=${encodeURIComponent(rawToken)}`;
-  const callbackUrl = new URL("/auth/callback", request.url);
+  // The recipient activates on their own portal origin, derived from the relationship, never from
+  // the inviting operator's host. originForAudience collapses to the app origin in local development,
+  // so this does not break the dev loop or Playwright.
+  const callbackUrl = new URL("/auth/callback", originForAudience(audienceForSurface[input.redirectSurface]));
   callbackUrl.searchParams.set("next", activationPath);
 
   let admin;

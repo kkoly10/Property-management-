@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { originForAudience } from "@/lib/runtime/host";
 import { requirePublicSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 import { staffDatabaseError, staffErrorResponse } from "@/lib/api/staff";
@@ -47,7 +48,9 @@ export async function POST(request: Request) {
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
   const tokenPrefix = tokenHash.slice(0, 10);
   const activationPath = `/settings/team/accept?token=${encodeURIComponent(rawToken)}`;
-  const callbackUrl = new URL("/auth/callback", request.url);
+  // Staff activate in Crecy OS by definition, so the operator origin is correct here — but it is
+  // stated explicitly rather than inherited from the request host.
+  const callbackUrl = new URL("/auth/callback", originForAudience("operator"));
   callbackUrl.searchParams.set("next", activationPath);
 
   let admin;
