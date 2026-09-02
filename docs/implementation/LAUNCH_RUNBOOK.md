@@ -12,9 +12,10 @@ so and names what is missing rather than describing a workaround.
 
 | | |
 | --- | --- |
-| Branch | `claude/mvp-progress-assessment-axvajc`, PR #35 (draft) |
+| Branch | merged to `main` via PR #35 (`89493ce`) |
 | Gate | `npm run check` green |
-| Deployed | **Nothing.** No Crecy build has been deployed anywhere. |
+| Deployed | **Yes, and it is live.** Vercel `property-management`, deployment `dpl_EvDTZdhG6yjq3yDGRi6X4gLZFEoa`, commit `89493ce`, target production, `READY`. Reachable at `property-management-six-plum.vercel.app`. |
+| Deployed build state | **Setup mode.** No Supabase environment variables are set on the Vercel project, so every product screen renders preview data instead of the database. See §2 step 4. |
 | Supabase | **`Property` / `alrirkvfcmhqumqaidxj`** — restored and `ACTIVE_HEALTHY`. Schema present, **no data**: 0 auth users, 0 organizations, 0 journal entries. |
 | Migrations | **All 60 applied.** The 26-file expand step ran on 2026-08-28 and was verified against a local replay — see §2. |
 | Providers | Scan relay, mail relay and Stripe Connect are all unconfigured. |
@@ -147,9 +148,30 @@ down with `permission denied`.
    Supabase — plus the single orphan function in §6. **Nothing in the diff is a missing or altered
    object.**
 3. **Deploy the application build** from this branch.
-4. **Verify the deployed build actually calls the scoped RPCs** — not merely that it built. Open the
-   operator dashboard, properties, documents and search on the deployed URL and confirm they return
-   data. This is the step that makes the contraction safe.
+3a. **Deployed on 2026-08-28 and verified as far as it can be.** What was checked against the live
+   host, and what each check proves:
+
+   | check | result |
+   |---|---|
+   | `/`, `/product`, `/pricing`, `/crecy-living`, `/security`, `/pilot` | all `200`, correct `<title>` per page |
+   | `robots.txt`, `sitemap.xml` | served; authenticated prefixes disallowed, marketing routes listed |
+   | cache boundary | marketing pages `public, max-age=0, must-revalidate` + `x-vercel-cache: HIT`; `/login` and `/app` `private, no-cache, no-store` |
+   | all four `api/internal/cron/*` unauthenticated | `401 A valid scheduler credential is required.` |
+   | same, with a forged `Authorization: Bearer` | `401` — the forged secret is not accepted |
+   | `documents/scan/dispatch`, `notifications/dispatch`, `charge-schedules/generate` | `401 A valid internal worker credential is required.` |
+   | Stripe webhook | `503 WEBHOOK_NOT_CONFIGURED` |
+
+   The cron result is the one worth pausing on: `CRON_SECRET` is **unset** on the project, and the
+   endpoints still refuse. Unconfigured fails closed in production, not open.
+
+4. **Verify the deployed build actually calls the scoped RPCs** — **BLOCKED, and this is the current
+   blocker.** `/app` on the live host renders `mode === "setup"` ("Connect Supabase to activate this
+   workspace"), which `getPublicSupabaseConfig()` returns only when the public Supabase env is absent;
+   no Supabase host appears anywhere in the served client chunks, and `NEXT_PUBLIC_*` values are inlined
+   at build time, so this is not a runtime lookup that could still succeed. Until §1's variables are set
+   **and the project is rebuilt**, no screen on the deployed build reaches the database, so there is
+   nothing to observe calling the scoped RPCs. This is the step that makes the contraction safe, so:
+   **do not apply the contraction migration yet.**
 5. **Contract.** Only now apply
    `supabase/migrations-contract/20260828130000_phase_8_close_unscoped_operator_surfaces.sql`.
 6. **Smoke again immediately.** A contraction is the step most likely to surface a caller nobody knew
@@ -224,8 +246,13 @@ recorded here so the next person who diffs the schema against the repo is not su
 
 ## 7. Launch blockers, in the order they block
 
+0. **The deployed build has no Supabase environment variables.** This blocks every blocker below it:
+   the live product is serving preview data, no screen reaches the database, and nothing about the
+   deployed build's data path can be observed. `NEXT_PUBLIC_*` is inlined at build time, so setting the
+   variables is not enough — the project must be **redeployed** afterwards. Verified live 2026-08-28.
 1. **Legal documents are drafts.** No production organization can be created.
-2. **`CRON_SECRET` is unset.** No rent generates, no mail sends, no document is ever scanned.
+2. **`CRON_SECRET` is unset.** No rent generates, no mail sends, no document is ever scanned. The
+   endpoints correctly return `401` rather than running unauthenticated — verified live.
 3. **Scan relay unconfigured.** Every uploaded document stays quarantined and unusable.
 4. **Mail relay unconfigured.** Invitations never arrive, so no resident or owner can be onboarded.
 5. **Stripe unconfigured.** Online payments unavailable; manual recording still works, so this is the
