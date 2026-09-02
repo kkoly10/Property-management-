@@ -273,14 +273,25 @@ Implement production marketing fundamentals:
 - truthful structured data only;
 - authenticated/private app routes excluded from public indexing.
 
-Respect the approved domain architecture:
+Respect the approved domain architecture (corrected; authority is FD-037):
 
-- `crecy.com` public marketing;
-- `app.crecy.com` Crecy OS/auth entry;
-- Crecy Living community host architecture remains separate;
-- owner portal remains role-specific.
+- `crecyos.com` public Crecy marketing site — the canonical public origin;
+- `www.crecyos.com` 308-redirects to `https://crecyos.com`;
+- `app.crecyos.com` Crecy OS operator application and auth entry;
+- `crecyliving.com` Crecy Living resident root, with community portals under `*.crecyliving.com`;
+- `owner.crecyos.com` Crecy Owner portal;
+- `vendor.crecyos.com` reserved for the future Crecy Vendor surface — defining the host does not authorize building the product.
 
-One Next.js codebase may serve multiple hosts, but host routing must be intentional and tested. Do not make `app.crecy.com` behave like the marketing root by accident.
+`crecy.com`, `app.crecy.com`, `owner.crecy.com` and `vendor.crecy.com` are NOT owned and must not appear as canonical product
+domains in code, copy, metadata or configuration.
+
+The domain is `crecyos.com`; the visible company and master brand remains **Crecy**. Do not rename headings, logos, navigation
+or marketing copy to "CrecyOS" merely because that is the domain. "Crecy OS" names the operator product specifically;
+resident-facing surfaces say "Crecy Living" and owner-facing surfaces say "Crecy Owner". This is one product family, not four
+separate companies.
+
+One Next.js codebase may serve multiple hosts, but host routing must be intentional and tested. Do not make `app.crecyos.com`
+behave like the marketing root by accident, and do not let host routing make authenticated responses publicly cacheable.
 
 ---
 

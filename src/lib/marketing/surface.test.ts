@@ -284,7 +284,12 @@ describe("host and route classification", () => {
   it("keeps the proxy deciding from the shared classification rather than its own list", () => {
     const proxy = readFileSync(resolve(__dirname, "../supabase/proxy.ts"), "utf8");
     expect(proxy).toContain("requiresSession(");
-    expect(proxy).toContain("isCacheablePublicPage(");
+    // Host-aware now: `/` is a cacheable marketing page on crecyos.com and a product surface on
+    // app.crecyos.com, so a pathname alone can no longer decide cacheability.
+    expect(proxy).toContain("isCacheablePublicRequest(");
+    // ...and that wrapper must still delegate to the one shared path allowlist rather than restating it.
+    const routing = readFileSync(resolve(__dirname, "../runtime/host-routing.ts"), "utf8");
+    expect(routing).toContain("isCacheablePublicPage(");
     // The old hardcoded array is what let /more and /documents drift out of protection.
     expect(proxy).not.toMatch(/const protectedPrefixes\s*=/);
   });

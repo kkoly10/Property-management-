@@ -80,4 +80,30 @@ describe("renderNotification", () => {
     const rendered = renderNotification({ templateCode: "staff_invitation", locale: "en-US", payload: { organizationName: "Acme" } })!;
     expect(rendered.body).toContain("https://app.example.com/settings/team/accept");
   });
+
+  it("sends each audience to its own origin, derived from the template code", () => {
+    // NEXT_PUBLIC_SITE_URL is the OPERATOR origin. Before this split every recipient got it, so a
+    // resident invitation and an owner invitation both pointed into Crecy OS.
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://app.crecyos.com");
+    vi.stubEnv("NEXT_PUBLIC_MARKETING_ORIGIN", "https://crecyos.com");
+    vi.stubEnv("NEXT_PUBLIC_LIVING_ROOT_DOMAIN", "crecyliving.com");
+    const render = (templateCode: string) =>
+      renderNotification({ templateCode, locale: "en-US", payload: { organizationName: "Acme", title: "T" } })!.body;
+
+    expect(render("staff_invitation")).toContain("https://app.crecyos.com/settings/team/accept");
+    expect(render("resident_invitation")).toContain("https://crecyliving.com/invitations/accept");
+    expect(render("owner_invitation")).toContain("https://owner.crecyos.com/invitations/accept");
+    expect(render("announcement_published")).toContain("https://crecyliving.com/home");
+
+    // No resident or owner mail may point into the operator application.
+    expect(render("resident_invitation")).not.toContain("app.crecyos.com");
+    expect(render("owner_invitation")).not.toContain("app.crecyos.com");
+  });
+
+  it("keeps every audience on one origin in development", () => {
+    // Otherwise a dev inbox receives production URLs and Playwright has nothing reachable to click.
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "http://localhost:3000");
+    const rendered = renderNotification({ templateCode: "resident_invitation", locale: "en-US", payload: {} })!;
+    expect(rendered.body).toContain("http://localhost:3000/invitations/accept");
+  });
 });
