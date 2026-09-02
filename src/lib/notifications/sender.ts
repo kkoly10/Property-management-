@@ -57,10 +57,21 @@ function envIdentity(name: string): string | null {
   return value;
 }
 
-/** The mail domain for an audience: the sending subdomain of the domain its links point at. */
+/**
+ * The mail domain for an audience: the sending subdomain of the domain its links point at.
+ *
+ * `mail.` matches the convention already used across every other Resend domain in this account
+ * (mail.crecystudio.com, mail.korent.app, ...), so Crecy is not the odd one out.
+ *
+ * Ideally resident mail sends from the Crecy Living domain, because the From domain should match the
+ * links in the body. Where only one sending domain can be verified, set CRECY_MAIL_FROM_RESIDENT to an
+ * address on the verified domain: authentication still passes (SPF/DKIM/DMARC bind to the From domain
+ * either way) and only the brand alignment is degraded, which is the right thing to trade away last
+ * and to reverse first.
+ */
 function defaultMailDomain(audience: MailAudience): string {
   const { marketing, livingRoot } = hostConfig();
-  return audience === "resident" ? `notifications.${livingRoot}` : `notifications.${marketing}`;
+  return audience === "resident" ? `mail.${livingRoot}` : `mail.${marketing}`;
 }
 
 const DISPLAY_NAME: Record<MailAudience, string> = {

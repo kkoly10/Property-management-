@@ -22,10 +22,10 @@ describe("transactional sender identity", () => {
 
   it("sends from the domain the body's links point at", () => {
     // From-domain / link-domain mismatch is a phishing signal to filters and to recipients alike.
-    expect(senderFor("resident_invitation").from).toContain("@notifications.crecyliving.com");
-    expect(senderFor("announcement_published").from).toContain("@notifications.crecyliving.com");
-    expect(senderFor("staff_invitation").from).toContain("@notifications.crecyos.com");
-    expect(senderFor("owner_invitation").from).toContain("@notifications.crecyos.com");
+    expect(senderFor("resident_invitation").from).toContain("@mail.crecyliving.com");
+    expect(senderFor("announcement_published").from).toContain("@mail.crecyliving.com");
+    expect(senderFor("staff_invitation").from).toContain("@mail.crecyos.com");
+    expect(senderFor("owner_invitation").from).toContain("@mail.crecyos.com");
   });
 
   it("names the right brand per audience", () => {

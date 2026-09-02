@@ -42,7 +42,7 @@ describe("the Resend relay", () => {
     const response = await POST(message());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ messageId: "resend-123" });
-    expect(payload().from).toContain("@notifications.crecyliving.com");
+    expect(payload().from).toContain("@mail.crecyliving.com");
     expect(payload().text).toBe("Accept it.");
   });
 
