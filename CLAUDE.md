@@ -2,6 +2,36 @@
 
 Guidance for Claude Code (claude.ai/code) when working in this repository. Read [`AGENTS.md`](./AGENTS.md) and [`docs/crecy-v4/00_READ_ME_FIRST.md`](./docs/crecy-v4/00_READ_ME_FIRST.md) alongside this file — the `docs/crecy-v4` package is the authoritative product spec and supersedes anything here on questions of scope or contract.
 
+## Working order: recon → research → reason → plan
+
+In that order, every time. Each step exists because skipping it produced a real defect in this codebase.
+
+1. **Recon the actual state first.** Before forming a question, enumerate what is really there —
+   `grep` the whole repository, list the routes that exist, read the migration rather than the spec doc.
+   Recon is cheap and it changes the question. Two examples from this repo: the onboarding form
+   advertised `app.crecy.com/{slug}` as a workspace URL, and the fix looked like a domain swap until
+   recon showed `src/app` has **no dynamic segment at its root** — the URL had never resolved and the
+   correct fix was to stop calling it a URL. Likewise the "unused" `SUPABASE_*` variables in Vercel were
+   only explicable after finding that the Vercel↔Supabase integration, not a person, had created them.
+
+2. **Research second, once you know what you need.** External facts — a vendor's API contract, a DNS
+   requirement, a platform's behavior — get looked up, not recalled. Research before recon is research
+   against an imagined problem. Research after it is narrow and answerable.
+
+3. **Reason from what recon and research actually produced**, and write the reasoning down. The
+   two-sending-subdomain decision for transactional mail is not a preference: it follows from the fact
+   that resident bodies link to `crecyliving.com`, and a From domain that disagrees with the link domain
+   reads as phishing. A decision whose "why" cannot be stated is a guess wearing a plan's clothes.
+
+4. **Plan last, and only then build.** A plan written before the first three steps is a plan for the
+   problem you assumed you had.
+
+**Verify outcomes; do not trust the report of an outcome.** A command that prints an error has not
+necessarily failed, and one that prints nothing has not necessarily succeeded. `vercel --prod` once
+printed `Not authorized` and then `fetch failed` while a production deployment it had already queued
+built and went live — acting on the error message alone produced a confident, wrong "it did not
+deploy". Check the resulting state: query the API, curl the host, read the row back.
+
 ## Verification policy — tiered, not uniform
 
 **The project is in launch mode.** The exhaustive adversarial + mutation + full-browser-matrix workflow
