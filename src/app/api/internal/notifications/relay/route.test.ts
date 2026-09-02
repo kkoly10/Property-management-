@@ -98,3 +98,16 @@ describe("the Resend relay", () => {
     expect(payload().headers["List-Unsubscribe"]).toBe("<https://crecyliving.com/more/preferences>");
   });
 });
+
+describe("relay audience handling", () => {
+  it("honors a resolved audience over the template default", async () => {
+    await POST(message({ templateCode: "document_delivered", audience: "resident" }));
+    expect(payload().from).toContain("@mail.crecyliving.com");
+  });
+
+  it("ignores an audience it does not recognize", async () => {
+    // The body is authenticated but still untrusted: a caller must not be able to name a brand.
+    await POST(message({ templateCode: "document_delivered", audience: "not-a-real-audience" }));
+    expect(payload().from).toMatch(/^Crecy </);
+  });
+});

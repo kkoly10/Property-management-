@@ -5,6 +5,7 @@ import { hasTemplate, renderNotification } from "@/lib/notifications/templates";
 import { secureLinkUrl } from "@/lib/notifications/secure-link";
 import { getDocumentScanner, type DocumentObjectSource } from "@/lib/documents/scanner";
 import { claimedNotificationJobSchema } from "@/lib/validation/notification-worker";
+import { audienceForRelationshipType } from "@/lib/notifications/sender";
 import { claimedDocumentScanJobSchema } from "@/lib/validation/document-scan-worker";
 import { SCAN_WORKER_CONCURRENCY } from "@/lib/runtime/budget";
 
@@ -69,6 +70,27 @@ export async function runNotificationDispatch(
       const link = token ? secureLinkUrl(token) : null;
       const payload = link ? { ...job.payload, secureLinkUrl: link } : job.payload;
       const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload });
+
+      // `document_delivered` is the one template that reaches more than one audience, so its template
+      // code cannot say which brand should appear in the From line. The delivery row already records
+      // the recipient's relationship, so resolve it from there rather than guessing — and rather than
+      // widening the queue payload, which would mean replacing a security-definer function and
+      // applying a migration out of band to fix a From address.
+      //
+      // Failing to resolve is not an error: the sender falls back to the neutral operator identity,
+      // which is exactly the behavior before this lookup existed. A brand is worth a query; it is not
+      // worth dead-lettering a document delivery.
+      let audience = null as ReturnType<typeof audienceForRelationshipType>;
+      const deliveryId = job.payload.documentDeliveryId;
+      if (job.templateCode === "document_delivered" && typeof deliveryId === "string") {
+        const { data: delivery } = await supabase
+          .from("document_deliveries")
+          .select("recipient_relationship_type")
+          .eq("id", deliveryId)
+          .maybeSingle();
+        audience = audienceForRelationshipType(delivery?.recipient_relationship_type);
+      }
+
       outcome = rendered
         ? await transport.send({
             notificationJobId: job.notificationJobId,
@@ -76,6 +98,7 @@ export async function runNotificationDispatch(
             to: job.recipientAddress,
             locale: job.locale,
             templateCode: job.templateCode,
+            audience,
             rendered,
           })
         : { ok: false, errorCode: "UNKNOWN_TEMPLATE_CODE", retryable: false };

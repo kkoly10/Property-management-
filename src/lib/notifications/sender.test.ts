@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TEMPLATE_CODES } from "./templates";
-import { TEMPLATE_AUDIENCE, isAccessMail, senderFor } from "./sender";
+import { TEMPLATE_AUDIENCE, audienceForRelationshipType, isAccessMail, senderFor } from "./sender";
 
 beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_MARKETING_ORIGIN", "https://crecyos.com");
@@ -59,5 +59,33 @@ describe("transactional sender identity", () => {
   it("replies to the audience's own domain", () => {
     expect(senderFor("resident_invitation").replyTo).toBe("support@crecyliving.com");
     expect(senderFor("owner_invitation").replyTo).toBe("support@crecyos.com");
+  });
+});
+
+describe("document_delivered, the one template with more than one audience", () => {
+  it("maps a relationship type to the recipient's brand", () => {
+    expect(audienceForRelationshipType("resident_person")).toBe("resident");
+    expect(audienceForRelationshipType("owner_entity")).toBe("owner");
+    // Crecy Vendor is reserved with nothing behind it, so it must not appear as a From brand.
+    expect(audienceForRelationshipType("vendor_contact")).toBe("operator");
+    expect(audienceForRelationshipType(null)).toBeNull();
+    expect(audienceForRelationshipType("something_else")).toBeNull();
+  });
+
+  it("sends from the recipient's brand when the audience is resolved", () => {
+    expect(senderFor("document_delivered", "resident").from).toMatch(/^Crecy Living <.*@mail\.crecyliving\.com>$/);
+    expect(senderFor("document_delivered", "owner").from).toMatch(/^Crecy Owner <.*@mail\.crecyos\.com>$/);
+  });
+
+  it("falls back to the neutral identity when it cannot be resolved", () => {
+    // Unresolvable must not dead-letter or guess: it degrades to what it did before.
+    expect(senderFor("document_delivered", null).from).toMatch(/^Crecy </);
+    expect(senderFor("document_delivered").from).toMatch(/^Crecy </);
+  });
+
+  it("stays unsubscribable whichever audience it resolves to", () => {
+    for (const audience of ["resident", "owner", null] as const) {
+      expect(senderFor("document_delivered", audience).unsubscribable).toBe(true);
+    }
   });
 });

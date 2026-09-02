@@ -21,6 +21,8 @@ export type OutboundMessage = {
   locale: string;
   templateCode: string;
   rendered: RenderedNotification;
+  /** Resolved by the worker when the template alone cannot identify the recipient's brand. */
+  audience?: "operator" | "resident" | "owner" | null;
 };
 
 export type NotificationTransport = {
@@ -77,6 +79,7 @@ export function getNotificationTransport(): NotificationTransport | null {
             to: message.to,
             locale: message.locale,
             templateCode: message.templateCode,
+            ...(message.audience ? { audience: message.audience } : {}),
             subject: message.rendered.subject,
             body: message.rendered.body,
           }),

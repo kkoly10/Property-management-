@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { carriesCredentialInUrl, matchesSecret } from "@/lib/runtime/worker-auth";
-import { senderFor } from "@/lib/notifications/sender";
+import { senderFor, type MailAudience } from "@/lib/notifications/sender";
 import { originForAudience } from "@/lib/runtime/host";
 
 /**
@@ -28,6 +28,7 @@ type Incoming = {
   templateCode: string;
   subject: string;
   body: string;
+  audience: MailAudience | null;
 };
 
 function badRequest(code: string, message: string, status: number) {
@@ -46,6 +47,10 @@ function readMessage(value: unknown): Incoming | null {
     templateCode: str("templateCode"),
     subject: str("subject"),
     body: str("body"),
+    // Only a known audience is honored. The worker resolves this from the recipient's relationship
+    // where the template code cannot express it; anything else falls through to the template mapping
+    // rather than letting a caller name an arbitrary brand.
+    audience: (["operator", "resident", "owner"] as const).find((a) => a === v.audience) ?? null,
   };
   if (!message.notificationJobId || !message.to || !message.templateCode || !message.subject || !message.body) return null;
   return message;
@@ -77,7 +82,7 @@ export async function POST(request: Request) {
     return badRequest("UNSUPPORTED_CHANNEL", `This relay sends email only, not ${message.channel}.`, 422);
   }
 
-  const sender = senderFor(message.templateCode);
+  const sender = senderFor(message.templateCode, message.audience);
 
   // List-Unsubscribe goes on CATEGORY mail only, and only when a preference surface actually exists
   // for that audience. Access mail (invitations) must never carry it: unsubscribing from the message

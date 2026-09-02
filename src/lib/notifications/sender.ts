@@ -88,8 +88,30 @@ export type SenderIdentity = {
   unsubscribable: boolean;
 };
 
-export function senderFor(templateCode: string): SenderIdentity {
-  const audience = TEMPLATE_AUDIENCE[templateCode] ?? "operator";
+/**
+ * A recipient's relationship type, as stored on the delivery, mapped to the brand that should appear
+ * in the From line.
+ *
+ * `vendor_contact` maps to the operator identity deliberately: Crecy Vendor is a reserved surface with
+ * nothing built behind it (FD-037), so inventing a vendor brand in a From line would advertise a
+ * product that does not exist.
+ */
+export function audienceForRelationshipType(relationshipType: string | null | undefined): MailAudience | null {
+  if (relationshipType === "resident_person") return "resident";
+  if (relationshipType === "owner_entity") return "owner";
+  if (relationshipType === "vendor_contact") return "operator";
+  return null;
+}
+
+/**
+ * `audienceOverride` carries an audience the caller resolved from data the template code cannot express.
+ * `document_delivered` is the case that needs it: the same template reaches residents and owners, so
+ * the template code alone would send half of them from the wrong brand. When no override is supplied
+ * the mapping falls back to the template, and an unknown template falls back to the operator identity
+ * rather than guessing a recipient brand.
+ */
+export function senderFor(templateCode: string, audienceOverride?: MailAudience | null): SenderIdentity {
+  const audience = audienceOverride ?? TEMPLATE_AUDIENCE[templateCode] ?? "operator";
   const override = envIdentity(`CRECY_MAIL_FROM_${audience.toUpperCase()}`);
   const from = override ?? `${DISPLAY_NAME[audience]} <notifications@${defaultMailDomain(audience)}>`;
 
