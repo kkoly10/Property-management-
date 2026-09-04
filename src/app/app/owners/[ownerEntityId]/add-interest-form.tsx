@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
+import { InfoHint } from "@/components/ui/tooltip";
 import type { OwnerProperty } from "@/lib/data/owners";
 
 // Percentage in, fraction out: the schema stores a fraction in (0,1], humans think in percent.
@@ -65,13 +66,13 @@ export function AddInterestForm({ organizationId, ownerEntityId, properties, all
       <form onSubmit={submit} className="space-y-4">
         <div><Label htmlFor="interest-property">Property</Label><NativeSelect id="interest-property" value={propertyId} onChange={(event) => changed(setPropertyId)(event.target.value)} disabled={disabled} className="mt-2">{properties.map((property) => <option key={property.propertyId} value={property.propertyId}>{property.propertyName}</option>)}</NativeSelect>{existing > 0 ? <p className="mt-1.5 text-xs text-muted-foreground">{existing}% of this property is already allocated. Statements require each property to total 100%.</p> : null}</div>
         <div className="grid gap-4 sm:grid-cols-3">
-          <div><Label htmlFor="interest-share">Share (%)</Label><Input id="interest-share" inputMode="decimal" value={percent} onChange={(event) => changed(setPercent)(event.target.value)} placeholder="50" disabled={disabled} className="mt-2" /></div>
+          <div><div className="flex items-center gap-1.5"><Label htmlFor="interest-share">Share (%)</Label><InfoHint label="This owner's percentage of the property. Every property's active owners must total 100% before owner statements can generate — a property can be split across several owners." /></div><Input id="interest-share" inputMode="decimal" value={percent} onChange={(event) => changed(setPercent)(event.target.value)} placeholder="50" disabled={disabled} className="mt-2" /></div>
           <div><Label htmlFor="interest-from">Effective from</Label><Input id="interest-from" type="date" value={effectiveFrom} onChange={(event) => changed(setEffectiveFrom)(event.target.value)} disabled={disabled} className="mt-2" /></div>
           <div><Label htmlFor="interest-to">Effective to <span className="text-muted-foreground">(optional)</span></Label><Input id="interest-to" type="date" value={effectiveTo} onChange={(event) => changed(setEffectiveTo)(event.target.value)} disabled={disabled} className="mt-2" /></div>
         </div>
         {error ? <Alert variant="destructive"><AlertTitle>Interest not added</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
         {added ? <Alert variant="info"><CheckCircle2 className="h-5 w-5" /><AlertTitle>Interest recorded</AlertTitle><AlertDescription>It now appears in this owner&apos;s holdings.</AlertDescription></Alert> : null}
-        <Button type="submit" disabled={disabled || pending || !percent.trim() || !effectiveFrom}>{pending ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Plus aria-hidden="true" className="h-4 w-4" />}{pending ? "Adding…" : "Add interest"}</Button>
+        <Button type="submit" disabled={disabled || pending || !percent.trim() || !effectiveFrom}>{pending ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Plus aria-hidden="true" className="h-4 w-4" />}{pending ? "Addingâ¦" : "Add interest"}</Button>
       </form>
     </CardContent>
   </Card>;
