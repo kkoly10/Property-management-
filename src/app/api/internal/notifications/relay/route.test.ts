@@ -83,6 +83,24 @@ describe("the Resend relay", () => {
     expect((await POST(message())).status).toBe(502);
   });
 
+  it("retries an invalid or unverified provider configuration instead of dead-lettering it", async () => {
+    // A wrong API key and an unverified sending domain are OUR configuration, fixable without touching
+    // the message. Dead-lettering the queue over them would mean a fix arrives to find nothing left to
+    // send. Resend surfaces these as 401/403 and, confusingly, as a 400/422 validation_error whose body
+    // names the key or the domain — all must be retryable (502), unlike a genuinely bad message.
+    resendReplies(401, { message: "API key is invalid", name: "validation_error" });
+    expect((await POST(message())).status).toBe(502);
+    resendReplies(403, { message: "The mail.crecyliving.com domain is not verified." });
+    expect((await POST(message())).status).toBe(502);
+    resendReplies(400, { message: "API key is invalid", name: "validation_error" });
+    expect((await POST(message())).status).toBe(502);
+    resendReplies(422, { message: "The domain is not verified. Please verify a domain." });
+    expect((await POST(message())).status).toBe(502);
+    // But a genuinely bad recipient is still a dead letter — retrying an identical send cannot fix it.
+    resendReplies(422, { message: "invalid `to` field" });
+    expect((await POST(message())).status).toBe(422);
+  });
+
   it("rejects a malformed message without calling the provider", async () => {
     expect((await POST(message({ to: "" }))).status).toBe(422);
     expect((await POST(message({ channel: "sms" }))).status).toBe(422);

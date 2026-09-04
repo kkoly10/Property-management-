@@ -125,10 +125,20 @@ export async function POST(request: Request) {
   }
 
   if (!response.ok) {
-    // 429 and 5xx are the provider's own state; retry behind the worker's backoff. Every other 4xx is
-    // Resend rejecting THIS message (bad address, unverified domain), which retrying cannot fix.
-    const retryable = response.status === 429 || response.status >= 500;
     const detail = await response.text().catch(() => "");
+    // Retryable means "a later identical attempt could succeed", which turns on WHOSE fault this is. A
+    // dead letter cannot be revived, so anything that reflects OUR configuration must stay retryable, or
+    // a fix arrives to find the queue already destroyed:
+    //   * 429 / 5xx      — the provider's own transient state.
+    //   * 401 / 403      — our credential, or a sending domain not verified yet: config we are fixing.
+    //   * a 400/422 validation_error whose body names the API key or an unverified domain — Resend
+    //     reports the same two config faults this way too, so match the message, not just the status.
+    // Everything else 4xx is Resend rejecting THIS message (bad address, oversized): retrying cannot fix
+    // it, so it dead-letters.
+    const marker = detail.toLowerCase();
+    const configFault = response.status === 401 || response.status === 403
+      || /api[ _]?key|not verified|verify a domain|domain is not verified|restricted/.test(marker);
+    const retryable = response.status === 429 || response.status >= 500 || configFault;
     return badRequest(
       retryable ? "MAIL_PROVIDER_UNAVAILABLE" : "MAIL_PROVIDER_REJECTED",
       `Resend responded ${response.status}. ${detail.slice(0, 300)}`.trim(),
