@@ -10,6 +10,7 @@ const badgeVariants = cva("inline-flex items-center gap-1 rounded-full border px
       success: "border-[#abefc6] bg-[#ecfdf3] text-success",
       warning: "border-[#fedf89] bg-[#fffaeb] text-warning",
       info: "border-[#b2ddff] bg-[#eff8ff] text-info",
+      destructive: "border-destructive/30 bg-destructive/10 text-destructive",
     },
   },
   defaultVariants: { variant: "default" },
