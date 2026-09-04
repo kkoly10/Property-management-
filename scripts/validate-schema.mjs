@@ -66,6 +66,7 @@ const organizationCreationBoundarySql = await readFile(resolve(root, "supabase/m
 const scanRecoveryTracingSql = await readFile(resolve(root, "supabase/migrations/20260829110000_phase_2_scan_recovery_and_tracing.sql"), "utf8");
 const relationshipProjectionsSql = await readFile(resolve(root, "supabase/migrations/20260829120000_phase_8_relationship_projections.sql"), "utf8");
 const runtimeDiagnosticsSql = await readFile(resolve(root, "supabase/migrations/20260829130000_phase_8_runtime_diagnostics.sql"), "utf8");
+const ownerSetupSql = await readFile(resolve(root, "supabase/migrations/20260903000000_phase_8_owner_setup.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -848,6 +849,7 @@ async function validateRecurringCharges() {
   await db.exec(scanRecoveryTracingSql);
   await db.exec(relationshipProjectionsSql);
   await db.exec(runtimeDiagnosticsSql);
+  await db.exec(ownerSetupSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
@@ -2293,6 +2295,52 @@ async function validateRecurringCharges() {
   const operatorStatements = (await db.query(`select public.get_operator_owner_statement_workspace('${organization.organizationId}') as result`)).rows[0].result;
   const operatorOwnerA = operatorStatements.owners.find((item) => item.ownerEntityId === ownerEntityA);
   assert(operatorStatements.owners.length === 2 && operatorOwnerA?.latestStatement.versionNumber === 2 && operatorOwnerA.latestStatement.availableToRemitMinor === 40698 && operatorOwnerA.ownerPayableMinor === 40698 && operatorOwnerA.remittances.length === 1 && operatorOwnerA.evidenceDocuments.length === 1, "The operator statement workspace omitted the latest correction, payable, evidence, or remittance.");
+
+  // ── Owner setup commands (phase 8) ──────────────────────────────────────────────────────────────
+  // The operator can now build the owner/property structure that statements assume, through commands,
+  // with no direct insert. A far-future 2031 window keeps these interests clear of every statement
+  // period asserted above. admin is org_owner (grants '*'), the org is still on growth (which carries
+  // portal.owner.standard), so both authorization and entitlement are satisfied.
+  await db.exec(`reset role`);
+  const ownerEntitiesBefore = Number((await db.query(`select count(*)::int as count from public.owner_entities where organization_id='${organization.organizationId}'`)).rows[0].count);
+  const interestsBefore = Number((await db.query(`select count(*)::int as count from public.ownership_interests where organization_id='${organization.organizationId}'`)).rows[0].count);
+  const entityCreatedBefore = Number((await db.query(`select count(*)::int as count from audit.audit_events where action_code='owner.entityCreated' and organization_id='${organization.organizationId}'`)).rows[0].count);
+  const interestCreatedBefore = Number((await db.query(`select count(*)::int as count from audit.audit_events where action_code='owner.interestCreated' and organization_id='${organization.organizationId}'`)).rows[0].count);
+  const outboxBefore = Number((await db.query(`select count(*)::int as count from private.outbox_events where event_type in ('owner.entityCreated','owner.interestCreated') and organization_id='${organization.organizationId}'`)).rows[0].count);
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const ownerX = (await db.query(`select public.create_owner_entity('${organization.organizationId}','Rivera Family Trust','trust','rivera@example.com','+14045550111','owner-x-key-0001') as result`)).rows[0].result;
+  const ownerY = (await db.query(`select public.create_owner_entity('${organization.organizationId}','Cardinal Holdings LLC','company',null,null,'owner-y-key-0002') as result`)).rows[0].result;
+  assert(ownerX.ownerEntityId && ownerX.entityType === "trust" && ownerX.status === "active" && ownerY.ownerEntityId && ownerY.ownerEntityId !== ownerX.ownerEntityId, "create_owner_entity did not return two distinct active owners.");
+
+  // Idempotent replay: same key and inputs returns the same owner rather than creating a second.
+  const ownerXReplay = (await db.query(`select public.create_owner_entity('${organization.organizationId}','Rivera Family Trust','trust','rivera@example.com','+14045550111','owner-x-key-0001') as result`)).rows[0].result;
+  assert(ownerXReplay.ownerEntityId === ownerX.ownerEntityId, "create_owner_entity idempotent replay minted a second owner.");
+
+  const interestX = (await db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerX.ownerEntityId}',0.7,'2031-01-01',null,'interest-x-key-001') as result`)).rows[0].result;
+  const interestY = (await db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerY.ownerEntityId}',0.3,'2031-01-01','2031-12-31','interest-y-key-001') as result`)).rows[0].result;
+  assert(Number(interestX.ownershipFraction) === 0.7 && Number(interestY.ownershipFraction) === 0.3 && interestX.ownershipInterestId !== interestY.ownershipInterestId, "create_ownership_interest did not persist the two fractions.");
+
+  // The one write-time guard: the same owner cannot hold two overlapping interests on one property.
+  await expectDatabaseError(() => db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerX.ownerEntityId}',0.2,'2031-06-01',null,'interest-x-overlap-1')`), "OWNERSHIP_INTEREST_OVERLAP");
+  // A fraction outside (0,1] is refused before anything is written.
+  await expectDatabaseError(() => db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerY.ownerEntityId}',1.5,'2032-01-01',null,'interest-bad-fraction')`), "INVALID_OWNERSHIP_FRACTION");
+  // An interest for an owner in another organization is not found, not silently cross-linked.
+  await expectDatabaseError(() => db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerEntityA === undefined ? "00000000-0000-4000-8000-0000000000ff" : "00000000-0000-4000-8000-0000000000ff"}',0.1,'2033-01-01',null,'interest-missing-owner')`), "OWNER_ENTITY_NOT_FOUND");
+
+  // An operator with no access to the organization cannot create owners in it.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(() => db.query(`select public.create_owner_entity('${organization.organizationId}','Intruder Co','company',null,null,'outsider-owner-key-1')`), "OWNER_SCOPE_DENIED");
+
+  await db.exec(`reset role`);
+  const ownerEntitiesAfter = Number((await db.query(`select count(*)::int as count from public.owner_entities where organization_id='${organization.organizationId}'`)).rows[0].count);
+  const interestsAfter = Number((await db.query(`select count(*)::int as count from public.ownership_interests where organization_id='${organization.organizationId}'`)).rows[0].count);
+  const entityCreatedAfter = Number((await db.query(`select count(*)::int as count from audit.audit_events where action_code='owner.entityCreated' and organization_id='${organization.organizationId}'`)).rows[0].count);
+  const interestCreatedAfter = Number((await db.query(`select count(*)::int as count from audit.audit_events where action_code='owner.interestCreated' and organization_id='${organization.organizationId}'`)).rows[0].count);
+  const outboxAfter = Number((await db.query(`select count(*)::int as count from private.outbox_events where event_type in ('owner.entityCreated','owner.interestCreated') and organization_id='${organization.organizationId}'`)).rows[0].count);
+  assert(ownerEntitiesAfter - ownerEntitiesBefore === 2, "Exactly two owner entities should have been created (replay and denials created none).");
+  assert(interestsAfter - interestsBefore === 2, "Exactly two ownership interests should have been created (overlap, bad fraction and missing owner created none).");
+  assert(entityCreatedAfter - entityCreatedBefore === 2 && interestCreatedAfter - interestCreatedBefore === 2 && outboxAfter - outboxBefore === 4, "Owner-setup audit and outbox traces were not written exactly once per creation.");
 
   await db.exec(`reset role;
     update public.organization_subscriptions set plan_code='starter' where organization_id='${organization.organizationId}';
