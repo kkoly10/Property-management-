@@ -83,7 +83,7 @@ Per the authority's gates. Not re-derived here; tracked in Appendix A of the pla
 | Item | Status |
 | --- | --- |
 | legal package | draft — not published |
-| restore drill | FAIL — never performed |
+| restore drill | FAIL — never performed (blocked by Blocker 2) |
 | security gate | UNVERIFIED — not run this checkpoint |
 | support investigation | UNVERIFIED |
 | privacy-request smoke | UNVERIFIED — newly added requirement |
@@ -116,7 +116,7 @@ Not Pilot Ready: Gates 2–10 are not green.
 | 6 — Owner | 🔴 FAIL | Owner directory, interests and approval not built |
 | 7 — Stripe | 🔴 FAIL | Never exercised |
 | 8 — Legal | 🔴 FAIL | Package unpublished — blocks org creation, which fails closed by design |
-| 9 — Operational safety | 🔴 FAIL | No restore drill, no error tracking, security gate not run |
+| 9 — Operational safety | 🟡 PARTIAL | 6 of 8 sub-criteria met on adoption (named owner, severity model, pause triggers, rollback rule, DB-incident rule, last-known-good recorded). Remaining: error tracking, restore drill |
 | 10 — Full certification | 🔴 NOT RUN | Depends on all above |
 
 ---
