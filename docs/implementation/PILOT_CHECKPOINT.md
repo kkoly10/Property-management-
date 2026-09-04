@@ -19,9 +19,9 @@ Nothing here is carried over from an older runbook.
 | production ↔ main | in sync; deployment created 2026-09-04 00:40 EDT from the `c10c8ae` push | VERIFIED |
 | migrations in repository | 60, latest `20260829130000_phase_8_runtime_diagnostics.sql` | VERIFIED — filesystem |
 | pending CONTRACTION migration | `migrations-contract/20260828130000_phase_8_close_unscoped_operator_surfaces.sql` | VERIFIED — filesystem |
-| migrations applied to production DB | **61**, earliest `20260720095008`, latest `20260829130000` | VERIFIED — dashboard SQL editor |
+| migrations applied to production DB | **62**, latest `20260903000000_phase_8_owner_setup` (applied via CLI `supabase db push`) | VERIFIED — `supabase migration list`, dry-run up to date |
 | pending contraction actually applied? | **No** — `20260828130000` absent from `schema_migrations` | VERIFIED |
-| repo ↔ production migration parity | **DRIFT — 61 applied vs 60 in repo** | VERIFIED — see below |
+| repo ↔ production migration parity | **CLEAN** — drift resolved; repo now reproduces production | VERIFIED |
 
 The contract migration revokes EXECUTE on unscoped operator surfaces and is deploy-ordered: it may
 only be applied after a build that calls the scoped forms is live. It must not be applied casually.
@@ -110,7 +110,7 @@ Not Pilot Ready: Gates 2–10 are not green.
 
 | Gate | Status | Blocking fact |
 | --- | --- | --- |
-| 1 — Production identity | 🟡 PARTIAL | Everything identified, but production carries a migration `main` does not (see drift finding). Gate 1 should not pass until provenance is resolved |
+| 1 — Production identity | 🟢 **GREEN** | Deployment, project, domains, Auth all identified; migration parity now clean (drift resolved, owner-setup applied) |
 | 2 — Runtime | 🔴 FAIL | All four workers down on one missing secret; no alerting |
 | 3 — Scanner | 🔴 FAIL | No scanner configured; async scan UX not built |
 | 4 — Communication/Auth | 🟡 PARTIAL | Domains verified and Auth redirects configured; no API key, so nothing has ever been delivered |
@@ -184,6 +184,14 @@ What it does break:
 Resolution is a decision, not a mechanical fix. Either merge the branch so the migration comes under
 review and test, or add a forward migration on `main` that drops the index and function (clean, since
 nothing calls it), or consciously accept and document the divergence. Do not silently leave it.
+
+**RESOLVED 2026-09-04.** Adopted: the exact original migration file was restored from commit `e8ad10c`
+into `supabase/migrations/`, so the repository now reproduces production. This was also the prerequisite
+for applying owner-setup — `supabase db push` refused with `LegacyDbPushMissingLocalError` until the
+histories reconciled. The `get_operator_payment_export` function is adopted at the schema level only;
+its API/UI remain on the unmerged branch and are out of scope. Follow-up: it is not yet in the `test:db`
+replay list (which is an explicit allowlist), so it has no embedded-Postgres coverage — a benign gap,
+since nothing on `main` calls it.
 
 1. **`SUPABASE_SECRET_KEY`.** One value unblocks all four workers. Nothing in Gates 2, 3, 5, 6 or 7 can
    be certified while it is missing, because every one of those journeys depends on a worker.
