@@ -19,7 +19,9 @@ Nothing here is carried over from an older runbook.
 | production ↔ main | in sync; deployment created 2026-09-04 00:40 EDT from the `c10c8ae` push | VERIFIED |
 | migrations in repository | 60, latest `20260829130000_phase_8_runtime_diagnostics.sql` | VERIFIED — filesystem |
 | pending CONTRACTION migration | `migrations-contract/20260828130000_phase_8_close_unscoped_operator_surfaces.sql` | VERIFIED — filesystem |
-| migrations applied to production DB | **UNKNOWN** | UNVERIFIED — see Blocker 2 |
+| migrations applied to production DB | **61**, earliest `20260720095008`, latest `20260829130000` | VERIFIED — dashboard SQL editor |
+| pending contraction actually applied? | **No** — `20260828130000` absent from `schema_migrations` | VERIFIED |
+| repo ↔ production migration parity | **DRIFT — 61 applied vs 60 in repo** | VERIFIED — see below |
 
 The contract migration revokes EXECUTE on unscoped operator surfaces and is deploy-ordered: it may
 only be applied after a build that calls the scoped forms is live. It must not be applied casually.
@@ -108,7 +110,7 @@ Not Pilot Ready: Gates 2–10 are not green.
 
 | Gate | Status | Blocking fact |
 | --- | --- | --- |
-| 1 — Production identity | 🟡 PARTIAL | Deployment, project, domains and Auth config identified; applied-migration inventory unknown |
+| 1 — Production identity | 🟡 PARTIAL | Everything identified, but production carries a migration `main` does not (see drift finding). Gate 1 should not pass until provenance is resolved |
 | 2 — Runtime | 🔴 FAIL | All four workers down on one missing secret; no alerting |
 | 3 — Scanner | 🔴 FAIL | No scanner configured; async scan UX not built |
 | 4 — Communication/Auth | 🟡 PARTIAL | Domains verified and Auth redirects configured; no API key, so nothing has ever been delivered |
@@ -133,14 +135,17 @@ Not Pilot Ready: Gates 2–10 are not green.
 - **Why not done here:** entering a live vendor API key into a field is outside what this agent does.
 - **After it is set:** redeploy, then the four workers can be certified (§1.3).
 
-### Blocker 2 — Supabase administrative access (blocks Gate 1 completion)
+### Blocker 2 — Supabase administrative access — RESOLVED
 
-- Supabase MCP returns `You do not have permission to perform this action` for every operation this
-  checkpoint attempted, and the dashboard does not render in the in-app browser.
-- **Needed:** either re-grant Supabase MCP access, or paste the output of
-  `select count(*), max(version) from supabase_migrations.schema_migrations;`
-- **Why it matters:** Gate 1 requires knowing which migrations are applied, and the pending contraction
-  migration cannot be sequenced safely without it.
+Resolved during this checkpoint via the authenticated dashboard SQL editor. Recorded because the
+route matters for the next operator:
+
+- **Supabase MCP:** denied session-wide (`You do not have permission to perform this action`).
+- **Supabase CLI:** installed (v2.116.0) and authenticated, but as `komlankouhiko@gmail.com`, which has
+  **no privileges** on this project (`supabase link` returns an access-control error). The project
+  belongs to `comlan11@gmail.com`'s org.
+- **Working route:** the dashboard SQL editor in the authenticated browser session. It needs roughly
+  40-60s to render; an earlier attempt was abandoned too soon and wrongly recorded as blocked.
 
 ### Blocker 3 — `RESEND_API_KEY` (blocks Gate 4)
 
@@ -151,7 +156,34 @@ Not Pilot Ready: Gates 2–10 are not green.
 
 ---
 
-## Critical path from current production state
+## Finding — production carries a migration `main` does not
+
+`20260725020649_phase_8_payment_csv_export` is applied to the production database and exists **only** on
+the unmerged branch `origin/codex/phase-8-payment-csv-export` (commit `e8ad10c`, 2026-07-24). It is not
+on `main`, was never merged, and `scripts/validate-schema.mjs` has never heard of it.
+
+It defines one index (`payments_org_activity_export_idx`) and one function,
+`public.get_operator_payment_export(date,date,uuid,uuid)`, granted EXECUTE to `authenticated`.
+**Zero code on `main` calls it.**
+
+The function itself is correctly built — `security definer`, `set search_path = ''`, an
+`AUTHENTICATION_REQUIRED` gate, an MFA gate, and `private.has_property_access` finance scoping with
+`OPERATOR_FINANCE_DENIED` / `PROPERTY_SCOPE_DENIED`. This is a provenance and coverage problem, not a
+known vulnerability, and it should not be described as one.
+
+What it does break:
+
+1. **The repository no longer reproduces production.** `npm run test:db` replays 60 migrations;
+   production runs 61. Every schema assertion that suite makes is against a schema that is not the one
+   serving customers — which also undermines the §7.2 restore drill, since a restore verified against
+   the repo would diverge.
+2. **An `authenticated`-executable RPC exists in production that main's adversarial/RLS suite never
+   exercises**, because that suite only knows main's migrations.
+3. **A future merge of that branch is ambiguous** — the migration is already applied.
+
+Resolution is a decision, not a mechanical fix. Either merge the branch so the migration comes under
+review and test, or add a forward migration on `main` that drops the index and function (clean, since
+nothing calls it), or consciously accept and document the divergence. Do not silently leave it.
 
 1. **`SUPABASE_SECRET_KEY`.** One value unblocks all four workers. Nothing in Gates 2, 3, 5, 6 or 7 can
    be certified while it is missing, because every one of those journeys depends on a worker.
