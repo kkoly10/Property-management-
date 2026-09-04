@@ -27,6 +27,7 @@ describe("the server Supabase credential", () => {
     // provisioned a real SUPABASE_SERVICE_ROLE_KEY. Selecting the first DEFINED value picks the
     // placeholder and throws with a real credential sitting unused in the next variable.
     vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_replace_me");
+    vi.stubEnv("SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "eyJ-real-service-role");
     createAdminClient();
     expect(captured.key).toBe("eyJ-real-service-role");
@@ -34,6 +35,7 @@ describe("the server Supabase credential", () => {
 
   it("prefers the modern key when both are real", () => {
     vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_real");
+    vi.stubEnv("SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "eyJ-real-service-role");
     createAdminClient();
     expect(captured.key).toBe("sb_secret_real");
@@ -41,6 +43,7 @@ describe("the server Supabase credential", () => {
 
   it("treats empty and whitespace-only values as unset", () => {
     vi.stubEnv("SUPABASE_SECRET_KEY", "   ");
+    vi.stubEnv("SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "eyJ-real-service-role");
     createAdminClient();
     expect(captured.key).toBe("eyJ-real-service-role");
@@ -51,7 +54,31 @@ describe("the server Supabase credential", () => {
     // authenticate as nobody and produce confusing downstream errors instead of one clear one.
     vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_replace_me");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "");
-    expect(() => createAdminClient()).toThrow(/SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY/);
+    // The message must name the project it needed a credential FOR, so a wrong-project
+    // configuration is diagnosable from the error alone.
+    expect(() => createAdminClient()).toThrow(/No server Supabase credential is configured for project\.supabase\.co/);
+    expect(() => createAdminClient()).toThrow(/SUPABASE_SECRET_KEY/);
+    expect(captured.key).toBeNull();
+  });
+});
+
+describe("the integration credential is refused when it belongs to another project", () => {
+  it("ignores SUPABASE_SERVICE_ROLE_KEY when SUPABASE_URL names a different project", () => {
+    // The real production defect: the Supabase↔Vercel integration was bound to a different, paused
+    // project, so this key was valid — for the wrong database. Accepting it produced authenticated
+    // requests that failed inside every RPC, which is a worse failure than having no credential.
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_replace_me");
+    vi.stubEnv("SUPABASE_URL", "https://some-other-project.supabase.co");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "eyJ-key-for-the-wrong-project");
+    expect(() => createAdminClient()).toThrow(/project\.supabase\.co/);
+    expect(captured.key).toBeNull();
+  });
+
+  it("ignores it when the integration declares no project at all", () => {
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_replace_me");
+    vi.stubEnv("SUPABASE_URL", "");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "eyJ-orphan-key");
+    expect(() => createAdminClient()).toThrow();
     expect(captured.key).toBeNull();
   });
 });

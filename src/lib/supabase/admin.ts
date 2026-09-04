@@ -36,14 +36,37 @@ function usableCredential(name: string): string | undefined {
   return value;
 }
 
+/**
+ * True when the Supabase↔Vercel integration is bound to the SAME project the app is configured for.
+ *
+ * This guard is not hypothetical. On this deployment the integration was linked to a different,
+ * PAUSED Supabase project, so SUPABASE_SERVICE_ROLE_KEY was a perfectly valid key for the wrong
+ * database. Pairing it with the correct project URL produced authenticated-looking requests that
+ * failed inside every RPC — a 422 "jobs could not be claimed" instead of a legible configuration
+ * error. A credential for another project is not a fallback; it is a worse failure than none.
+ */
+function integrationMatchesConfiguredProject(configuredUrl: string): boolean {
+  const integrationUrl = process.env.SUPABASE_URL?.trim();
+  if (!integrationUrl) return false;
+  try {
+    return new URL(integrationUrl).host === new URL(configuredUrl).host;
+  } catch {
+    return false;
+  }
+}
+
 export function createAdminClient() {
   const { url } = requirePublicSupabaseConfig();
-  const secretKey = ADMIN_CREDENTIALS.map(usableCredential).find(Boolean);
+  const names = integrationMatchesConfiguredProject(url)
+    ? ADMIN_CREDENTIALS
+    : ADMIN_CREDENTIALS.filter((name) => name !== "SUPABASE_SERVICE_ROLE_KEY");
+  const secretKey = names.map(usableCredential).find(Boolean);
 
   if (!secretKey) {
     throw new Error(
-      `No server Supabase credential is configured. Set ${ADMIN_CREDENTIALS.join(" or ")} `
-      + "to a real value (a placeholder containing \"replace_me\" is treated as unset).",
+      `No server Supabase credential is configured for ${new URL(url).host}. Set SUPABASE_SECRET_KEY `
+      + "to that project's secret key. (A placeholder containing \"replace_me\" counts as unset, and "
+      + "SUPABASE_SERVICE_ROLE_KEY is ignored unless SUPABASE_URL names the same project.)",
     );
   }
 
