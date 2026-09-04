@@ -103,7 +103,7 @@ Per the authority's gates. Not re-derived here; tracked in Appendix A of the pla
 | Item | Status |
 | --- | --- |
 | legal package | draft — not published |
-| restore drill | FAIL — never performed (blocked by Blocker 2) |
+| restore drill | **FAIL — no backup exists.** Project is Free tier: no automated backups, PITR off, `backups_count: 0`. Needs Supabase Pro before the drill can run. See RESTORE_RUNBOOK.md |
 | security gate | UNVERIFIED — not run this checkpoint |
 | support investigation | UNVERIFIED |
 | privacy-request smoke | UNVERIFIED — newly added requirement |
