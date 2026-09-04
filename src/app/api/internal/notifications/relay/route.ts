@@ -92,7 +92,7 @@ export async function POST(request: Request) {
   // The header is the URL form only, not RFC 8058 one-click: that needs a POST endpoint that opts a
   // recipient out with no session, and inventing one would be a way around the sign-in these
   // preferences are scoped by. The link lands on the page and the user opts out there.
-  const unsubscribeUrl = unsubscribeUrlFor(message.templateCode);
+  const unsubscribeUrl = unsubscribeUrlFor(message.templateCode, message.audience);
   const headers: Record<string, string> = {};
   if (unsubscribeUrl) headers["List-Unsubscribe"] = `<${unsubscribeUrl}>`;
 

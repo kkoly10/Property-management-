@@ -159,7 +159,8 @@ const RECIPIENT_AUDIENCE: Record<string, MailAudience | null> = {
   staff_invitation: "operator",
   resident_invitation: "resident",
   owner_invitation: "owner",
-  // Resident or owner, decided per delivery by recipient_relationship_type, which the relay is not told.
+  // Resident or owner — the static default is null, but the worker resolves the real audience per
+  // delivery from recipient_relationship_type and passes it to unsubscribeUrlFor as an override.
   document_delivered: null,
   announcement_published: "resident",
   conversation_message_received: "resident",
@@ -174,9 +175,12 @@ const RECIPIENT_AUDIENCE: Record<string, MailAudience | null> = {
  *   1. Access mail. Unsubscribing from the message that grants you access would lock you out.
  *   2. Unknown recipient surface, per `RECIPIENT_AUDIENCE` above.
  */
-export function unsubscribeUrlFor(templateCode: string): string | null {
+export function unsubscribeUrlFor(templateCode: string, audienceOverride?: MailAudience | null): string | null {
   if (isAccessMail(templateCode)) return null;
-  const audience = RECIPIENT_AUDIENCE[templateCode] ?? null;
+  // The override wins when the caller resolved a per-recipient audience the template code cannot
+  // express — document_delivered reaching a resident vs an owner. Without it, the static map decides,
+  // and a template with no honest audience (or an ambiguous one and no override) yields no header.
+  const audience = audienceOverride ?? RECIPIENT_AUDIENCE[templateCode] ?? null;
   if (!audience) return null;
   const origin = originForAudience(audience);
   // In local development all three audiences collapse onto the one app origin, which is still absolute

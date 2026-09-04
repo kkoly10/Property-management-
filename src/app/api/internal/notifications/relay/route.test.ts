@@ -110,12 +110,23 @@ describe("the Resend relay", () => {
   });
 
   it("omits List-Unsubscribe on category mail whose recipient surface is ambiguous", async () => {
-    // document_delivered is category mail, but its recipient is a resident OR an owner (resolved from
-    // user_relationships) and the relay is not told which. Its "operator" audience is a neutral FROM
-    // identity, not a recipient claim, so an app.crecyos.com unsubscribe link would land a resident on
-    // an operator sign-in they cannot pass. No header beats a header that goes nowhere useful.
+    // document_delivered is category mail whose recipient is a resident OR an owner. With no resolved
+    // audience the relay cannot name an honest preference page, so it omits the header rather than
+    // pointing a resident at an operator sign-in they cannot pass.
     await POST(message({ templateCode: "document_delivered" }));
     expect(payload().headers).toBeUndefined();
+  });
+
+  it("resolves a resident List-Unsubscribe for document_delivered once the audience is known", async () => {
+    // The worker resolves document_delivered's audience from recipient_relationship_type and passes it,
+    // so a delivery to a resident carries a resident unsubscribe link, not none and not an operator one.
+    await POST(message({ templateCode: "document_delivered", audience: "resident" }));
+    expect(payload().headers?.["List-Unsubscribe"]).toContain("crecyliving.com/more/preferences");
+  });
+
+  it("resolves an owner List-Unsubscribe for document_delivered once the audience is known", async () => {
+    await POST(message({ templateCode: "document_delivered", audience: "owner" }));
+    expect(payload().headers?.["List-Unsubscribe"]).toContain("owner.crecyos.com/owner/preferences");
     expect(payload().from).toContain("@mail.crecyos.com");
   });
 

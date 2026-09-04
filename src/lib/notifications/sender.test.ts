@@ -132,6 +132,11 @@ describe("unsubscribe destinations", () => {
     // operator, and an app.crecyos.com unsubscribe link would send a resident to a console they have no
     // account on. Omitting the header is the honest answer until the job carries the relationship type.
     expect(unsubscribeUrlFor("document_delivered")).toBeNull();
+    // But with the per-recipient audience the worker resolves, it names that audience's page.
+    expect(unsubscribeUrlFor("document_delivered", "resident")).toBe("https://crecyliving.com/more/preferences");
+    expect(unsubscribeUrlFor("document_delivered", "owner")).toBe("https://owner.crecyos.com/owner/preferences");
+    // An override never overrides the access-mail rule: an invitation stays unsubscribable-free.
+    expect(unsubscribeUrlFor("staff_invitation", "operator")).toBeNull();
     expect(senderFor("document_delivered").unsubscribable).toBe(true);
   });
 
