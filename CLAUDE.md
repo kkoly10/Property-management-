@@ -2,7 +2,7 @@
 
 Guidance for Claude Code (claude.ai/code) when working in this repository. Read [`AGENTS.md`](./AGENTS.md) and [`docs/crecy-v4/00_READ_ME_FIRST.md`](./docs/crecy-v4/00_READ_ME_FIRST.md) alongside this file — the `docs/crecy-v4` package is the authoritative product spec and supersedes anything here on questions of scope or contract.
 
-## Working order: recon → research → reason → plan
+## Working order: recon → research → reason → plan → adversarial pass → build
 
 In that order, every time. Each step exists because skipping it produced a real defect in this codebase.
 
@@ -23,8 +23,18 @@ In that order, every time. Each step exists because skipping it produced a real 
    that resident bodies link to `crecyliving.com`, and a From domain that disagrees with the link domain
    reads as phishing. A decision whose "why" cannot be stated is a guess wearing a plan's clothes.
 
-4. **Plan last, and only then build.** A plan written before the first three steps is a plan for the
+4. **Plan** from what the first three steps produced. A plan written before them is a plan for the
    problem you assumed you had.
+
+5. **Adversarial pass on your own plan BEFORE you implement it — then build only the final version.**
+   Attack the plan while it is still cheap to change: where does it break, what did recon miss, which
+   sibling convention does it violate, what is the failure mode of each choice. Fold the answers back
+   in, and implement the version that survived — not the first draft plus a string of corrections after
+   the fact. This is not the same as reviewing the code afterwards; both happen, but the adversarial
+   pass is what stops a predictable defect from ever being written. Every self-review this session that
+   found a real bug — the empty-origin `new URL` crash, the wrong-project service-role key, the
+   unscoped `service_role` read — was a defect an adversarial pass on the plan would have caught before
+   a line was written.
 
 **Verify outcomes; do not trust the report of an outcome.** A command that prints an error has not
 necessarily failed, and one that prints nothing has not necessarily succeeded. `vercel --prod` once
