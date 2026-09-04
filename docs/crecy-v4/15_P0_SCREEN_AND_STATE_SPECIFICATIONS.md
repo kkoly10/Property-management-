@@ -198,6 +198,14 @@ Every P0 route must implement:
 - **Actions:** upgrade/downgrade/cancel/export.
 - **Source:** `11_PRICING_ENTITLEMENTS_AND_BILLING_SPEC.md`, never mock-image prices.
 
+### O-21 Notification preferences
+
+- **Route:** `/settings/notifications`
+- **Data:** per-category/channel delivery matrix, locale, accessibility choices, delivery diagnostics, privacy request link.
+- **Actions:** update channels, locale, and accessibility; optimistic version with idempotent replay.
+- **Scope:** personal to the signed-in operator, never organization-wide, and never a control over what residents or owners receive. The same user-bound record backs R-08 and OW-06.
+- **Persistence:** `profiles` plus user-bound `notification_preferences`; diagnostics expose status and timestamps but never recipient addresses, provider identifiers, or payloads.
+
 ## 4. Resident P0 screens
 
 ### R-01 Community login/activation
@@ -254,6 +262,7 @@ Every P0 route must implement:
 - **Routes:** `/messages`, `/more/preferences`
 - **Data:** transactional conversation, notification choices, locale, accessibility preferences, privacy request link.
 - **Marketing:** separate consent, off by default without lawful basis.
+- **Scope:** the preference record is user-bound, not audience-bound; O-21 and OW-06 are the operator and owner surfaces onto the same record.
 - **Persistence:** `profiles` plus user-bound `notification_preferences`; delivery diagnostics expose status and timestamps but never recipient addresses, provider identifiers, or payloads.
 
 ## 5. Owner P0 screens
@@ -287,6 +296,14 @@ Every P0 route must implement:
 - **Route:** `/owner/approvals/:id`
 - **Data:** scope, estimate, evidence, reason, property, deadline.
 - **Actions:** Approve/Reject with comment; step-up for configured threshold.
+
+### OW-06 Notification preferences
+
+- **Route:** `/owner/preferences`
+- **Data:** per-category/channel delivery matrix, locale, accessibility choices, delivery diagnostics, privacy request link.
+- **Actions:** update channels, locale, and accessibility; optimistic version with idempotent replay.
+- **Scope:** personal to the signed-in owner user. The same user-bound record backs R-08 and O-21.
+- **Persistence:** `profiles` plus user-bound `notification_preferences`; diagnostics expose status and timestamps but never recipient addresses, provider identifiers, or payloads.
 
 ## 6. Platform support P0 screens
 
@@ -350,4 +367,7 @@ For each P0 journey test:
 - Document share/deliver/acknowledge uses `document_deliveries` and `document_acknowledgements`; upload states come from `private.upload_grants` and `document_versions.upload_status`.
 - Owner approvals use `owner_approval_requests` and append-only `owner_approval_decisions`; no decision is stored only as a mutable field on a work order.
 - Privacy request screens use `privacy_requests`; export/deletion work is represented by private jobs and visible status.
+- Notification preferences use `profiles` and user-bound `notification_preferences`; changes call `UpdateNotificationPreferences`. One record per user, keyed `(user_id, category, channel)` with no organization column, is edited through all three surfaces (R-08, O-21, OW-06); a user holding both operator and owner relationships edits one set of preferences through either door.
+- Suppressible categories are exactly the non-NULL values of `private.notification_template_category`: payments, maintenance, messages, documents, announcements. Access and security mail (invitations) maps to a NULL category, is never suppressible, and never carries a `List-Unsubscribe` header, because opting out of the message that grants access would leave the recipient unable to accept an invitation. Preference surfaces build their toggles from that category list rather than restating it, so no toggle for access mail can exist.
+- `List-Unsubscribe` is offered only for category mail AND only where the recipient's own portal is known, at that audience's canonical origin. Where a template's recipient may be more than one audience the header is withheld rather than guessed: a link to a portal the recipient has no account on fails at the sign-in wall instead of at a 404, which is not an improvement.
 - Relationship users never receive raw operator tables when a sanitized projection is specified. Owner lease/maintenance and vendor assignment pages use the v4.1 reporting projections.

@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
+import { NOTIFICATION_PREFERENCE_PATH } from "@/lib/notifications/preference-routes";
+import type { LinkAudience } from "@/lib/runtime/host";
 import type {
   NotificationDeliverySummary,
   NotificationPreferenceProfile,
@@ -23,12 +25,37 @@ import {
   type NotificationChannelMatrix,
 } from "@/lib/validation/notification-preferences";
 
-const categoryLabels: Record<NotificationCategory, string> = {
-  payments: "Payments and receipts",
-  maintenance: "Maintenance updates",
-  messages: "New messages",
-  documents: "Documents and acknowledgements",
-  announcements: "Property announcements",
+/**
+ * The five categories are `private.notification_template_category`'s five non-NULL values, taken from
+ * `notificationCategories` rather than restated. That is what keeps access mail unsuppressible: the
+ * function returns NULL for invitations, so no toggle for them can exist here to begin with.
+ *
+ * Only the WORDING varies by audience. The record behind it does not: `public.notification_preferences`
+ * is keyed by `(user_id, category, channel)`, so an operator who is also an owner is editing one set of
+ * preferences through two doors, and both doors must name the same thing recognizably.
+ */
+const categoryLabels: Record<LinkAudience, Record<NotificationCategory, string>> = {
+  resident: {
+    payments: "Payments and receipts",
+    maintenance: "Maintenance updates",
+    messages: "New messages",
+    documents: "Documents and acknowledgements",
+    announcements: "Property announcements",
+  },
+  operator: {
+    payments: "Payments and receipts",
+    maintenance: "Maintenance and work orders",
+    messages: "New messages",
+    documents: "Documents and statements",
+    announcements: "Announcements",
+  },
+  owner: {
+    payments: "Payments and distributions",
+    maintenance: "Maintenance approvals",
+    messages: "New messages",
+    documents: "Statements and documents",
+    announcements: "Announcements",
+  },
 };
 const channelLabels: Record<NotificationChannel, string> = {
   email: "Email",
@@ -45,12 +72,15 @@ const deliverySummaryLabels: Array<[keyof NotificationDeliverySummary, string]> 
 ];
 
 export function NotificationPreferencesForm({
+  audience,
   profile,
   initialChannels,
   deliverySummary,
   recentDeliveries,
   disabled,
 }: {
+  /** Which surface is rendering this. Changes the wording and the return path, never the record. */
+  audience: LinkAudience;
   profile: NotificationPreferenceProfile;
   initialChannels: NotificationChannelMatrix;
   deliverySummary: NotificationDeliverySummary;
@@ -58,6 +88,7 @@ export function NotificationPreferencesForm({
   disabled: boolean;
 }) {
   const router = useRouter();
+  const labels = categoryLabels[audience];
   const [channels, setChannels] = useState(initialChannels);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -114,7 +145,44 @@ export function NotificationPreferencesForm({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          <div className="overflow-x-auto">
+          {/*
+            Below md the matrix is a list of per-category groups, not the table.
+            Measured: the table needs ~678px to show every channel column, so inside a card at a 390px
+            viewport the scroll container was 300px wide against 640px of content — 0 of 20 checkboxes
+            and 4 of 5 column headers were off-screen, with no affordance saying it scrolled. The page's
+            primary control read as simply missing. Doc 15 §7 sanctions "prioritized cards or
+            horizontal-scroll tables on mobile; critical actions remain reachable" — the table only
+            satisfies that from md up, which is where it is shown. Exactly one of the two renders at any
+            width, and `display:none` keeps the hidden one out of the tab order and the a11y tree.
+          */}
+          <div className="space-y-3 md:hidden">
+            {notificationCategories.map((category) => (
+              <fieldset key={category} className="rounded-xl border p-4">
+                <legend className="px-1 text-sm font-medium">{labels[category]}</legend>
+                <div className="mt-1 grid grid-cols-2 gap-2">
+                  {notificationChannels.map((channel) => {
+                    const unavailable = (channel === "sms" || channel === "whatsapp") && !profile.hasPhone;
+                    return (
+                      <label
+                        key={channel}
+                        className={`flex items-center gap-2.5 rounded-lg border p-3 text-sm ${unavailable ? "opacity-60" : ""}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={channels[channel][category]}
+                          disabled={disabled || busy || unavailable}
+                          onChange={() => toggle(channel, category)}
+                          className="h-4 w-4 rounded border-input accent-primary"
+                        />
+                        {channelLabels[channel]}
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[640px] border-separate border-spacing-0 text-sm">
               <thead>
                 <tr>
@@ -129,7 +197,7 @@ export function NotificationPreferencesForm({
               <tbody>
                 {notificationCategories.map((category) => (
                   <tr key={category}>
-                    <th className="border-b py-4 pr-4 text-left font-medium">{categoryLabels[category]}</th>
+                    <th className="border-b py-4 pr-4 text-left font-medium">{labels[category]}</th>
                     {notificationChannels.map((channel) => {
                       const phoneChannel = channel === "sms" || channel === "whatsapp";
                       const unavailable = phoneChannel && !profile.hasPhone;
@@ -137,7 +205,7 @@ export function NotificationPreferencesForm({
                         <td key={channel} className="border-b px-3 py-4 text-center">
                           <input
                             type="checkbox"
-                            aria-label={`${categoryLabels[category]} by ${channelLabels[channel]}`}
+                            aria-label={`${labels[category]} by ${channelLabels[channel]}`}
                             checked={channels[channel][category]}
                             disabled={disabled || busy || unavailable}
                             onChange={() => toggle(channel, category)}
@@ -252,7 +320,7 @@ export function NotificationPreferencesForm({
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <BellRing className="h-4 w-4" />}
           {busy ? "Saving…" : "Save preferences"}
         </Button>
-        <Button variant="ghost" asChild><Link href="/settings/privacy?returnTo=/more/preferences"><FileLock2 className="h-4 w-4" />Privacy requests</Link></Button>
+        <Button variant="ghost" asChild><Link href={`/settings/privacy?returnTo=${NOTIFICATION_PREFERENCE_PATH[audience]}`}><FileLock2 className="h-4 w-4" />Privacy requests</Link></Button>
       </div>
     </form>
   );

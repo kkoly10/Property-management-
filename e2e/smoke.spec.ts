@@ -19,6 +19,7 @@ const staticRoutes: Array<{ path: string; expect?: RegExp }> = [
   { path: "/owner" },
   { path: "/owner/documents", expect: /Delivered to you/i },
   { path: "/owner/messages" },
+  { path: "/owner/preferences", expect: /Notifications and accessibility/i },
   // Crecy OS (operator)
   { path: "/app", },
   { path: "/app/documents", expect: /Document register/i },
@@ -34,6 +35,7 @@ const staticRoutes: Array<{ path: string; expect?: RegExp }> = [
   { path: "/onboarding/entity" },
   { path: "/onboarding/property" },
   { path: "/settings/payments" },
+  { path: "/settings/notifications", expect: /How Crecy reaches you/i },
   { path: "/settings/privacy" },
   { path: "/settings/security/mfa" },
   { path: "/settings/team" },

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { carriesCredentialInUrl, matchesSecret } from "@/lib/runtime/worker-auth";
-import { senderFor, type MailAudience } from "@/lib/notifications/sender";
-import { originForAudience } from "@/lib/runtime/host";
+import { senderFor, unsubscribeUrlFor, type MailAudience } from "@/lib/notifications/sender";
 
 /**
  * Resend adapter for the transactional notification worker.
@@ -84,19 +83,18 @@ export async function POST(request: Request) {
 
   const sender = senderFor(message.templateCode, message.audience);
 
-  // List-Unsubscribe goes on CATEGORY mail only, and only when a preference surface actually exists
-  // for that audience. Access mail (invitations) must never carry it: unsubscribing from the message
-  // that grants you access would lock you out. Residents have /more/preferences; operators and owners
-  // have no preferences UI yet, so they get no header rather than a dead one.
+  // List-Unsubscribe is `unsubscribeUrlFor`'s decision entirely, and it is deliberately not this
+  // route's to second-guess: it withholds a URL both for access mail (unsubscribing from the message
+  // that grants you access would lock you out) and for category mail whose recipient portal is
+  // ambiguous (a link to a console the recipient has no account on fails one click later instead of
+  // zero, which is not an improvement).
+  //
+  // The header is the URL form only, not RFC 8058 one-click: that needs a POST endpoint that opts a
+  // recipient out with no session, and inventing one would be a way around the sign-in these
+  // preferences are scoped by. The link lands on the page and the user opts out there.
+  const unsubscribeUrl = unsubscribeUrlFor(message.templateCode);
   const headers: Record<string, string> = {};
-  const residentOrigin = sender.unsubscribable && sender.audience === "resident" ? originForAudience("resident") : "";
-  if (residentOrigin) {
-    // Only when an absolute origin actually resolves. originForAudience returns "" with no app origin
-    // configured, and `List-Unsubscribe: </more/preferences>` is a malformed header rather than a
-    // useful one — the same "do not advertise what does not resolve" rule that removed the fake
-    // workspace URL from onboarding.
-    headers["List-Unsubscribe"] = `<${residentOrigin}/more/preferences>`;
-  }
+  if (unsubscribeUrl) headers["List-Unsubscribe"] = `<${unsubscribeUrl}>`;
 
   let response: Response;
   try {

@@ -89,13 +89,41 @@ describe("the Resend relay", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("never attaches List-Unsubscribe to an invitation, but does to category mail", async () => {
-    await POST(message({ templateCode: "resident_invitation" }));
-    expect(payload().headers).toBeUndefined();
+  it("never attaches List-Unsubscribe to an invitation", async () => {
+    // Access mail is unsubscribable through no header and no audience. Opting out of the message that
+    // grants you access would leave you unable to accept the invitation.
+    for (const templateCode of ["resident_invitation", "staff_invitation", "owner_invitation"]) {
+      sent = [];
+      await POST(message({ templateCode }));
+      expect(payload().headers, templateCode).toBeUndefined();
+    }
+  });
 
-    sent = [];
+  it("attaches List-Unsubscribe to category mail, at the recipient audience's own origin", async () => {
+    // `sender.test.ts` asserts each of these paths is one routeForHost actually serves on that host.
     await POST(message({ templateCode: "announcement_published" }));
     expect(payload().headers["List-Unsubscribe"]).toBe("<https://crecyliving.com/more/preferences>");
+
+    sent = [];
+    await POST(message({ templateCode: "conversation_message_received" }));
+    expect(payload().headers["List-Unsubscribe"]).toBe("<https://crecyliving.com/more/preferences>");
+  });
+
+  it("omits List-Unsubscribe on category mail whose recipient surface is ambiguous", async () => {
+    // document_delivered is category mail, but its recipient is a resident OR an owner (resolved from
+    // user_relationships) and the relay is not told which. Its "operator" audience is a neutral FROM
+    // identity, not a recipient claim, so an app.crecyos.com unsubscribe link would land a resident on
+    // an operator sign-in they cannot pass. No header beats a header that goes nowhere useful.
+    await POST(message({ templateCode: "document_delivered" }));
+    expect(payload().headers).toBeUndefined();
+    expect(payload().from).toContain("@mail.crecyos.com");
+  });
+
+  it("does not offer RFC 8058 one-click unsubscribe", async () => {
+    // List-Unsubscribe-Post would need an endpoint that opts a recipient out with no session, which is
+    // a way around the sign-in these per-user preferences are scoped by. The link goes to the page.
+    await POST(message({ templateCode: "announcement_published" }));
+    expect(payload().headers["List-Unsubscribe-Post"]).toBeUndefined();
   });
 });
 

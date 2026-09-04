@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TEMPLATE_CODES } from "./templates";
-import { TEMPLATE_AUDIENCE, audienceForRelationshipType, isAccessMail, senderFor } from "./sender";
+import { TEMPLATE_AUDIENCE, audienceForRelationshipType, hasRecipientAudienceEntry, isAccessMail, senderFor, unsubscribeUrlFor } from "./sender";
+import { NOTIFICATION_PREFERENCE_PATH } from "./preference-routes";
+import { routeForHost } from "@/lib/runtime/host-routing";
+import { requiresSession } from "@/lib/marketing/navigation";
+import { originForAudience, type LinkAudience } from "@/lib/runtime/host";
 
 beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_MARKETING_ORIGIN", "https://crecyos.com");
@@ -87,5 +91,77 @@ describe("document_delivered, the one template with more than one audience", () 
     for (const audience of ["resident", "owner", null] as const) {
       expect(senderFor("document_delivered", audience).unsubscribable).toBe(true);
     }
+  });
+});
+describe("unsubscribe destinations", () => {
+  const audiences: LinkAudience[] = ["operator", "resident", "owner"];
+
+  it("points every audience at a path its own origin actually serves", () => {
+    // This is the "workspace URL" guard. The onboarding form once advertised app.crecy.com/{slug} as a
+    // workspace URL that had never resolved, because nothing checked. A List-Unsubscribe header is the
+    // same shape of promise made to someone outside the app, so the path is checked against the real
+    // router rather than assumed: routeForHost must agree to SERVE it on that audience's own host, not
+    // redirect it somewhere else and not reject it.
+    for (const audience of audiences) {
+      const origin = originForAudience(audience);
+      const host = new URL(origin).host;
+      const path = NOTIFICATION_PREFERENCE_PATH[audience];
+      expect(routeForHost(host, path), `${audience} ${host}${path}`).toEqual({ type: "continue" });
+    }
+  });
+
+  it("requires a session for every preference path", () => {
+    // These are per-user preferences. A preference page reachable without a session would either leak
+    // one user's choices or silently edit nobody's.
+    for (const audience of audiences) {
+      expect(requiresSession(NOTIFICATION_PREFERENCE_PATH[audience]), audience).toBe(true);
+    }
+  });
+
+  it("gives category mail the unsubscribe URL of the recipient's own brand", () => {
+    // The unsubscribe origin matches the From domain and the body's links. Sending owner mail from
+    // crecyos.com but unsubscribing at crecyliving.com is the cross-brand mismatch the audience split
+    // exists to prevent.
+    expect(unsubscribeUrlFor("announcement_published")).toBe("https://crecyliving.com/more/preferences");
+    expect(unsubscribeUrlFor("conversation_message_received")).toBe("https://crecyliving.com/more/preferences");
+  });
+
+  it("offers no unsubscribe URL when the recipient's surface is ambiguous", () => {
+    // document_delivered is TEMPLATE_AUDIENCE "operator" only as a neutral FROM identity. Its recipient
+    // is resolved through user_relationships (resident_person | owner_entity), so it never reaches an
+    // operator, and an app.crecyos.com unsubscribe link would send a resident to a console they have no
+    // account on. Omitting the header is the honest answer until the job carries the relationship type.
+    expect(unsubscribeUrlFor("document_delivered")).toBeNull();
+    expect(senderFor("document_delivered").unsubscribable).toBe(true);
+  });
+
+  it("classifies the recipient surface of every template that exists", () => {
+    // Mirrors the TEMPLATE_AUDIENCE coverage test. Without this a new template falls through to null and
+    // silently loses its unsubscribe header, which is a quiet compliance regression rather than a crash.
+    for (const code of TEMPLATE_CODES) {
+      expect(hasRecipientAudienceEntry(code), `${code} has no recipient audience`).toBe(true);
+    }
+  });
+
+  it("offers no unsubscribe URL for access mail", () => {
+    // The null lives in unsubscribeUrlFor so a caller cannot attach a link to access mail by forgetting
+    // to consult `unsubscribable` first.
+    for (const code of ["staff_invitation", "resident_invitation", "owner_invitation"]) {
+      expect(unsubscribeUrlFor(code), code).toBeNull();
+    }
+  });
+
+  it("collapses onto the one app origin in local development", () => {
+    // Dev keeps every audience on a single origin, so the URL stays absolute and clickable rather than
+    // emitting a production crecyliving.com link into a local inbox.
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "http://localhost:3000");
+    expect(unsubscribeUrlFor("announcement_published")).toBe("http://localhost:3000/more/preferences");
+    expect(unsubscribeUrlFor("conversation_message_received")).toBe("http://localhost:3000/more/preferences");
+  });
+
+  it("emits nothing rather than a relative path when no origin is configured", () => {
+    // A bare "/more/preferences" in a mail header is a dead link in every client that reads it.
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    expect(unsubscribeUrlFor("announcement_published")).toBeNull();
   });
 });
