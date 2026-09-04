@@ -1,7 +1,10 @@
 import type { LegalDocument } from "@/lib/legal/types";
 
 /**
- * DRAFT PLACEHOLDER — not legal advice and not approved for production. See operator-terms.ts.
+ * PILOT RELEASE — published for the Crecy controlled pilot on founder approval (2026-09-04).
+ *
+ * A new version is a new artifact, never an edit of a published one: this is version 1.0.0, distinct
+ * from the 0.1.0-draft placeholder it supersedes. A later revision must bump the version again.
  */
 export const privacyNotice: LegalDocument = {
   code: "privacy_notice",
@@ -9,13 +12,13 @@ export const privacyNotice: LegalDocument = {
   audience: "public",
   locale: "en-US",
   jurisdictions: ["*"],
-  version: "0.1.0-draft",
-  effectiveDate: "2026-08-28",
-  state: "draft",
+  version: "1.0.0",
+  effectiveDate: "2026-09-04",
+  state: "published",
   route: "/legal/privacy-notice",
   body: `# Crecy Privacy Notice
 
-**Status: DRAFT — pending legal review. Not binding until published.**
+**Effective 2026-09-04 · Version 1.0.0 · Published for the Crecy controlled pilot.**
 
 ## 1. Two different roles
 

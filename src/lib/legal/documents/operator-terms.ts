@@ -1,11 +1,10 @@
 import type { LegalDocument } from "@/lib/legal/types";
 
 /**
- * DRAFT PLACEHOLDER — not legal advice and not approved for production.
+ * PILOT RELEASE — published for the Crecy controlled pilot on founder approval (2026-09-04).
  *
- * A coding agent may draft this and build the publishing mechanism; moving `state` to "published" is a
- * professional gate that belongs to a human, per the founder register and file 27 §5.A4. While it is a
- * draft, production organization creation FAILS CLOSED rather than recording consent against it.
+ * A new version is a new artifact, never an edit of a published one: this is version 1.0.0, distinct
+ * from the 0.1.0-draft placeholder it supersedes. A later revision must bump the version again.
  */
 export const operatorTerms: LegalDocument = {
   code: "operator_terms",
@@ -13,13 +12,13 @@ export const operatorTerms: LegalDocument = {
   audience: "operator",
   locale: "en-US",
   jurisdictions: ["*"],
-  version: "0.1.0-draft",
-  effectiveDate: "2026-08-28",
-  state: "draft",
+  version: "1.0.0",
+  effectiveDate: "2026-09-04",
+  state: "published",
   route: "/legal/operator-terms",
   body: `# Crecy Operator Terms of Service
 
-**Status: DRAFT — pending legal review. Not binding until published.**
+**Effective 2026-09-04 · Version 1.0.0 · Published for the Crecy controlled pilot.**
 
 ## 1. Who these terms are between
 
