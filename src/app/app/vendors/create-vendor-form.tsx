@@ -74,8 +74,10 @@ export function CreateVendorForm({ organizationId, disabled }: { organizationId:
           </div>
           <div>
             <Label htmlFor="vendor-phone">Phone <span className="text-muted-foreground">(optional)</span></Label>
-            <Input id="vendor-phone" value={phoneE164} onChange={(event) => changed(setPhoneE164)(event.target.value)} placeholder="+14045551234" disabled={disabled} className="mt-2" />
-            <p className="mt-1.5 text-xs text-muted-foreground">E.164 format, e.g. +14045551234.</p>
+            {/* Associated with the input: a format rule a screen reader never hears is a validation
+                error the user cannot anticipate. */}
+            <Input id="vendor-phone" aria-describedby="vendor-phone-format" value={phoneE164} onChange={(event) => changed(setPhoneE164)(event.target.value)} placeholder="+14045551234" disabled={disabled} className="mt-2" />
+            <p id="vendor-phone-format" className="mt-1.5 text-xs text-muted-foreground">E.164 format, e.g. +14045551234.</p>
           </div>
         </div>
         {error ? <Alert variant="destructive"><AlertTitle>Vendor not added</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
