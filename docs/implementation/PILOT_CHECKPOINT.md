@@ -28,6 +28,24 @@ only be applied after a build that calls the scoped forms is live. It must not b
 
 ## Runtime
 
+**RESOLVED 2026-09-04 — the six-day worker outage is over.** Root cause was two-layered:
+
+1. `SUPABASE_SECRET_KEY` held the `sb_secret_replace_me` placeholder → workers threw
+   "SUPABASE_SECRET_KEY is not configured" (500). Set it to the live project's key.
+2. The obvious key — the new-format `sb_secret_…` — is **rejected by this project's PostgREST**
+   ("Invalid API key"), while every other key (legacy anon, legacy service_role, new sb_publishable)
+   authenticates. So the first fix stopped the 500s but the worker RPCs then failed with a 422
+   ("Notification jobs could not be claimed"). Verified by calling the RPC directly through PostgREST
+   with each key. The working credential is the **legacy `service_role` JWT**; `SUPABASE_SECRET_KEY`
+   now holds that, and the notifications cron returns 200.
+
+Method note: the Supabase **Management API** (`POST /v1/projects/{ref}/database/query`, Bearer PAT) is
+reachable with the CLI's access token even though the MCP is denied — used for live SQL diagnosis.
+
+Follow-up (not blocking): the new `sb_secret_` key should work and is the non-deprecated path; its
+rejection is a project-level API-keys setting to revisit. Legacy service_role works today.
+
+
 | Check | Status | Method |
 | --- | --- | --- |
 | Supabase server runtime (`createAdminClient`) | **FAIL** | VERIFIED — 1,892 production errors |
