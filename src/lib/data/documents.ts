@@ -54,6 +54,7 @@ export type RecipientDocumentDelivery = {
   deliveredAt: string | null;
   status: string;
   acknowledgements: Array<{ type: string; acknowledgedAt: string }>;
+  signature: { signatureId: string; verificationCode: string; signedAt: string } | null;
 };
 
 export type RecipientDocumentDeliveriesState = {
@@ -75,7 +76,7 @@ export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumen
         deliveryId: "preview-delivery", organizationId: "20000000-0000-4000-8000-000000000002",
         documentId: "preview-document", title: "Signed lease — Unit 101", documentType: "signed_lease",
         versionNumber: 1, sha256Hex: "a".repeat(64), deliveredAt: new Date().toISOString(), status: "delivered",
-        acknowledgements: [],
+        acknowledgements: [], signature: null,
       }],
     };
   }
@@ -87,7 +88,7 @@ export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumen
       // document_versions has two FKs to documents (a single-column document_id FK and a
       // composite organization_id+document_id FK), so the embed must name the FK explicitly
       // or PostgREST returns PGRST201 ("more than one relationship was found").
-      .select("id,organization_id,delivered_at,status,document_version_id,document_versions(version_number,sha256_hex,document_id,documents!document_versions_document_id_fkey(id,title,document_type)),document_acknowledgements(acknowledgement_type,acknowledged_at)")
+      .select("id,organization_id,delivered_at,status,document_version_id,document_versions(version_number,sha256_hex,document_id,documents!document_versions_document_id_fkey(id,title,document_type)),document_acknowledgements(acknowledgement_type,acknowledged_at),document_signatures(id,verification_code,signed_at)")
       .order("delivered_at", { ascending: false });
     if (error) throw error;
 
@@ -96,6 +97,10 @@ export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumen
       const document = version ? firstOf((version as { documents?: unknown }).documents as never) : null;
       const acknowledgements = (Array.isArray(delivery.document_acknowledgements) ? delivery.document_acknowledgements : [])
         .map((ack: { acknowledgement_type: string; acknowledged_at: string }) => ({ type: ack.acknowledgement_type, acknowledgedAt: ack.acknowledged_at }));
+      const signatureRow = firstOf(delivery.document_signatures as never) as { id?: string; verification_code?: string; signed_at?: string } | null;
+      const signature = signatureRow?.id
+        ? { signatureId: signatureRow.id, verificationCode: signatureRow.verification_code ?? "", signedAt: signatureRow.signed_at ?? "" }
+        : null;
       return {
         deliveryId: delivery.id as string,
         organizationId: delivery.organization_id as string,
@@ -107,6 +112,7 @@ export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumen
         deliveredAt: (delivery.delivered_at as string | null) ?? null,
         status: delivery.status as string,
         acknowledgements,
+        signature,
       };
     });
     return { mode: "ready", items };

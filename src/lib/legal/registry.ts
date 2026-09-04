@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { operatorTerms } from "@/lib/legal/documents/operator-terms";
 import { privacyNotice } from "@/lib/legal/documents/privacy-notice";
+import { esignConsent } from "@/lib/legal/documents/esign-consent";
 import type { LegalDocument, LegalJurisdiction, ResolvedLegalDocument } from "@/lib/legal/types";
 
 /**
@@ -10,7 +11,9 @@ import type { LegalDocument, LegalJurisdiction, ResolvedLegalDocument } from "@/
  * the documents the user was shown. It cannot drift from them, because editing a document changes its
  * content hash and therefore changes the recorded version string.
  */
-const REGISTRY: LegalDocument[] = [operatorTerms, privacyNotice];
+// esignConsent is registered so its exact bytes resolve to a content hash and a readable route, but it is
+// deliberately NOT in ORGANIZATION_CONSENT_CODES: it gates document signing, not workspace creation.
+const REGISTRY: LegalDocument[] = [operatorTerms, privacyNotice, esignConsent];
 
 /** The documents a person must accept to create an organization. */
 export const ORGANIZATION_CONSENT_CODES = ["operator_terms", "privacy_notice"] as const;

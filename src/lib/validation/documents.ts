@@ -64,3 +64,20 @@ export const acknowledgeDocumentDeliverySchema = z.object({
   legalDocumentVersion: z.string().trim().min(1).max(200).optional(),
 });
 export type AcknowledgeDocumentDeliveryInput = z.infer<typeof acknowledgeDocumentDeliverySchema>;
+
+/**
+ * A court-defensible electronic signature (ESIGN/UETA). Consent and intent are `literal(true)` because a
+ * signature without either is not enforceable for a consumer — the edge refuses it before the command
+ * has to. The client supplies its identity, the affirmation it showed, and the ESIGN disclosure version;
+ * the signer's IP, user agent, and the document's authoritative content hash are captured server-side,
+ * never from the body.
+ */
+export const signDocumentSchema = z.object({
+  organizationId: z.uuid(),
+  signerName: z.string().trim().min(2).max(160),
+  esignConsentAgreed: z.literal(true),
+  esignConsentVersion: z.string().trim().min(1).max(200),
+  intentAffirmed: z.literal(true),
+  intentStatement: z.string().trim().min(1).max(2000),
+});
+export type SignDocumentInput = z.infer<typeof signDocumentSchema>;

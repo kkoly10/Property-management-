@@ -57,6 +57,7 @@ const combinedImportSql = await readFile(resolve(root, "supabase/migrations/2026
 const residentBalanceImportSql = await readFile(resolve(root, "supabase/migrations/20260729110000_phase_3_resident_and_balance_imports.sql"), "utf8");
 const xlsxSourceDocumentsSql = await readFile(resolve(root, "supabase/migrations/20260729120000_phase_3_xlsx_source_documents.sql"), "utf8");
 const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/20260729130000_phase_4_secure_link_raw_token.sql"), "utf8");
+const documentSignaturesSql = await readFile(resolve(root, "supabase/migrations/20260904120000_phase_2_document_signatures.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
@@ -850,6 +851,7 @@ async function validateRecurringCharges() {
   await db.exec(relationshipProjectionsSql);
   await db.exec(runtimeDiagnosticsSql);
   await db.exec(ownerSetupSql);
+  await db.exec(documentSignaturesSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
@@ -4064,6 +4066,70 @@ async function validateRecurringCharges() {
     (select count(*)::integer from private.outbox_events where event_type='document.delivered' and aggregate_id='${documentDelivery.documentDeliveryId}') as delivered_events,
     (select count(*)::integer from private.outbox_events where event_type='document.acknowledged' and organization_id='${organization.organizationId}') as acknowledged_events`)).rows[0];
   assert(documentDeliveryTrace.delivered_audits === 1 && documentDeliveryTrace.acknowledged_audits === 2 && documentDeliveryTrace.delivered_events === 1 && documentDeliveryTrace.acknowledged_events === 2, "Document delivery/acknowledgement trace counts are wrong.");
+
+  // ── Court-defensible e-signature (phase_2_document_signatures) ───────────────────────────────────
+  // The addressed recipient signs the delivered, clean document. The command must capture ESIGN consent
+  // + intent + attribution (IP parsed from the forwarded-for list, user agent, and the SERVER's own
+  // content hash — never a client-supplied one) and a tamper-evident seal that recomputes from the row.
+  const signIp = "203.0.113.7, 70.41.3.18";
+  const signUa = "Mozilla/5.0 (Test) CrecySign/1.0";
+  const signIntent = "I have read and agree to this document, and I intend my electronic signature to bind me to it.";
+  // A manager who is not the addressed recipient cannot sign on the recipient's behalf.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.sign_document('${organization.organizationId}','${documentDelivery.documentDeliveryId}','Manager Impostor',true,'esign_consent@1.0.0#deadbeef',true,'${signIntent}','${signIp}','${signUa}','doc-sign-forbid-1')`), "DOCUMENT_DELIVERY_FORBIDDEN");
+  // Consent and intent are mandatory; a real name is required.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  await expectDatabaseError(() => db.query(`select public.sign_document('${organization.organizationId}','${documentDelivery.documentDeliveryId}','Jordan Rivera',false,'esign_consent@1.0.0#deadbeef',true,'${signIntent}','${signIp}','${signUa}','doc-sign-noconsent')`), "ESIGN_CONSENT_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.sign_document('${organization.organizationId}','${documentDelivery.documentDeliveryId}','Jordan Rivera',true,'esign_consent@1.0.0#deadbeef',false,'${signIntent}','${signIp}','${signUa}','doc-sign-noint-01')`), "SIGNING_INTENT_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.sign_document('${organization.organizationId}','${documentDelivery.documentDeliveryId}','J',true,'esign_consent@1.0.0#deadbeef',true,'${signIntent}','${signIp}','${signUa}','doc-sign-noname-1')`), "SIGNER_NAME_REQUIRED");
+
+  const signature = (await db.query(`select public.sign_document('${organization.organizationId}','${documentDelivery.documentDeliveryId}','Jordan Q. Rivera',true,'esign_consent@1.0.0#deadbeef',true,'${signIntent}','${signIp}','${signUa}','doc-sign-0001') as result`)).rows[0].result;
+  assert(signature.signatureId && /^[0-9A-F]{12}$/.test(signature.verificationCode) && /^[0-9a-f]{64}$/.test(signature.documentSha256) && signature.signerName === "Jordan Q. Rivera", "Signature did not return a certificate payload.");
+  // Idempotent replay returns the same signature; a fresh key on an already-signed delivery is refused.
+  const signatureReplay = (await db.query(`select public.sign_document('${organization.organizationId}','${documentDelivery.documentDeliveryId}','Jordan Q. Rivera',true,'esign_consent@1.0.0#deadbeef',true,'${signIntent}','${signIp}','${signUa}','doc-sign-0001') as result`)).rows[0].result;
+  assert(signatureReplay.signatureId === signature.signatureId, "Signature replay returned a different signature.");
+  await expectDatabaseError(() => db.query(`select public.sign_document('${organization.organizationId}','${documentDelivery.documentDeliveryId}','Jordan Q. Rivera',true,'esign_consent@1.0.0#deadbeef',true,'I agree again.','${signIp}','${signUa}','doc-sign-again-1')`), "DOCUMENT_ALREADY_SIGNED");
+
+  await db.exec("reset role");
+  const signEvidence = (await db.query(`select
+    s.document_sha256 = (select v.sha256_hex from public.document_versions v where v.id='${deliveryVersion}') as hash_matches_version,
+    host(s.ip_address) as ip,
+    s.user_agent as ua,
+    s.consent_record_id is not null as has_consent,
+    s.first_viewed_at is not null as has_view,
+    s.delivered_at is not null as has_delivered,
+    (select count(*)::integer from public.consent_records c where c.id=s.consent_record_id and c.consent_type='electronic_signature' and c.purpose_code='document_signature' and c.status='granted') as consent_rows,
+    (select count(*)::integer from public.document_acknowledgements a where a.document_delivery_id='${documentDelivery.documentDeliveryId}' and a.user_id='${invitedResidentUser}' and a.acknowledgement_type='accepted') as accepted_acks,
+    s.signature_seal = encode(sha256(convert_to(concat_ws('|',
+      s.id, s.organization_id, s.document_delivery_id, s.document_version_id, s.document_sha256,
+      s.signer_user_id, s.signer_name, coalesce(s.signer_email,''), s.intent_statement, s.esign_consent_version, s.consent_record_id,
+      coalesce(host(s.ip_address),''), coalesce(s.user_agent,''), coalesce(s.auth_assurance_level,''),
+      to_char(s.signed_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), s.correlation_id
+    ),'UTF8')),'hex') as seal_ok
+    from public.document_signatures s where s.id='${signature.signatureId}'`)).rows[0];
+  assert(signEvidence.hash_matches_version === true, "Signature bound a hash that is not the delivered version's own content hash.");
+  assert(signEvidence.ip === "203.0.113.7", "Signature did not parse the client IP from the forwarded-for list.");
+  assert(signEvidence.ua === signUa, "Signature did not capture the user agent.");
+  assert(signEvidence.has_consent === true && signEvidence.consent_rows === 1, "Signature did not record an ESIGN electronic-signature consent.");
+  assert(signEvidence.has_view === true && signEvidence.has_delivered === true, "Signature did not capture the delivered/viewed chain of custody.");
+  assert(signEvidence.accepted_acks === 1, "Signature did not record the backward-compatible accepted acknowledgement.");
+  assert(signEvidence.seal_ok === true, "The tamper-evident seal does not recompute from the stored signature row.");
+
+  const signatureTrace = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where action_code='document.signed' and resource_id='${signature.signatureId}' and ip_hash is not null) as signed_audits,
+    (select count(*)::integer from private.outbox_events where event_type='document.signed' and aggregate_id='${signature.signatureId}') as signed_events`)).rows[0];
+  assert(signatureTrace.signed_audits === 1 && signatureTrace.signed_events === 1, "Signature audit/outbox trace (with ip_hash populated) is wrong.");
+
+  // RLS: the signer reads their own signature, an outsider reads none, the managing operator reads it.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  assert((await db.query(`select count(*)::integer as n from public.document_signatures where id='${signature.signatureId}'`)).rows[0].n === 1, "Signer could not read their own signature.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${deliveryOutsider}'`);
+  assert((await db.query(`select count(*)::integer as n from public.document_signatures where id='${signature.signatureId}'`)).rows[0].n === 0, "An outsider read another member's signature.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  assert((await db.query(`select count(*)::integer as n from public.document_signatures where id='${signature.signatureId}'`)).rows[0].n === 1, "The managing operator could not read the signature.");
+  // Append-only from the browser: authenticated holds no UPDATE or DELETE privilege on the evidence.
+  await expectDatabaseError(() => db.query(`update public.document_signatures set signer_name='Tampered' where id='${signature.signatureId}'`), "permission denied");
+  await expectDatabaseError(() => db.query(`delete from public.document_signatures where id='${signature.signatureId}'`), "permission denied");
 
   // ── §3 Occupied-portfolio import — occupied-lease leg (phase_3_occupied_lease_import) ────────────
   // An operator imports an OCCUPIED unit against an already-imported unit: one row activates a lease —
