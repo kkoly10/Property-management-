@@ -48,8 +48,10 @@ export function OwnerFinancialBand({
             key={index}
             className={cn(
               "px-6 py-5",
-              index > 0 && "border-t sm:border-t-0 sm:border-l",
-              index > 1 && "sm:border-t xl:border-t-0",
+              index === 1 && "border-t sm:border-t-0 sm:border-l",
+              index === 2 && "border-t xl:border-t-0 xl:border-l",
+              index === 3 && "border-t sm:border-l xl:border-t-0",
+              index > 3 && "border-t",
             )}
           >
             <div className="text-xs font-medium text-muted-foreground">{metric.label}</div>
