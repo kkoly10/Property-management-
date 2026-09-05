@@ -14,7 +14,7 @@ export default async function ResidentMaintenancePage() {
   const workspace = await getResidentMaintenanceWorkspace();
   const open = workspace.items.filter((item) => !["completed", "canceled"].includes(item.residentVisibleStatus)).length;
   return <div className="min-h-screen bg-[#f6f8fb] pb-24">
-    <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark /><Badge variant="info">Crecy Living</Badge></div></header>
+    <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Living" className="text-[#0f766e]" /></div></header>
     <main className="mx-auto max-w-5xl space-y-6 p-5 sm:py-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-muted-foreground">Resident maintenance</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Requests</h1><p className="mt-2 text-sm text-muted-foreground">{open} open {open === 1 ? "request" : "requests"}</p></div><Button asChild><Link href="/maintenance/new"><Plus className="h-4 w-4" />Report an issue</Link></Button></div>
       {workspace.mode === "setup" ? <Alert variant="info"><ShieldCheck className="h-5 w-5" /><AlertTitle>Maintenance preview</AlertTitle><AlertDescription>This sample shows how requests will appear when Supabase is connected.</AlertDescription></Alert> : null}
