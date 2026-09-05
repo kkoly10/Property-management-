@@ -128,13 +128,11 @@ export default async function PropertyWorkspacePage({
           ["Foundation", "#foundation"],
           [`Units · ${workspace.units.length}`, "#units"],
           [`Residents & leases · ${workspace.occupancies.length}`, "#residents"],
-        ].map(([label, href], index) => (
+        ].map(([label, href]) => (
           <a
             key={href}
             href={href}
-            className={`shrink-0 border-b-2 py-3 font-medium transition-colors ${
-              index === 0 ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
+            className="shrink-0 border-b-2 border-transparent py-3 font-medium text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
           >
             {label}
           </a>
