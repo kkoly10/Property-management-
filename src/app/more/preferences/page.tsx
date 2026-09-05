@@ -14,7 +14,7 @@ export default async function NotificationPreferencesPage() {
     <div className="min-h-screen bg-[#f6f8fb]">
       <header className="border-b bg-white">
         <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5">
-          <Wordmark product="Living" className="text-[#0f766e]" />
+          <Wordmark product="Living" />
           <Button variant="ghost" size="sm" asChild><Link href="/home"><ArrowLeft className="h-4 w-4" />Back home</Link></Button>
         </div>
       </header>

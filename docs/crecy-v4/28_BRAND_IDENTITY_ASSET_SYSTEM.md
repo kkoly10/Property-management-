@@ -1,92 +1,124 @@
 # Crecy Brand Identity Asset System
 
-**Status:** Founder-approved identity implementation  
+**Status:** Founder-approved production identity  
 **Decision date:** 2026-09-05  
+**Latest correction:** 2026-09-05 — custom wordmark/CY system supersedes the architectural placeholder  
 **Applies to:** Crecy marketing, Crecy OS, Crecy Living, Crecy Owner, authentication, browser/PWA metadata, transactional surfaces, and exported documents.
 
 ## 1. Identity lock
 
 The master brand remains **Crecy**.
 
-The production identity is a wordmark-led system with an architectural operating-layer mark derived from the approved Crecy brand board:
+The approved production identity is the custom Crecy wordmark selected by the founder: an airy oversized capital C, custom geometric r/e/c letterforms, and a distinctive y with a long descender and detached angled terminal. The earlier architectural/building symbol is rejected and must not be reused.
 
-- Primary brand: Crecy mark + Crecy wordmark in Primary Indigo `#4F46E5`.
-- Reversed brand: white mark + white wordmark on dark/indigo surfaces.
-- Crecy OS: Primary Indigo product lockup.
-- Crecy Living: Secondary Teal `#0F766E` product lockup.
-- Crecy Owner: Secondary Teal `#0F766E` product lockup.
-- Small-space identity: the Crecy mark alone on an indigo app-icon tile.
-- Typography remains Inter with Noto Sans fallback.
+Two color families are authoritative:
 
-The old text-only bold `Crecy` placeholder is not an approved logo.
+- **Crecy OS family — purple:** `#3A37EB`
+  - `crecyos.com`
+  - `www.crecyos.com`
+  - `app.crecyos.com`
+  - `owner.crecyos.com`
+  - future `vendor.crecyos.com`
+- **Crecy Living family — green:** `#01A065`
+  - `crecyliving.com`
+  - `www.crecyliving.com`
+  - every `*.crecyliving.com` community portal
 
-## 2. Canonical implementation
+The domain family, not a generic suffix treatment, determines the logo color. Crecy Owner is purple because its canonical host is `owner.crecyos.com`.
 
-The codebase must have one reusable brand component and one canonical asset directory.
+## 2. Approved compact mark
+
+The approved compact mark is **CY**, derived from the same custom wordmark:
+
+- open rounded C;
+- angular Y/y construction;
+- detached angled terminal preserved as the recognizable signature;
+- white monogram on a purple rounded-square tile for Crecy OS;
+- white monogram on a green rounded-square tile for Crecy Living.
+
+Do not use the old building/skyline mark, a generic letter tile, or a stock real-estate icon.
+
+## 3. Canonical implementation
 
 Canonical code:
-- `src/components/brand/wordmark.tsx`
+
+- `src/components/brand/crecy-art.tsx` — authoritative vector geometry and colors
+- `src/components/brand/wordmark.tsx` — reusable production wordmark/monogram component
+- `src/app/api/brand/icon/route.tsx` — PNG icon rendering at standard sizes
+- `src/app/layout.tsx` — host-aware favicon metadata
+- `src/app/manifest.ts` — host-aware PWA identity
+- `src/app/opengraph-image.tsx` — Crecy OS social artwork
 
 Canonical static assets:
-- `public/brand/crecy-logo.svg`
-- `public/brand/crecy-logo-white.svg`
-- `public/brand/crecy-mark.svg`
-- `public/brand/crecy-mark-white.svg`
-- `public/brand/crecy-os.svg`
-- `public/brand/crecy-living.svg`
-- `public/brand/crecy-owner.svg`
-- `public/brand/favicon.svg`
 
-Metadata artwork:
-- `src/app/icon.svg`
-- `src/app/apple-icon.tsx`
-- `src/app/opengraph-image.tsx`
-- `src/app/twitter-image.tsx`
-- `src/app/manifest.ts`
+- `public/brand/crecy-logo.svg` — purple wordmark
+- `public/brand/crecy-logo-white.svg` — reversed wordmark
+- `public/brand/crecy-os.svg` — purple wordmark
+- `public/brand/crecy-living.svg` — green wordmark
+- `public/brand/crecy-owner.svg` — purple wordmark
+- `public/brand/crecy-mark.svg` — purple CY monogram
+- `public/brand/crecy-mark-white.svg` — white CY monogram
+- `public/brand/favicon-os.svg` — purple CY tile
+- `public/brand/favicon-living.svg` — green CY tile
+- `public/brand/favicon.svg` — purple/default CY tile
 
-No page may invent a second logo, copy/paste a different SVG geometry, or substitute a generic Lucide building/home icon for the Crecy identity.
+Standard PNG icon sizes are rendered from the same CY vector geometry at:
 
-## 3. Placement rules
+- 16×16
+- 32×32
+- 48×48
+- 64×64
+- 180×180
+- 192×192
+- 512×512
 
-### Marketing
-Use the full Crecy lockup in the site header and footer. Browser tab, app/bookmark icon, and social metadata must use the canonical identity assets.
+No screen may invent a second logo or substitute a Lucide/property icon for the Crecy identity.
 
-### Crecy OS
-Use the full master/OS lockup in the desktop sidebar, mobile header, authentication and onboarding. The mark may collapse to mark-only only where horizontal space is genuinely constrained.
+## 4. Placement rules
+
+### Crecy marketing + Crecy OS
+
+Use the purple custom Crecy wordmark on `crecyos.com` and all `*.crecyos.com` product surfaces. Use the purple CY tile for browser tabs, bookmarks, app/PWA icons, and compact placements.
 
 ### Crecy Living
-Use the teal Crecy Living lockup in resident headers and authentication/community entry points. Use the mark-only identity in compact PWA/mobile placements.
+
+Use the green custom Crecy wordmark on `crecyliving.com` and all community subdomains. Use the green CY tile for browser tabs, bookmarks, PWA icons, and compact placements.
 
 ### Crecy Owner
-Use the teal Crecy Owner lockup in owner headers and owner authentication/entry points.
 
-### Communications and documents
-Transactional emails, receipts, notices, owner statements, and generated reports should use the full lockup when the rendering channel supports it. Never embed a low-resolution screenshot of the logo.
+Use the purple custom Crecy wordmark and purple CY mark because the portal is `owner.crecyos.com`.
 
-## 4. Clear space and minimum size
+### Reversed use
 
-- Maintain clear space around a full lockup equal to at least the visual height of the Crecy mark's smallest exterior building stroke.
-- Minimum mark size: 16 CSS px.
-- Minimum full horizontal lockup: 110 CSS px wide.
-- Do not stretch, skew, outline, shadow, gradient, or arbitrarily recolor the identity.
-- Do not place the mark inside a generic circular badge unless the product surface specifically requires a circular OS/app mask.
+Use the white wordmark/monogram only when required by a dark or strongly colored background. Geometry may not change between normal and reversed variants.
 
-## 5. Accessibility
+## 5. Clear space and minimum size
 
-- Logo SVGs must have accessible names when they convey brand identity.
-- Decorative mark instances inside an already labeled lockup must be aria-hidden.
-- Reversed and colored variants must preserve WCAG-safe contrast against their surfaces.
-- Product identity color is never the only way product context is communicated; the product name remains visible in the full lockup.
+- Minimum full wordmark width: 110 CSS px.
+- Minimum compact CY icon: 16 CSS px.
+- Keep clear space around the wordmark approximately equal to the cap-stroke thickness of the C.
+- Do not stretch, skew, outline, add drop shadows, add a different symbol, or substitute a generic font rendering of “Crecy”.
+- Do not add “OS”, “Living”, or “Owner” as part of the logo artwork itself. Product context comes from the host/surface and adjacent UI copy when needed.
 
-## 6. Brand quality gate
+## 6. Accessibility
 
-A public or authenticated surface is not brand-complete if any of the following are true:
+- SVG wordmarks carry an accessible product label when they convey identity.
+- Decorative inner geometry is aria-hidden through the parent lockup.
+- Green/purple identity color is never the sole carrier of product meaning; the host/surface and page copy also identify the product.
+- Reversed variants must preserve sufficient contrast.
 
-- the browser tab still shows a starter-framework/default favicon;
-- the header renders plain bold text instead of the canonical Crecy lockup;
-- Crecy Living or Crecy Owner uses a generic badge as its primary product identity;
-- social previews have no Crecy artwork;
-- PWA/bookmark installation uses a default or unrelated icon;
-- the logo geometry differs between pages because SVG fragments were copied locally.
+## 7. Brand quality gate
 
-This identity system is the implementation baseline for future visual refinement. Any future logo-artwork change must update the canonical component and asset directory rather than creating parallel identities.
+A surface is not brand-complete if any of the following are true:
+
+- the old architectural/building mark is visible;
+- the header renders plain default-font “Crecy” rather than the custom wordmark;
+- a `crecyos.com` surface uses the green identity;
+- a `crecyliving.com` surface uses the purple identity;
+- Crecy Owner uses green;
+- the favicon/PWA icon is not the CY monogram;
+- browser/PWA assets drift from the approved vector geometry;
+- social artwork uses the rejected architectural mark;
+- product-specific suffix typography is baked into a parallel logo instead of using the canonical wordmark.
+
+The custom wordmark and CY monogram are now the only approved production identity.

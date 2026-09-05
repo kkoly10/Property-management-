@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { CRECY_PURPLE, CRECY_WORDMARK_PATH } from "@/components/brand/crecy-art";
 
 export const alt = "Crecy — Global rental operations, made clear.";
 export const size = { width: 1200, height: 630 };
@@ -32,21 +33,9 @@ export default function OpenGraphImage() {
             border: "1px solid #E4E7EC",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", color: "#4F46E5" }}>
-            <svg width="118" height="104" viewBox="0 0 50 44" fill="none">
-              <g stroke="#4F46E5" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M8 38V23L15 18L20 22V38" />
-                <path d="M17 38V12L25 6L33 12V38" />
-                <path d="M31 38V20L38 16L42 19V38" />
-                <path d="M12 38V27" opacity=".72" />
-                <path d="M25 38V12" opacity=".72" />
-                <path d="M36 38V24" opacity=".72" />
-              </g>
-            </svg>
-            <div style={{ marginLeft: 28, fontSize: 112, fontWeight: 700, letterSpacing: -5 }}>
-              Crecy
-            </div>
-          </div>
+          <svg width="420" height="135" viewBox="0 0 1790 574" aria-label="Crecy">
+            <path d={CRECY_WORDMARK_PATH} fill={CRECY_PURPLE} fillRule="evenodd" clipRule="evenodd" />
+          </svg>
           <div style={{ marginTop: 46, fontSize: 42, fontWeight: 500 }}>
             Global rental operations, made clear.
           </div>

@@ -1,47 +1,60 @@
 import { cn } from "@/lib/utils";
+import {
+  CrecyIconTile,
+  CrecyMonogramGlyph,
+  CrecyWordmarkGlyph,
+} from "@/components/brand/crecy-art";
 
 export type CrecyProduct = "OS" | "Living" | "Owner";
 
+function isLiving(product?: CrecyProduct) {
+  return product === "Living";
+}
+
+/**
+ * Compact Crecy identity.
+ *
+ * This is the approved CY monogram derived from the custom Crecy wordmark.
+ * It replaces the earlier architectural/building placeholder mark.
+ */
 export function CrecyMark({
   className,
   title,
+  product,
+  tile = false,
 }: {
   className?: string;
   title?: string;
+  product?: CrecyProduct;
+  tile?: boolean;
 }) {
+  const living = isLiving(product);
+  if (tile) {
+    return (
+      <CrecyIconTile
+        living={living}
+        title={title}
+        className={cn("h-8 w-8 shrink-0", className)}
+      />
+    );
+  }
+
   return (
-    <svg
-      viewBox="0 0 50 44"
-      role={title ? "img" : undefined}
-      aria-hidden={title ? undefined : true}
-      aria-label={title}
-      className={cn("h-7 w-8 shrink-0", className)}
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
+    <span
+      className={cn(living ? "text-[#01A065]" : "text-[#3A37EB]", className)}
     >
-      <g
-        stroke="currentColor"
-        strokeWidth="2.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M8 38V23L15 18L20 22V38" />
-        <path d="M17 38V12L25 6L33 12V38" />
-        <path d="M31 38V20L38 16L42 19V38" />
-        <path d="M12 38V27" opacity=".72" />
-        <path d="M25 38V12" opacity=".72" />
-        <path d="M36 38V24" opacity=".72" />
-      </g>
-    </svg>
+      <CrecyMonogramGlyph title={title} className="h-8 w-8 shrink-0" />
+    </span>
   );
 }
 
 /**
- * Canonical Crecy brand lockup.
+ * Canonical Crecy wordmark.
  *
- * The previous component was plain bold text, which meant every surface rendered
- * a generic framework-style wordmark. This component is now the single source of
- * truth for the Crecy mark + wordmark and optional product lockup.
+ * Purple belongs to crecyos.com and every *.crecyos.com surface.
+ * Green belongs to crecyliving.com and community *.crecyliving.com surfaces.
+ * Product context is conveyed by the surface/domain, not by bolting generic
+ * suffix typography onto the approved wordmark.
  */
 export function Wordmark({
   className,
@@ -52,33 +65,23 @@ export function Wordmark({
   product?: CrecyProduct;
   markOnly?: boolean;
 }) {
+  const living = isLiving(product);
+  const label = product === "Living" ? "Crecy Living" : product === "Owner" ? "Crecy Owner" : "Crecy";
+
+  if (markOnly) {
+    return <CrecyMark product={product} title={label} tile className={className} />;
+  }
+
   return (
     <span
       className={cn(
-        "inline-flex min-w-0 items-center gap-2 text-primary",
+        "inline-flex min-w-0 items-center",
+        living ? "text-[#01A065]" : "text-[#3A37EB]",
         className,
       )}
-      aria-label={product ? `Crecy ${product}` : "Crecy"}
+      aria-label={label}
     >
-      <CrecyMark className={markOnly ? "h-8 w-8" : undefined} />
-      {markOnly ? null : (
-        <>
-          <span className="text-[1.35rem] font-semibold leading-none tracking-[-0.05em]">
-            Crecy
-          </span>
-          {product ? (
-            <>
-              <span
-                aria-hidden="true"
-                className="mx-1 h-6 w-px shrink-0 bg-current opacity-20"
-              />
-              <span className="truncate text-sm font-medium tracking-[-0.015em] text-current opacity-90">
-                {product}
-              </span>
-            </>
-          ) : null}
-        </>
-      )}
+      <CrecyWordmarkGlyph className="h-[1.85rem] w-auto max-w-[9.5rem] sm:h-8" />
     </span>
   );
 }

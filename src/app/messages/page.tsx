@@ -11,7 +11,7 @@ export default async function ResidentMessagesPage() {
   const workspace = await getConversationWorkspace();
   return (
     <div className="min-h-screen bg-[#f6f8fb] pb-24">
-      <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Living" className="text-[#0f766e]" /></div></header>
+      <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Living" /></div></header>
       <main className="mx-auto max-w-3xl space-y-6 p-5 sm:py-8">
         <div><p className="text-sm text-muted-foreground">Resident portal</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Messages</h1><p className="mt-2 text-sm text-muted-foreground">Contact your property team in a conversation tied to your active home.</p></div>
         {workspace.mode === "setup" ? <Alert variant="info"><ShieldCheck className="h-5 w-5" /><AlertTitle>Messages preview</AlertTitle><AlertDescription>This sample shows the conversation experience until Supabase is connected.</AlertDescription></Alert> : null}

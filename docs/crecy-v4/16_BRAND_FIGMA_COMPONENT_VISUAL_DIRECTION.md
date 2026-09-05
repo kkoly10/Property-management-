@@ -75,7 +75,7 @@ All production combinations must be WCAG 2.2 AA contrast-tested. Semantic status
 - Dark theme is a post-launch enhancement, not a launch blocker.
 
 ### Logo direction
-The **product name is permanently locked as Crecy**. The founder-approved production identity is now locked in `28_BRAND_IDENTITY_ASSET_SYSTEM.md`: an architectural operating-layer mark paired with the Crecy wordmark, with indigo as the master/OS identity and teal product lockups for Crecy Living and Crecy Owner. The mark may read as connected property structures, but it must remain the specific Crecy geometry rather than degrading into a generic roof, key, map-pin, or stock real-estate icon.
+The **product name is permanently locked as Crecy**. The founder-approved production identity is now the custom Crecy wordmark plus the derived CY monogram defined in `28_BRAND_IDENTITY_ASSET_SYSTEM.md`. The earlier architectural/building mark is rejected. The approved wordmark has an oversized open C, custom geometric r/e/c construction, and a distinctive y with a long descender and detached angled terminal. Purple is used on `crecyos.com` and every `*.crecyos.com` surface; green is used on `crecyliving.com` and every `*.crecyliving.com` surface.
 
 ## 3. Role-Specific Presentation
 
@@ -272,4 +272,4 @@ A screen is not ready for implementation until:
 
 ## 9. Brand Identity Decision — Closed
 
-The product name is **Crecy** and the production identity artwork is now locked by the 2026-09-05 founder decision in `28_BRAND_IDENTITY_ASSET_SYSTEM.md`. Crecy OS, Crecy Living, and Crecy Owner use one coherent master identity with product-specific lockups; future refinements must update the canonical component and assets rather than introduce parallel logos.
+The product name is **Crecy** and the production identity artwork is locked by the latest 2026-09-05 founder decision in `28_BRAND_IDENTITY_ASSET_SYSTEM.md`. The custom Crecy wordmark is the master logo; CY is the compact/favicon mark. Crecy OS and all `*.crecyos.com` surfaces are purple, while Crecy Living and all `*.crecyliving.com` surfaces are green. Future refinements must update the canonical geometry rather than introduce parallel logos.

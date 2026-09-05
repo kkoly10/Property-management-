@@ -15,7 +15,7 @@ export default async function ResidentHomePage() {
   const [summary, announcements] = await Promise.all([getResidentBalance(), getRecipientAnnouncementWorkspace()]);
   const home = summary.items[0];
   return <div className="min-h-screen bg-[#f6f8fb] pb-24">
-    <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Living" className="text-[#0f766e]" /></div></header>
+    <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Living" /></div></header>
     <main className="mx-auto max-w-5xl space-y-5 p-5 sm:py-8">
       <div><p className="text-sm text-muted-foreground">Resident home</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Welcome home</h1>{home ? <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground"><Building2 className="h-4 w-4" />{home.propertyName} · Unit {home.unitCode}</p> : null}</div>
       {summary.mode === "setup" ? <Alert variant="info"><CircleAlert className="h-5 w-5" /><AlertTitle>Resident preview</AlertTitle><AlertDescription>This sample shows the resident experience until Supabase is connected.</AlertDescription></Alert> : null}
