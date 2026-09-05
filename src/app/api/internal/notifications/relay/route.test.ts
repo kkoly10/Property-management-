@@ -46,6 +46,16 @@ describe("the Resend relay", () => {
     expect(payload().text).toBe("Accept it.");
   });
 
+  it("sends a branded HTML part alongside the plain text, not instead of it", async () => {
+    // The message was previously text-only, which reached recipients as unstyled prose with a bare URL.
+    await POST(message());
+    const sent = payload();
+    expect(sent.text).toBe("Accept it.");
+    expect(sent.html).toContain("<!doctype html>");
+    expect(sent.html).toContain("Crecy Living");
+    expect(sent.html).toContain("You are invited");
+  });
+
   it("passes the job id as the provider idempotency key", async () => {
     // The worker retries on its own backoff; without this a retry is a second real email.
     await POST(message());

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { carriesCredentialInUrl, matchesSecret } from "@/lib/runtime/worker-auth";
 import { senderFor, unsubscribeUrlFor, type MailAudience } from "@/lib/notifications/sender";
+import { renderEmailHtml } from "@/lib/notifications/html-email";
 
 /**
  * Resend adapter for the transactional notification worker.
@@ -110,7 +111,16 @@ export async function POST(request: Request) {
         from: sender.from,
         to: [message.to],
         subject: message.subject,
+        // Multipart: the plain-text body is still sent verbatim, and the HTML is the branded wrap of
+        // that same text. A client that prefers text is unaffected; one that renders HTML stops
+        // showing a wall of unstyled prose with a bare URL in it.
         text: message.body,
+        html: renderEmailHtml({
+          subject: message.subject,
+          body: message.body,
+          audience: sender.audience,
+          unsubscribeUrl,
+        }),
         ...(sender.replyTo ? { reply_to: sender.replyTo } : {}),
         ...(Object.keys(headers).length ? { headers } : {}),
         tags: [

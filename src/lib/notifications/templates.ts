@@ -39,6 +39,28 @@ function text(value: unknown, fallback = ""): string {
 }
 
 /**
+ * A human role name.
+ *
+ * `roleCode` is an internal identifier — `org_owner`, `maintenance_coordinator` — and rendering it raw
+ * put "invited to join Crecy as org_owner" in front of the person being invited. An unknown code falls
+ * back to the generic wording rather than leaking a new identifier the same way.
+ */
+const ROLE_LABELS: Record<string, Record<NotificationLanguage, string>> = {
+  org_owner: { en: "an owner", es: "propietario", fr: "propriétaire" },
+  org_admin: { en: "an administrator", es: "administrador", fr: "administrateur" },
+  property_manager: { en: "a property manager", es: "gestor de propiedades", fr: "gestionnaire immobilier" },
+  leasing_agent: { en: "a leasing agent", es: "agente de arrendamiento", fr: "agent de location" },
+  accountant: { en: "an accountant", es: "contador", fr: "comptable" },
+  maintenance_coordinator: { en: "a maintenance coordinator", es: "coordinador de mantenimiento", fr: "coordinateur de maintenance" },
+  read_only_auditor: { en: "a read-only auditor", es: "auditor de solo lectura", fr: "auditeur de lecture seule" },
+};
+
+function roleLabel(value: unknown, language: NotificationLanguage, fallback: string): string {
+  const code = typeof value === "string" ? value.trim() : "";
+  return ROLE_LABELS[code]?.[language] ?? fallback;
+}
+
+/**
  * An absolute link for ONE audience.
  *
  * NEXT_PUBLIC_SITE_URL means the operator application (app.crecyos.com), so using it for every
@@ -76,15 +98,15 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
   staff_invitation: {
     en: (p) => ({
       subject: `You have been invited to join ${text(p.organizationName, "your team")} on Crecy`,
-      body: `You have been invited to join ${text(p.organizationName, "your team")} on Crecy as ${text(p.roleCode, "a team member")}.\n\nAccept the invitation: ${link("/settings/team/accept", "operator")}\n\nIf you were not expecting this, you can ignore this message.`,
+      body: `You have been invited to join ${text(p.organizationName, "your team")} on Crecy as ${roleLabel(p.roleCode, "en", "a team member")}.\n\nAccept the invitation: ${link("/settings/team/accept", "operator")}\n\nIf you were not expecting this, you can ignore this message.`,
     }),
     es: (p) => ({
       subject: `Te invitaron a unirte a ${text(p.organizationName, "tu equipo")} en Crecy`,
-      body: `Te invitaron a unirte a ${text(p.organizationName, "tu equipo")} en Crecy como ${text(p.roleCode, "miembro del equipo")}.\n\nAcepta la invitación: ${link("/settings/team/accept", "operator")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
+      body: `Te invitaron a unirte a ${text(p.organizationName, "tu equipo")} en Crecy como ${roleLabel(p.roleCode, "es", "miembro del equipo")}.\n\nAcepta la invitación: ${link("/settings/team/accept", "operator")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
     }),
     fr: (p) => ({
       subject: `Vous avez été invité à rejoindre ${text(p.organizationName, "votre équipe")} sur Crecy`,
-      body: `Vous avez été invité à rejoindre ${text(p.organizationName, "votre équipe")} sur Crecy en tant que ${text(p.roleCode, "membre de l'équipe")}.\n\nAccepter l'invitation : ${link("/settings/team/accept", "operator")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
+      body: `Vous avez été invité à rejoindre ${text(p.organizationName, "votre équipe")} sur Crecy en tant que ${roleLabel(p.roleCode, "fr", "membre de l'équipe")}.\n\nAccepter l'invitation : ${link("/settings/team/accept", "operator")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
     }),
   },
   resident_invitation: {
