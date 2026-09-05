@@ -143,6 +143,7 @@ See `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` for product exclusions and file
 - `25_V4_1_1_CORRECTION_REPORT.md` — targeted v4.1.1 correction history
 - `26_CODEX_APPLY_V4_1_1_PROMPT.md` — historical v4.1.1 application/validation prompt
 - `27_LAUNCH_LAYER_AND_RUNTIME_READINESS_SPEC.md` — **binding launch/runtime/public-surface recovery program**
+- `28_BRAND_IDENTITY_ASSET_SYSTEM.md` — founder-approved production logo, favicon, app-icon, product-lockup, and placement system
 - `AGENTS.md` — repository agent rules
 
 ## 8. Non-negotiable invariants
