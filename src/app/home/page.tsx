@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -86,7 +87,16 @@ export default async function ResidentHomePage() {
                 `Unit ${home.unitCode}`,
                 community?.publicAddressText,
               ].filter(Boolean).join(" · ")}
-              media={community?.heroImageUrl ? <img src={community.heroImageUrl} alt="" /> : undefined}
+              media={community?.heroImageUrl ? (
+                <Image
+                  src={community.heroImageUrl}
+                  alt=""
+                  fill
+                  priority
+                  sizes="(min-width: 1024px) 1100px, 100vw"
+                  className="object-cover"
+                />
+              ) : undefined}
               badge={<Badge className="border-white/20 bg-black/15 text-white backdrop-blur-sm">Your home</Badge>}
               action={
                 <Button asChild variant="secondary" size="sm" className="bg-white text-[#05603e] hover:bg-white/90">
