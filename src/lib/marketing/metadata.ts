@@ -68,7 +68,7 @@ export function marketingMetadata({
       card: "summary_large_image",
       title: `${title} · Crecy`,
       description,
-      images: [canonical("/twitter-image")],
+      images: [canonical("/opengraph-image")],
     },
   };
 }
