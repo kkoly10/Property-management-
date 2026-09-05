@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 const authLayout = readFileSync(resolve(__dirname, "../../app/(auth)/layout.tsx"), "utf8");
 const login = readFileSync(resolve(__dirname, "../../app/(auth)/login/page.tsx"), "utf8");
+const authStage = readFileSync(resolve(__dirname, "../../components/auth/auth-surface-stage.tsx"), "utf8");
+const residentHome = readFileSync(resolve(__dirname, "../../app/home/page.tsx"), "utf8");
+const gallery = readFileSync(resolve(__dirname, "../../components/living/living-community-gallery.tsx"), "utf8");
 const propertyPage = readFileSync(resolve(__dirname, "../../app/app/properties/[propertyId]/page.tsx"), "utf8");
 const form = readFileSync(resolve(__dirname, "../../app/app/properties/[propertyId]/living-community-form.tsx"), "utf8");
 const api = readFileSync(resolve(__dirname, "../../app/api/v1/living-community-profile/route.ts"), "utf8");
@@ -21,6 +24,14 @@ describe("Crecy Living mobile login and operator controls", () => {
     expect(login).toContain("community.heroImageUrl");
     expect(login).toContain("lg:hidden");
     expect(login).toContain('"Crecy Living · Demo"');
+  });
+
+  it("loads same-origin community media without the Next optimizer on Living surfaces", () => {
+    expect(login).toContain("unoptimized");
+    expect(authStage).toContain("unoptimized");
+    expect(residentHome).toContain("unoptimized");
+    expect(gallery).toContain("unoptimized");
+    expect(form).toContain("unoptimized");
   });
 
   it("adds the resident portal workspace to the operator property page", () => {
