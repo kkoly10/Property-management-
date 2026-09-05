@@ -22,7 +22,7 @@ export function Section({
       {/* `className` lands on the padded container, not the band. It used to land on the outer element,
           which carries no padding — so every `!py-*` override a page passed was silently discarded and
           every section on every page rendered at the same height. */}
-      <div className={`mx-auto max-w-6xl px-5 py-16 sm:py-20 lg:px-8 lg:py-24 ${className}`}>{children}</div>
+      <div className={`mx-auto max-w-[1280px] px-5 py-16 sm:py-20 lg:px-8 lg:py-24 ${className}`}>{children}</div>
     </section>
   );
 }
