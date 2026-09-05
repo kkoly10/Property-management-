@@ -385,12 +385,12 @@ function PropertyPerformance({
             </thead>
             <tbody className="divide-y">
               {dashboard.propertyPerformance.map((property) => {
-                const propertyRestricted = property.totalUnits == null || property.occupiedUnits == null;
-                const propertyOccupancy = propertyRestricted
-                  ? null
-                  : property.totalUnits > 0
-                    ? Math.round((property.occupiedUnits / property.totalUnits) * 100)
-                    : null;
+                const totalUnits = property.totalUnits;
+                const occupiedUnits = property.occupiedUnits;
+                const propertyRestricted = totalUnits == null || occupiedUnits == null;
+                const propertyOccupancy = totalUnits != null && occupiedUnits != null && totalUnits > 0
+                  ? Math.round((occupiedUnits / totalUnits) * 100)
+                  : null;
 
                 return (
                   <tr key={property.propertyId} className="group transition-colors hover:bg-[var(--brand-subtle)]">
@@ -403,13 +403,13 @@ function PropertyPerformance({
                     <td className="px-4 py-4">
                       {propertyRestricted ? (
                         <span className="text-muted-foreground">Restricted</span>
-                      ) : property.totalUnits === 0 ? (
+                      ) : totalUnits === 0 ? (
                         <span className="text-muted-foreground">—</span>
                       ) : (
                         <span>
                           <span className="font-semibold">{propertyOccupancy}%</span>
                           <span className="ml-1.5 text-xs text-muted-foreground">
-                            {property.occupiedUnits}/{property.totalUnits}
+                            {occupiedUnits}/{totalUnits}
                           </span>
                         </span>
                       )}
