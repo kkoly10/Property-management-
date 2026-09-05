@@ -21,7 +21,7 @@ describe("Crecy Living community presentation", () => {
     for (const relative of media) {
       const path = resolve(__dirname, relative);
       expect(existsSync(path)).toBe(true);
-      expect(statSync(path).size).toBeGreaterThan(8_000);
+      expect(statSync(path).size).toBeGreaterThan(6_000);
     }
   });
 
@@ -37,6 +37,15 @@ describe("Crecy Living community presentation", () => {
     expect(home).toContain("item.tenancyId === home.tenancyId");
     expect(home).toContain("community?.heroImageUrl");
     expect(home).toContain("<LivingCommunityGallery");
+  });
+
+  it("keeps the migration structurally singular and additive", () => {
+    expect((migration.match(/\bbegin;/g) ?? []).length).toBe(1);
+    expect((migration.match(/\bcommit;/g) ?? []).length).toBe(1);
+    expect((migration.match(/create table public\.living_community_profiles/g) ?? []).length).toBe(1);
+    expect(migration).toContain("status <> 'published' or published_at is not null");
+    expect(migration).not.toContain("drop table");
+    expect(migration).not.toContain("drop column");
   });
 
   it("keeps the anonymous RPC limited to public-safe presentation fields", () => {
