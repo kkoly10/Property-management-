@@ -1,10 +1,10 @@
+import Image from "next/image";
 import {
   ArrowRight,
   Building2,
   CircleCheckBig,
   FileCheck2,
   FileText,
-  Home,
   Landmark,
   MessageSquareText,
   ReceiptText,
@@ -117,7 +117,14 @@ function ResidentStage({
             title={communityTitle}
             subtitle={communitySubtitle}
             media={community?.heroImageUrl ? (
-              <img src={community.heroImageUrl} alt="" />
+              <Image
+                src={community.heroImageUrl}
+                alt=""
+                fill
+                priority
+                sizes="(min-width: 1024px) 55vw, 100vw"
+                className="object-cover"
+              />
             ) : undefined}
             badge={
               <span className="rounded-full border border-white/20 bg-black/15 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur-sm">
