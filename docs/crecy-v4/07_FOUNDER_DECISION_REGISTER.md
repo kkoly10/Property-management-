@@ -77,6 +77,7 @@ The exact country price books and entitlements in `11_PRICING_ENTITLEMENTS_AND_B
 | FD-043 | AI may summarize, extract, translate, and draft; it cannot autonomously approve applicants, modify legal clauses, post ledger entries, or execute legal/financial actions. |
 | FD-044 | Superseded by FD-045. The first identity implementation introduced an architectural placeholder mark and generic lockups that are no longer approved. |
 | FD-045 | Production identity is the founder-approved custom Crecy wordmark plus the derived CY monogram in `28_BRAND_IDENTITY_ASSET_SYSTEM.md`. `crecyos.com` and every `*.crecyos.com` surface use the purple identity; `crecyliving.com` and every `*.crecyliving.com` community surface use the green identity. Crecy Owner therefore uses purple because it lives at `owner.crecyos.com`. The former architectural/building mark must not appear in product, favicon, PWA, social, or exported-brand surfaces. |
+| FD-046 | Crecy uses one semantic visual system with host-aware product themes: Crecy OS and Owner use purple `#3A37EB`; Crecy Living uses green `#01A065`. Product pages must use Crecy-owned layout primitives and should avoid generic card-wall dashboards, flat navigation lists, repeated eyebrow labels, and page-local color overrides. |
 
 ## F. Professional production approvals—not founder questions
 
