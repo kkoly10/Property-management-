@@ -17,7 +17,7 @@ export default async function OwnerHomePage() {
   const [approvals, statements, announcements] = await Promise.all([getOwnerApprovalWorkspace(), getOwnerStatementWorkspace(), getRecipientAnnouncementWorkspace()]);
   const pending = approvals.items.filter((item) => item.status === "pending").length;
   return <div className="min-h-screen bg-[#f6f8fb] pb-12">
-    <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark /><Badge variant="info">Crecy Owner</Badge></div></header>
+    <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Owner" className="text-[#0f766e]" /></div></header>
     <main className="mx-auto max-w-5xl space-y-8 p-5 sm:py-8">
       <div><p className="text-sm text-muted-foreground">Owner workspace</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Property performance</h1><p className="mt-2 text-sm text-muted-foreground">Finalized statements and requests assigned to your exact owner entity.</p></div>
       {approvals.mode === "setup" || statements.mode === "setup" ? <Alert variant="info"><ShieldCheck className="h-5 w-5" /><AlertTitle>Owner portal preview</AlertTitle><AlertDescription>This sample is read-only until Supabase and an owner relationship are connected.</AlertDescription></Alert> : null}

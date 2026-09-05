@@ -3,7 +3,6 @@ import { ArrowLeft, BellRing, CircleAlert } from "lucide-react";
 import { NotificationPreferencesForm } from "@/components/notifications/notification-preferences-form";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getNotificationPreferencesWorkspace } from "@/lib/data/notification-preferences";
 
@@ -21,7 +20,7 @@ export default async function OwnerNotificationPreferencesPage() {
   const workspace = await getNotificationPreferencesWorkspace();
   return (
     <div className="min-h-screen bg-[#f6f8fb] pb-12">
-      <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark /><Badge variant="info">Crecy Owner</Badge></div></header>
+      <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Owner" className="text-[#0f766e]" /></div></header>
       <main className="mx-auto max-w-5xl space-y-5 p-5 sm:py-8">
         <Button asChild variant="ghost" size="sm"><Link href="/owner"><ArrowLeft className="h-4 w-4" />Owner workspace</Link></Button>
         <div>

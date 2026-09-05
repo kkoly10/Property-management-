@@ -75,6 +75,7 @@ The exact country price books and entitlements in `11_PRICING_ENTITLEMENTS_AND_B
 | FD-041 | Crecy Living launches as responsive mobile-first PWA. Native apps are post-validation. |
 | FD-042 | English and Spanish P0 product content; French architecture and full French before broad public Canadian launch. |
 | FD-043 | AI may summarize, extract, translate, and draft; it cannot autonomously approve applicants, modify legal clauses, post ledger entries, or execute legal/financial actions. |
+| FD-044 | Production identity is locked to the Crecy master mark + wordmark system defined in `28_BRAND_IDENTITY_ASSET_SYSTEM.md`; Crecy OS uses indigo, Crecy Living and Crecy Owner use teal product lockups, and the Crecy mark is the favicon/app-icon identity. Text-only placeholder branding is not the production identity. |
 
 ## F. Professional production approvals—not founder questions
 
