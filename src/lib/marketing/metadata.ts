@@ -62,7 +62,13 @@ export function marketingMetadata({
       description,
       url,
       locale: "en_US",
+      images: [{ url: canonical("/opengraph-image"), width: 1200, height: 630, alt: "Crecy — Global rental operations, made clear." }],
     },
-    twitter: { card: "summary_large_image", title: `${title} · Crecy`, description },
+    twitter: {
+      card: "summary_large_image",
+      title: `${title} · Crecy`,
+      description,
+      images: [canonical("/twitter-image")],
+    },
   };
 }
