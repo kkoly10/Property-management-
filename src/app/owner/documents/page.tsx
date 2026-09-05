@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export default async function OwnerDocumentsPage() {
   const deliveries = await getRecipientDocumentDeliveries();
   return <div className="min-h-screen bg-[#f6f8fb] pb-12">
-    <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark /><Badge variant="info">Crecy Owner</Badge></div></header>
+    <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Owner" className="text-[#0f766e]" /></div></header>
     <main className="mx-auto max-w-5xl space-y-5 p-5 sm:py-8">
       <Button asChild variant="ghost" size="sm"><Link href="/owner"><ArrowLeft className="h-4 w-4" />Owner workspace</Link></Button>
       <div><p className="text-sm text-muted-foreground">Documents</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Delivered to you</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Statements, agreements, and notices shared with your ownership. Signing is a legally binding electronic signature; a certificate is kept for every document you sign.</p></div>
