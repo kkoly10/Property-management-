@@ -75,7 +75,7 @@ All production combinations must be WCAG 2.2 AA contrast-tested. Semantic status
 - Dark theme is a post-launch enhancement, not a launch blocker.
 
 ### Logo direction
-The future logo should suggest connected properties, rooms, or operating layers without using a generic roofline, key, skyline, or map-pin cliché. The **product name is permanently locked as Crecy**. Only the final wordmark drawing, app icon, spacing rules, and identity artwork remain open for the dedicated identity exercise.
+The **product name is permanently locked as Crecy**. The founder-approved production identity is now locked in `28_BRAND_IDENTITY_ASSET_SYSTEM.md`: an architectural operating-layer mark paired with the Crecy wordmark, with indigo as the master/OS identity and teal product lockups for Crecy Living and Crecy Owner. The mark may read as connected property structures, but it must remain the specific Crecy geometry rather than degrading into a generic roof, key, map-pin, or stock real-estate icon.
 
 ## 3. Role-Specific Presentation
 
@@ -270,6 +270,6 @@ A screen is not ready for implementation until:
 - It has no invented financial or legal behavior
 - It is marked Ready for Development in Figma
 
-## 9. Open Brand Decision
+## 9. Brand Identity Decision — Closed
 
-The product name is **Crecy** and is not an open decision. The final logo artwork remains open. The approved identity architecture is Crecy OS, Crecy Living, Crecy Owner, and Crecy Vendor; the final wordmark, app icon, and marketing artwork must follow the approved brand system.
+The product name is **Crecy** and the production identity artwork is now locked by the 2026-09-05 founder decision in `28_BRAND_IDENTITY_ASSET_SYSTEM.md`. Crecy OS, Crecy Living, and Crecy Owner use one coherent master identity with product-specific lockups; future refinements must update the canonical component and assets rather than introduce parallel logos.
