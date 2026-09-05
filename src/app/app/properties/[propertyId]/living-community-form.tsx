@@ -52,7 +52,7 @@ export function LivingCommunityForm({
   const idempotencyKey = useRef<string | null>(null);
 
   const previewUrl = subdomain.trim()
-    ? \`https://\${subdomain.trim().toLowerCase()}.crecyliving.com/login\`
+    ? "https://" + subdomain.trim().toLowerCase() + ".crecyliving.com/login"
     : null;
 
   async function save(nextStatus: "draft" | "published") {
