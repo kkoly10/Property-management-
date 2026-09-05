@@ -95,9 +95,11 @@ The gallery is asymmetric and image-led rather than a row of equal feature cards
 
 ## 7. Media ownership
 
-The database stores presentation URLs, not binary image contents.
+The database stores same-origin presentation paths, not binary image contents.
 
-The current Maple Court media is bundled with the application because it is a deterministic fictional design fixture. Real operator media should later use a controlled upload/storage pipeline and a dedicated operator edit command rather than arbitrary direct table writes.
+Community media URLs are restricted to `/media/...` and the server-side normalizer rejects third-party URLs. This avoids turning an operator-configurable image into a resident-tracking pixel or leaking resident IP/browser metadata to an arbitrary external host.
+
+The current Maple Court media is bundled with the application because it is a deterministic fictional design fixture. Real operator media should later use a controlled Crecy upload/storage pipeline that publishes into the same-origin media namespace, plus a dedicated operator edit command rather than arbitrary direct table writes.
 
 ## 8. Migration/runtime boundary
 
