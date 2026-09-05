@@ -28,7 +28,7 @@ Two consequences from one cause:
 
 | | |
 |---|---|
-| **Availability** | `service_role` holds no SELECT on the financial tables, so every worker-driven financial write aborted at COMMIT with `permission denied for table journal_entries` — *after* the command had already returned a success payload. This is what killed the rent cron, and the same wall stood in front of the Stripe webhook's payment and refund posting. |
+| **Availability** | `service_role` holds no SELECT on the financial tables, so every worker-driven financial write aborted at COMMIT with `permission denied for table journal_entries` — *after* the command had already returned a success payload. This killed the rent cron, and **verified: it took down the entire money-in path too** — `process_stripe_webhook` is `service_role`-granted, is called through `createAdminClient()`, and inserts `journal_transactions`, two `journal_entries` legs and a `payment_allocations` row, every one of them guarded by a failing validator. A resident card payment would have been taken by Stripe and then rolled back on our side. |
 | **Correctness** | For a role that *does* hold SELECT, the balance check summed only the legs that role's own policy exposed. A balance check over a filtered subset is not a balance check. |
 
 **Fix.** `20260905010000_phase_4_deferred_constraint_authority.sql` runs the three
@@ -101,9 +101,13 @@ follow-up (print-to-PDF and CSV ship today).
 ### Gate 7 — Stripe · **AMBER / unverified**
 `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are present in the production environment,
 so this may be less blocked than previously recorded — but their values are masked and no
-Connect flow, test payment or signed webhook has been exercised against them. Note that
-the fix above also unblocks the webhook's allocation and refund posting, which would have
-hit the identical commit-time wall.
+Connect flow, test payment or signed webhook has been exercised against them.
+
+**This gate could not have passed before today whatever the keys said.** Verified by reading
+the migration: `process_stripe_webhook` runs as `service_role` and writes both journal legs
+and a payment allocation, so it hit exactly the commit-time wall above. Anyone testing a
+resident payment before today would have concluded the Stripe integration was broken. It was
+not — the commit boundary was.
 
 ### Gate 8 — Legal · **founder/counsel action**
 The court-defensible signature ceremony, ESIGN §7001(c) consent, append-only signature
