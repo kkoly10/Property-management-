@@ -67,6 +67,18 @@ The current marketing code creates miniature fake dashboards from generic divs.
 
 **Correction:** the new marketing stage is explicitly for real product UI or deterministic demo-state product components. It cannot be used as permission to invent miniature dashboard artwork.
 
+### A9 — High: approved Living identity green failed normal-text contrast on white
+
+The first semantic-theme implementation used the approved Living green `#01A065` directly as the primary button/link color. White text on that green is about **3.38:1**, which fails WCAG AA for normal text.
+
+**Correction:** the approved `#01A065` remains the Crecy Living identity/wordmark green. Interactive text-bearing controls use the darker green `#067647`, which exceeds 4.5:1 against white. A regression test now guards the distinction and the OS/Living/Owner action contrast.
+
+### A10 — Medium: operator urgency rail initially relied on color
+
+The first `OperatorAttentionRail` revision represented priority with a colored vertical rail only.
+
+**Correction:** non-neutral priority is now exposed to assistive technology as text in addition to the visual rail.
+
 ## Non-generic surface signatures
 
 ### Crecy OS
