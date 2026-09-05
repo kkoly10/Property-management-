@@ -97,7 +97,7 @@ export default async function ResidentHomePage() {
                   className="object-cover"
                 />
               ) : undefined}
-              badge={<Badge className="border-white/20 bg-black/15 text-white backdrop-blur-sm">Your home</Badge>}
+              badge={<Badge className="border-white/20 bg-black/15 text-white backdrop-blur-sm">{community?.isDemo ? "Demo community" : "Your home"}</Badge>}
               action={
                 <Button asChild variant="secondary" size="sm" className="bg-white text-[#05603e] hover:bg-white/90">
                   <Link href="/documents">Documents</Link>
