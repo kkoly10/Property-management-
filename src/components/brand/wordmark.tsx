@@ -1,7 +1,5 @@
 import { cn } from "@/lib/utils";
 import {
-  CRECY_LIVING_GREEN,
-  CRECY_PURPLE,
   CrecyIconTile,
   CrecyMonogramGlyph,
   CrecyWordmarkGlyph,
@@ -44,7 +42,6 @@ export function CrecyMark({
   return (
     <span
       className={cn(living ? "text-[#01A065]" : "text-[#3A37EB]", className)}
-      style={{ color: living ? CRECY_LIVING_GREEN : CRECY_PURPLE }}
     >
       <CrecyMonogramGlyph title={title} className="h-8 w-8 shrink-0" />
     </span>
@@ -82,7 +79,6 @@ export function Wordmark({
         living ? "text-[#01A065]" : "text-[#3A37EB]",
         className,
       )}
-      style={{ color: living ? CRECY_LIVING_GREEN : CRECY_PURPLE }}
       aria-label={label}
     >
       <CrecyWordmarkGlyph className="h-[1.85rem] w-auto max-w-[9.5rem] sm:h-8" />
