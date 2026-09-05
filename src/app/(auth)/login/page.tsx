@@ -33,6 +33,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               src={community.heroImageUrl}
               alt=""
               fill
+              unoptimized
               priority
               sizes="100vw"
               className="object-cover"
