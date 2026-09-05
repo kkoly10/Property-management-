@@ -66,14 +66,6 @@ function workspaceHref(path: string, filters: DashboardFilters) {
   return `${path}?${query}`;
 }
 
-function attentionPriority(kind: string) {
-  if (kind === "owner_approval") return "high" as const;
-  if (kind === "reconciliation_exception" || kind === "overdue_balance" || kind === "work_order") {
-    return "medium" as const;
-  }
-  return "neutral" as const;
-}
-
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const parsed = parseDashboardFilters(await searchParams);
   const organizationId = await getActiveOrganizationId();
@@ -192,7 +184,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 ),
                 href: item.href,
                 status: <Badge variant="neutral">{titleCase(item.kind)}</Badge>,
-                priority: attentionPriority(item.kind),
               }))}
             />
           ) : (
@@ -394,9 +385,12 @@ function PropertyPerformance({
             </thead>
             <tbody className="divide-y">
               {dashboard.propertyPerformance.map((property) => {
-                const propertyOccupancy = property.totalUnits && property.occupiedUnits != null
-                  ? Math.round((property.occupiedUnits / property.totalUnits) * 100)
-                  : null;
+                const propertyRestricted = property.totalUnits == null || property.occupiedUnits == null;
+                const propertyOccupancy = propertyRestricted
+                  ? null
+                  : property.totalUnits > 0
+                    ? Math.round((property.occupiedUnits / property.totalUnits) * 100)
+                    : null;
 
                 return (
                   <tr key={property.propertyId} className="group transition-colors hover:bg-[var(--brand-subtle)]">
@@ -407,8 +401,10 @@ function PropertyPerformance({
                       <div className="mt-1 text-xs text-muted-foreground">{property.currencyCode}</div>
                     </td>
                     <td className="px-4 py-4">
-                      {propertyOccupancy == null ? (
+                      {propertyRestricted ? (
                         <span className="text-muted-foreground">Restricted</span>
+                      ) : property.totalUnits === 0 ? (
+                        <span className="text-muted-foreground">—</span>
                       ) : (
                         <span>
                           <span className="font-semibold">{propertyOccupancy}%</span>
