@@ -66,40 +66,50 @@ export type EmailHtmlInput = {
  */
 export function renderEmailHtml({ subject, body, audience, unsubscribeUrl }: EmailHtmlInput): string {
   const brand = BRAND[audience] ?? BRAND.operator;
-  const blocks = body.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  const rawBlocks = body.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
 
-  let ctaUrl: string | null = null;
-  let ctaLabel = brand.openLabel;
-  const paragraphs: string[] = [];
+  // Blocks are kept in ORDER, with the button occupying the position its link held in the text.
+  // Collecting paragraphs and appending the button afterwards put the call to action underneath
+  // "if you were not expecting this, ignore it" — the dismissal above the action.
+  type Block = { kind: "p"; text: string } | { kind: "cta"; url: string; label: string };
+  const blocks: Block[] = [];
+  let seenCta = false;
+  let firstParagraph = "";
 
-  for (const block of blocks) {
-    const match = ctaUrl ? null : URL_PATTERN.exec(block);
+  for (const raw of rawBlocks) {
+    const match = seenCta ? null : URL_PATTERN.exec(raw);
     if (match) {
-      ctaUrl = trimUrl(match[0]);
+      const url = trimUrl(match[0]);
       // The lead-in ("Accept the invitation:") is the author's own action wording. Anything longer than
-      // a button can carry falls back to the neutral brand label rather than wrapping to three lines.
-      const lead = block.slice(0, match.index).replace(/[\s:：]+$/u, "").trim();
-      if (lead && lead.length <= 48) ctaLabel = lead;
-      else if (lead) paragraphs.push(lead);
-      const tail = block.slice(match.index + match[0].length).trim();
-      if (tail) paragraphs.push(tail);
+      // a button can carry stays as prose rather than wrapping the button onto three lines.
+      const lead = raw.slice(0, match.index).replace(/[\s:：]+$/u, "").trim();
+      let label = brand.openLabel;
+      if (lead && lead.length <= 48) label = lead;
+      else if (lead) blocks.push({ kind: "p", text: lead });
+      blocks.push({ kind: "cta", url, label });
+      seenCta = true;
+      const tail = raw.slice(match.index + match[0].length).trim();
+      if (tail) blocks.push({ kind: "p", text: tail });
       continue;
     }
-    paragraphs.push(block);
+    if (!firstParagraph) firstParagraph = raw;
+    blocks.push({ kind: "p", text: raw });
   }
 
-  const bodyHtml = paragraphs
-    .map((p) => `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:${INK};">${escapeHtml(p).replaceAll("\n", "<br />")}</p>`)
-    .join("");
+  const paragraph = (t: string) =>
+    `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:${INK};">${escapeHtml(t).replaceAll("\n", "<br />")}</p>`;
 
-  const buttonHtml = ctaUrl
-    ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 10px;">
+  const cta = (url: string, label: string) =>
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 14px;">
       <tr><td bgcolor="${ACCENT}" style="border-radius:8px;">
-        <a href="${escapeHtml(ctaUrl)}" style="display:inline-block;padding:13px 24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">${escapeHtml(ctaLabel)}</a>
+        <a href="${escapeHtml(url)}" style="display:inline-block;padding:13px 24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">${escapeHtml(label)}</a>
       </td></tr></table>
     <p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:${MUTED};">Or paste this link into your browser:</p>
-    <p style="margin:0 0 6px;font-size:12px;line-height:1.5;word-break:break-all;"><a href="${escapeHtml(ctaUrl)}" style="color:${ACCENT};text-decoration:underline;">${escapeHtml(ctaUrl)}</a></p>`
-    : "";
+    <p style="margin:0 0 14px;font-size:12px;line-height:1.5;word-break:break-all;"><a href="${escapeHtml(url)}" style="color:${ACCENT};text-decoration:underline;">${escapeHtml(url)}</a></p>`;
+
+  const bodyHtml = blocks
+    .map((b) => (b.kind === "cta" ? cta(b.url, b.label) : paragraph(b.text)))
+    .join("");
 
   const unsubscribeHtml = unsubscribeUrl
     ? `<br /><a href="${escapeHtml(unsubscribeUrl)}" style="color:${MUTED};text-decoration:underline;">Manage email preferences</a>`
@@ -107,7 +117,7 @@ export function renderEmailHtml({ subject, body, audience, unsubscribeUrl }: Ema
 
   // Hidden preview text: what a mail list shows next to the subject. Without it clients scrape the
   // first visible words, which here would be the brand name on every single message.
-  const preheader = escapeHtml((paragraphs[0] ?? subject).slice(0, 140));
+  const preheader = escapeHtml((firstParagraph || subject).slice(0, 140));
 
   return `<!doctype html>
 <html lang="en">
@@ -126,12 +136,11 @@ export function renderEmailHtml({ subject, body, audience, unsubscribeUrl }: Ema
 <tr><td style="padding:20px 28px;border-bottom:1px solid ${HAIRLINE};">
 <span style="font-size:17px;font-weight:700;letter-spacing:-0.01em;color:${INK};">${escapeHtml(brand.name)}</span>
 </td></tr>
-<tr><td style="padding:28px 28px 24px;">
-<h1 style="margin:0 0 16px;font-size:20px;line-height:1.35;font-weight:600;letter-spacing:-0.02em;color:${INK};">${escapeHtml(subject)}</h1>
-${bodyHtml}${buttonHtml}
+<tr><td style="padding:26px 28px 22px;">
+${bodyHtml}
 </td></tr>
 <tr><td style="padding:16px 28px 20px;border-top:1px solid ${HAIRLINE};font-size:12px;line-height:1.6;color:${MUTED};">
-Sent by ${escapeHtml(brand.name)}. If you were not expecting this message you can safely ignore it.${unsubscribeHtml}
+Sent by ${escapeHtml(brand.name)}.${unsubscribeHtml}
 </td></tr>
 </table>
 </td></tr>

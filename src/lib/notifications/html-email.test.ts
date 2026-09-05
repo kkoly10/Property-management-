@@ -17,6 +17,24 @@ describe("the branded HTML email wrapper", () => {
     expect(html).not.toContain("Accept the invitation: https://");
   });
 
+  it("keeps the button where its link was, not after the closing disclaimer", () => {
+    // Collecting paragraphs and appending the button at the end put "if you were not expecting this,
+    // ignore it" ABOVE the call to action — the dismissal before the thing to do.
+    const html = renderEmailHtml(base);
+    const button = html.indexOf(">Accept the invitation</a>");
+    const disclaimer = html.indexOf("If you were not expecting this");
+    expect(button).toBeGreaterThan(-1);
+    expect(disclaimer).toBeGreaterThan(-1);
+    expect(button).toBeLessThan(disclaimer);
+  });
+
+  it("does not repeat the subject as a headline above a body that already says it", () => {
+    const html = renderEmailHtml(base);
+    // The mail client already shows the subject; restating it as an <h1> directly above a first
+    // paragraph that says the same thing read as a duplication bug.
+    expect(html).not.toContain("<h1");
+  });
+
   it("still prints the raw URL, because a button cannot be copied or forwarded", () => {
     const html = renderEmailHtml(base);
     expect(html).toContain("Or paste this link into your browser:");
