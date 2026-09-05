@@ -59,6 +59,7 @@ const xlsxSourceDocumentsSql = await readFile(resolve(root, "supabase/migrations
 const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/20260729130000_phase_4_secure_link_raw_token.sql"), "utf8");
 const documentSignaturesSql = await readFile(resolve(root, "supabase/migrations/20260904120000_phase_2_document_signatures.sql"), "utf8");
 const invitationActivationTokenSql = await readFile(resolve(root, "supabase/migrations/20260905000000_phase_8_invitation_activation_token.sql"), "utf8");
+const deferredConstraintAuthoritySql = await readFile(resolve(root, "supabase/migrations/20260905010000_phase_4_deferred_constraint_authority.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
@@ -854,6 +855,7 @@ async function validateRecurringCharges() {
   await db.exec(ownerSetupSql);
   await db.exec(documentSignaturesSql);
   await db.exec(invitationActivationTokenSql);
+  await db.exec(deferredConstraintAuthoritySql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
@@ -941,6 +943,42 @@ async function validateRecurringCharges() {
   assert(replay.replayed && replay.chargeIds[0] === generated.chargeIds[0], "Worker replay did not return the canonical charge.");
   const duplicateDateRun = (await db.query(`select public.generate_recurring_charges('2026-08-31',array['${activation.chargeScheduleId}'::uuid],'finance-worker-2026-08-31-retry') as result`)).rows[0].result;
   assert(duplicateDateRun.generatedCount === 0, "A second worker run duplicated the scheduled charge.");
+
+  // ── The commit boundary ─────────────────────────────────────────────────────────────────────────
+  // A DEFERRABLE INITIALLY DEFERRED constraint trigger does not run inside the security definer
+  // command that queued it. It runs at COMMIT, and on the live PostgreSQL it runs as the SESSION
+  // role. Measured directly against the production engine, a validator queued from inside a definer
+  // function reported: "trigger ran as authenticated and saw 0 row(s)" — for a row that same
+  // transaction had just inserted, hidden from the validator by the reader's own RLS policy. The two
+  // consequences were a rent cron that had never committed a single charge (service_role holds no
+  // SELECT on the financial tables, so every worker-driven write aborted at COMMIT with "permission
+  // denied for table journal_entries" AFTER the command had returned a success payload), and a
+  // balance check that sums only the legs the committing role happens to be allowed to read.
+  //
+  // PGlite does NOT reproduce this: it restores the definer's context when firing the deferred event,
+  // so the probe below passes with or without the fix. That divergence is exactly why the structural
+  // guard that follows — not this probe — is the protection. The probe is kept because it still
+  // exercises the validators at a forced commit boundary, which is where a real imbalance would show.
+  await db.exec("begin");
+  const deferredWorkerRun = (await db.query(`select public.generate_recurring_charges('2026-09-30',array['${activation.chargeScheduleId}'::uuid],'finance-worker-deferred-commit') as result`)).rows[0].result;
+  assert(deferredWorkerRun.generatedCount === 1, "The deferred-commit probe did not post a charge to validate.");
+  await db.exec("set constraints all immediate");
+  await db.exec("rollback");
+
+  // The guard that actually holds the line, and the one that caught this: a constraint trigger firing
+  // at commit must own the authority to read what it validates. If it does not, it is evaluated
+  // against whatever subset the committing role can see, which is not a validation at all.
+  await db.exec("reset role");
+  const sessionRoleValidators = (await db.query(`
+    select coalesce(json_agg(json_build_object('trigger',t.tgname,'function',p.proname) order by t.tgname),'[]'::json) as offenders
+    from pg_trigger t
+    join pg_proc p on p.oid=t.tgfoid
+    where not t.tgisinternal and t.tgconstraint<>0 and t.tgdeferrable and not p.prosecdef`)).rows[0].offenders;
+  assert(
+    sessionRoleValidators.length === 0,
+    `A deferred constraint trigger runs as the session role and will validate an RLS-filtered subset: ${JSON.stringify(sessionRoleValidators)}`,
+  );
+  await db.exec("reset role; set role service_role");
 
   await db.exec("reset role");
   const posting = (await db.query(`select
