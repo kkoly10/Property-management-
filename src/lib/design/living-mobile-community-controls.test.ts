@@ -19,6 +19,7 @@ describe("Crecy Living mobile login and operator controls", () => {
   it("renders community identity and hero media directly on mobile login", () => {
     expect(login).toContain("<LivingCommunityIdentity");
     expect(login).toContain("community.heroImageUrl");
+    expect(login).toContain("unoptimized");
     expect(login).toContain("lg:hidden");
     expect(login).toContain('"Crecy Living · Demo"');
   });
@@ -53,5 +54,19 @@ describe("Crecy Living mobile login and operator controls", () => {
     expect(updateSection).not.toContain("lobby_image_url=");
     expect(updateSection).not.toContain("courtyard_image_url=");
     expect(updateSection).not.toContain("model_home_image_url=");
+  });
+});
+
+
+describe("Living community image delivery", () => {
+  const authStage = readFileSync(resolve(__dirname, "../../components/auth/auth-surface-stage.tsx"), "utf8");
+  const home = readFileSync(resolve(__dirname, "../../app/home/page.tsx"), "utf8");
+  const gallery = readFileSync(resolve(__dirname, "../../components/living/living-community-gallery.tsx"), "utf8");
+
+  it("bypasses the Next image optimizer for same-origin community media", () => {
+    expect(authStage).toContain("unoptimized");
+    expect(home).toContain("unoptimized");
+    expect(gallery).toContain("unoptimized");
+    expect(form).toContain("unoptimized");
   });
 });
