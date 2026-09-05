@@ -49,6 +49,9 @@ export function OperatorAttentionRail({
                 priorityClass[item.priority ?? "neutral"],
               )}
             />
+            {item.priority && item.priority !== "neutral" ? (
+              <span className="sr-only">Priority: {item.priority}</span>
+            ) : null}
             <div className="min-w-0">
               <div className="flex min-w-0 items-start gap-3">
                 {item.visual ? <div className="shrink-0">{item.visual}</div> : null}
