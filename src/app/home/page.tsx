@@ -92,6 +92,7 @@ export default async function ResidentHomePage() {
                   src={community.heroImageUrl}
                   alt=""
                   fill
+                  unoptimized
                   priority
                   sizes="(min-width: 1024px) 1100px, 100vw"
                   className="object-cover"
