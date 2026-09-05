@@ -1,3 +1,4 @@
+import type { CrecyProduct } from "@/components/brand/wordmark";
 import type { HostClassification } from "@/lib/runtime/host";
 
 /**
@@ -20,6 +21,12 @@ export type AuthSurface = "operator" | "resident" | "owner";
 export type AuthPromiseIcon = "portfolio" | "shield" | "currency" | "home" | "maintenance" | "message" | "statement";
 
 export type AuthSurfaceCopy = {
+  /**
+   * The product lockup beside the Crecy mark. Matches the convention the portals already follow --
+   * resident pages render "Crecy | Living", owner pages "Crecy | Owner", and the operator app the
+   * bare wordmark -- so signing in looks like the product you are signing in to.
+   */
+  product?: CrecyProduct;
   /** Left panel */
   eyebrow: string;
   headline: string;
@@ -74,6 +81,7 @@ export const AUTH_SURFACE_COPY: Record<AuthSurface, AuthSurfaceCopy> = {
     homePath: "/app",
   },
   resident: {
+    product: "Living",
     eyebrow: "Your home, online",
     headline: "Everything about your tenancy, in one place.",
     promises: [
@@ -89,6 +97,7 @@ export const AUTH_SURFACE_COPY: Record<AuthSurface, AuthSurfaceCopy> = {
     homePath: "/home",
   },
   owner: {
+    product: "Owner",
     eyebrow: "Your portfolio, clearly",
     headline: "See how the properties you own are performing.",
     promises: [

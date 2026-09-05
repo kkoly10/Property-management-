@@ -23,7 +23,7 @@ export default async function AuthLayout({ children }: { children: React.ReactNo
       <section className="relative hidden overflow-hidden bg-[#312e81] px-12 py-10 text-white lg:flex lg:flex-col">
         <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(255,255,255,.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.08)_1px,transparent_1px)] [background-size:64px_64px]" />
         <div className="relative z-10 flex h-full flex-col">
-          <Wordmark className="text-white" />
+          <Wordmark product={copy.product} className="text-white" />
           <div className="my-auto max-w-xl">
             <p className="mb-4 text-sm font-semibold uppercase tracking-[0.18em] text-indigo-200">{copy.eyebrow}</p>
             <h1 className="text-5xl font-semibold leading-[1.08] tracking-[-0.04em]">{copy.headline}</h1>

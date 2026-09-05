@@ -44,6 +44,14 @@ describe("which audience the sign-in screen is addressing", () => {
     }
   });
 
+  it("wears the brand lockup of the product being signed in to", () => {
+    // The portals already do this: resident pages render "Crecy | Living", owner pages
+    // "Crecy | Owner", the operator app the bare wordmark. Signing in should not look generic.
+    expect(AUTH_SURFACE_COPY.resident.product).toBe("Living");
+    expect(AUTH_SURFACE_COPY.owner.product).toBe("Owner");
+    expect(AUTH_SURFACE_COPY.operator.product).toBeUndefined();
+  });
+
   it("gives every surface a complete panel", () => {
     for (const copy of Object.values(AUTH_SURFACE_COPY)) {
       expect(copy.promises).toHaveLength(3);

@@ -12,7 +12,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
   return (
     <div className="w-full max-w-md">
-      <div className="mb-8 lg:hidden"><Wordmark /></div>
+      <div className="mb-8 lg:hidden"><Wordmark product={copy.product} /></div>
       <Card className="border-0 shadow-none sm:border sm:shadow-[0_12px_32px_rgba(16,24,40,0.08)]">
         <CardHeader className="pb-4">
           <p className="mb-2 text-sm font-semibold text-primary">Welcome back</p>
