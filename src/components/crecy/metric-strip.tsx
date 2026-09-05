@@ -52,11 +52,17 @@ export function MetricStrip({
       )}
     >
       {items.map((item, index) => {
-        const classes = cn(
-          "min-w-0 px-5 py-4 sm:px-6",
-          index > 0 && "border-t sm:border-t-0 sm:border-l",
-          index > 1 && "sm:border-t xl:border-t-0",
-        );
+        const borderClass = index === 1
+          ? "border-t sm:border-t-0 sm:border-l"
+          : index === 2
+            ? "border-t xl:border-t-0 xl:border-l"
+            : index === 3
+              ? "border-t sm:border-l xl:border-t-0"
+              : index > 3
+                ? "border-t"
+                : "";
+
+        const classes = cn("min-w-0 px-5 py-4 sm:px-6", borderClass);
 
         return item.href ? (
           <Link
