@@ -54,6 +54,9 @@ Do not add new page-local literals for Crecy purple/green when a semantic token 
 
 Canonical components under `src/components/crecy/`:
 
+### `SurfaceTheme`
+An explicit OS/Living/Owner theme wrapper for route shells and previews. Production defaults come from the canonical host, while this wrapper keeps local/Vercel review faithful to the intended surface.
+
 ### `PageHeader`
 A consistent page/object heading with optional contextual line, description, metadata and actions. It intentionally does not force an uppercase eyebrow.
 
