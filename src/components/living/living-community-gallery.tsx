@@ -96,6 +96,7 @@ function CommunityPhoto({
         src={image.src}
         alt={image.alt}
         fill
+        unoptimized
         sizes="(min-width: 1024px) 60vw, 100vw"
         className="object-cover transition-transform duration-500 group-hover:scale-[1.015]"
       />
