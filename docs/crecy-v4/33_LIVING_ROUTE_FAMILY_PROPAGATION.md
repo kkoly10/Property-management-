@@ -92,21 +92,12 @@ A regression test at `src/lib/design/living-workspaces.test.ts` checks that:
 - documents remain a continuous register;
 - resident-safe read models remain wired.
 
-## 8. Remaining Living gap — community presentation contract
+## 8. Community presentation gap — closed by file 34
 
-The image-led community experience in the approved mocks is still not fully implementable from authoritative data.
+The public-safe community presentation contract, image-led community login/home behavior, and Maple Court media fixture are now defined in `34_LIVING_COMMUNITY_PRESENTATION.md`.
 
-The repository does not yet expose a public-safe community presentation contract for:
-- community display name;
-- hero/cover media;
-- public address;
-- leasing-office contact;
-- office hours;
-- selected amenities;
-- public notices/help information.
-
-Until that contract exists, the product must continue using the safe non-photographic community fallback rather than hard-coding or inventing property imagery.
+The remaining deferred work is not presentation discovery; it is the future operator upload/edit workflow for real property media. That workflow must publish through controlled same-origin media storage and a dedicated audited command.
 
 ## 9. Next Living step
 
-After deployed screenshot review of this route-family batch, the next structural Living task is the public-safe community presentation model and media pipeline. That should be designed separately from resident/tenancy data so unauthenticated community login surfaces never expose private resident or financial information.
+After deployed visual review of the community-aware login and resident home, continue with the real operator media-management workflow only if it is needed for pilot operators. Do not generate or attach arbitrary imagery to real properties without operator intent.
