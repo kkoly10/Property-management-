@@ -16,11 +16,15 @@ import {
   Wrench,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const overview = { label: "Overview", href: "/app", icon: CircleGauge } as const;
+type NavigationItem = { label: string; href: string; icon: LucideIcon };
+type NavigationGroup = { label: string; items: NavigationItem[] };
 
-const groups = [
+const overview: NavigationItem = { label: "Overview", href: "/app", icon: CircleGauge };
+
+const groups: NavigationGroup[] = [
   {
     label: "Portfolio",
     items: [
@@ -53,9 +57,9 @@ const groups = [
       { label: "Documents", href: "/app/documents", icon: FileText },
     ],
   },
-] as const;
+];
 
-const mobileItems = [overview, ...groups.flatMap((group) => group.items)];
+const mobileItems: NavigationItem[] = [overview, ...groups.flatMap((group) => group.items)];
 
 function isActive(pathname: string, href: string) {
   return href === "/app" ? pathname === href : pathname.startsWith(href);
@@ -69,7 +73,7 @@ function NavigationLink({
 }: {
   label: string;
   href: string;
-  icon: typeof CircleGauge;
+  icon: LucideIcon;
   compact?: boolean;
 }) {
   const pathname = usePathname();
