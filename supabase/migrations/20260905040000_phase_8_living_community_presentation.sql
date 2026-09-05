@@ -39,24 +39,24 @@ create table public.living_community_profiles (
   check (subdomain::text not in (
     'www','app','owner','vendor','admin','api','platform','mail','auth','static','assets','cdn','internal'
   )),
-  check ((status='published') = (published_at is not null)),
+  check (status <> 'published' or published_at is not null),
   check (cardinality(office_hours_text) <= 14),
   check (cardinality(amenities) <= 24),
   check (hero_image_url is null or (
     length(hero_image_url) between 1 and 2048
-    and (hero_image_url like '/media/%' or hero_image_url ~ '^https://')
+    and hero_image_url like '/media/%'
   )),
   check (lobby_image_url is null or (
     length(lobby_image_url) between 1 and 2048
-    and (lobby_image_url like '/media/%' or lobby_image_url ~ '^https://')
+    and lobby_image_url like '/media/%'
   )),
   check (courtyard_image_url is null or (
     length(courtyard_image_url) between 1 and 2048
-    and (courtyard_image_url like '/media/%' or courtyard_image_url ~ '^https://')
+    and courtyard_image_url like '/media/%'
   )),
   check (model_home_image_url is null or (
     length(model_home_image_url) between 1 and 2048
-    and (model_home_image_url like '/media/%' or model_home_image_url ~ '^https://')
+    and model_home_image_url like '/media/%'
   ))
 );
 
@@ -202,19 +202,19 @@ commit;
   check (cardinality(amenities) <= 24),
   check (hero_image_url is null or (
     length(hero_image_url) between 1 and 2048
-    and (hero_image_url like '/media/%' or hero_image_url ~ '^https://')
+    and hero_image_url like '/media/%'
   )),
   check (lobby_image_url is null or (
     length(lobby_image_url) between 1 and 2048
-    and (lobby_image_url like '/media/%' or lobby_image_url ~ '^https://')
+    and lobby_image_url like '/media/%'
   )),
   check (courtyard_image_url is null or (
     length(courtyard_image_url) between 1 and 2048
-    and (courtyard_image_url like '/media/%' or courtyard_image_url ~ '^https://')
+    and courtyard_image_url like '/media/%'
   )),
   check (model_home_image_url is null or (
     length(model_home_image_url) between 1 and 2048
-    and (model_home_image_url like '/media/%' or model_home_image_url ~ '^https://')
+    and model_home_image_url like '/media/%'
   ))
 );
 
