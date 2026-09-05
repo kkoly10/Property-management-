@@ -72,7 +72,7 @@ fix disabled, the guard names all three offenders and `test:db` fails.
 | Notification cron | GREEN — 200 on every 10-minute run |
 | Scanner cron | **RED** — 503 on every run; `CRECY_DOCUMENT_SCAN_RELAY_URL`/`_SECRET` unset |
 | Recovery cron | GREEN — observed 200 at 04:17 UTC on 2026-09-05 |
-| Failure visibility | PARTIAL — `scheduledRunStatus` encodes outcome in the HTTP status (200/207/502) and Vercel retains logs, but there is **no error tracker** (no Sentry dependency in `package.json`) |
+| Failure visibility | IMPROVED — `scheduledRunStatus` encodes outcome in the HTTP status (200/207/502), Vercel retains logs, and the new founder overview at `/platform` surfaces last rent run, undelivered mail, quarantined files and open support sessions in one place. Still **no error tracker** (no Sentry dependency in `package.json`) |
 
 > Worth noting: the 502 was *correct behaviour*. The status ladder is what made a silently
 > dead rent schedule visible at all. Without it this would have logged 200 forever.
