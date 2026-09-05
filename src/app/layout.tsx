@@ -9,11 +9,17 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
+  applicationName: "Crecy",
   title: {
     default: "Crecy",
     template: "%s · Crecy",
   },
   description: "A clear operating system for every rental relationship.",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [{ url: "/brand/favicon.svg", type: "image/svg+xml" }],
+    apple: "/apple-icon",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
