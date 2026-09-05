@@ -44,7 +44,7 @@ export function LivingCommunityIdentity({
         className,
       )}
     >
-      <div className="absolute inset-0">
+      <div className="absolute inset-0 [&>img]:h-full [&>img]:w-full [&>img]:object-cover [&>picture]:h-full [&>picture]:w-full">
         {media ?? (
           <div className="h-full w-full bg-[radial-gradient(circle_at_72%_20%,rgba(255,255,255,.16),transparent_34%),linear-gradient(135deg,#087f55_0%,#064e3b_100%)]" />
         )}
