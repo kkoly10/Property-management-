@@ -3,7 +3,6 @@ import { ArrowLeft, CircleAlert, ShieldCheck } from "lucide-react";
 import { Wordmark } from "@/components/brand/wordmark";
 import { ConversationList } from "@/components/messaging/conversation-list";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getConversationWorkspace } from "@/lib/data/messaging";
 
@@ -13,7 +12,7 @@ export default async function OwnerMessagesPage() {
   const workspace = await getConversationWorkspace();
   return (
     <div className="min-h-screen bg-[#f6f8fb]">
-      <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark /><Badge variant="info">Crecy Owner</Badge></div></header>
+      <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Owner" className="text-[#0f766e]" /></div></header>
       <main className="mx-auto max-w-3xl space-y-6 p-5 sm:py-8">
         <Button asChild size="sm" variant="ghost"><Link href="/owner"><ArrowLeft className="h-4 w-4" />Owner home</Link></Button>
         <div><p className="text-sm text-muted-foreground">Owner portal</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Messages</h1><p className="mt-2 text-sm text-muted-foreground">Contact the property team through your exact owner relationship.</p></div>
