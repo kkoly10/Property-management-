@@ -19,11 +19,13 @@ import { initialActionState } from "@/lib/actions/state";
  * whose one-time magic link had expired could never reach their portal again, and the operator had to
  * re-invite them. The link option is what makes a 72-hour invitation redeemable for 72 hours.
  */
-export function LoginForm({ next }: { next?: string }) {
+export function LoginForm({ next, emailLabel, showTrialLink }: { next?: string; emailLabel: string; showTrialLink: boolean }) {
   const [mode, setMode] = useState<"password" | "link">("password");
   const [state, action] = useActionState(loginAction, initialActionState);
   const [linkState, linkAction] = useActionState(requestSignInLinkAction, initialActionState);
-  const target = next ?? "/app";
+  // No client-side default: an absent `next` is resolved on the server from the request host, so a
+  // resident is never handed the operator workspace as a landing page.
+  const target = next ?? "";
 
   if (mode === "link") {
     return (
@@ -68,7 +70,7 @@ export function LoginForm({ next }: { next?: string }) {
         </Alert>
       ) : null}
       <div>
-        <Label htmlFor="email">Work email</Label>
+        <Label htmlFor="email">{emailLabel}</Label>
         <Input id="email" name="email" type="email" autoComplete="email" className="mt-2" required />
         <FieldError messages={state.fieldErrors?.email} />
       </div>
@@ -81,7 +83,9 @@ export function LoginForm({ next }: { next?: string }) {
       <p className="text-center text-sm text-muted-foreground">
         <button type="button" onClick={() => setMode("link")} className="font-semibold text-primary hover:underline">Email me a sign-in link instead</button>
       </p>
-      <p className="text-center text-sm text-muted-foreground">Need an account? <Link href="/signup" className="font-semibold text-primary hover:underline">Start a trial</Link></p>
+      {showTrialLink ? (
+        <p className="text-center text-sm text-muted-foreground">Need an account? <Link href="/signup" className="font-semibold text-primary hover:underline">Start a trial</Link></p>
+      ) : null}
     </form>
   );
 }

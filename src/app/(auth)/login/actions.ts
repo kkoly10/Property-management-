@@ -4,8 +4,21 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { ActionState } from "@/lib/actions/state";
 import { safeRedirectPath } from "@/lib/auth/redirect";
+import { AUTH_SURFACE_COPY, authSurfaceFor } from "@/lib/auth/surface-copy";
+import { classifyHost } from "@/lib/runtime/host";
 import { createClient } from "@/lib/supabase/server";
 import { loginSchema, signInLinkSchema } from "@/lib/validation/auth";
+
+/**
+ * Where to land someone who signed in without a `next`.
+ *
+ * Derived from the host the request actually arrived on, because "/app" is the operator workspace and
+ * a resident signing in at crecyliving.com was being sent straight into it. The host chooses a
+ * default landing path and nothing more — what they can then see is still their relationship and RLS.
+ */
+async function defaultLandingPath(): Promise<string> {
+  return AUTH_SURFACE_COPY[authSurfaceFor(classifyHost((await headers()).get("host")))].homePath;
+}
 
 export async function loginAction(_previousState: ActionState, formData: FormData): Promise<ActionState> {
   const result = loginSchema.safeParse({
@@ -29,7 +42,7 @@ export async function loginAction(_previousState: ActionState, formData: FormDat
     return { status: "error", message: error instanceof Error ? error.message : "Unable to sign in.", requestId: crypto.randomUUID() };
   }
 
-  redirect(safeRedirectPath(result.data.next, "/app"));
+  redirect(safeRedirectPath(result.data.next, await defaultLandingPath()));
 }
 
 /**
@@ -69,7 +82,7 @@ export async function requestSignInLinkAction(_previousState: ActionState, formD
     if (!host) return sent;
 
     const callback = new URL("/auth/callback", `${proto}://${host}`);
-    callback.searchParams.set("next", safeRedirectPath(result.data.next, "/app"));
+    callback.searchParams.set("next", safeRedirectPath(result.data.next, await defaultLandingPath()));
 
     const supabase = await createClient();
     await supabase.auth.signInWithOtp({
