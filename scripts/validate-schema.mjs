@@ -58,6 +58,7 @@ const residentBalanceImportSql = await readFile(resolve(root, "supabase/migratio
 const xlsxSourceDocumentsSql = await readFile(resolve(root, "supabase/migrations/20260729120000_phase_3_xlsx_source_documents.sql"), "utf8");
 const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/20260729130000_phase_4_secure_link_raw_token.sql"), "utf8");
 const documentSignaturesSql = await readFile(resolve(root, "supabase/migrations/20260904120000_phase_2_document_signatures.sql"), "utf8");
+const invitationActivationTokenSql = await readFile(resolve(root, "supabase/migrations/20260905000000_phase_8_invitation_activation_token.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
@@ -852,6 +853,7 @@ async function validateRecurringCharges() {
   await db.exec(runtimeDiagnosticsSql);
   await db.exec(ownerSetupSql);
   await db.exec(documentSignaturesSql);
+  await db.exec(invitationActivationTokenSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
@@ -3398,6 +3400,29 @@ async function validateRecurringCharges() {
     (select count(*)::integer from audit.audit_events where action_code='relationship.activated') as activate_audits
   `)).rows[0];
   assert(relationshipInviteTraces.invited === 4 && relationshipInviteTraces.activated === 2 && relationshipInviteTraces.notified === 4 && relationshipInviteTraces.jobs === 4 && relationshipInviteTraces.invite_audits === 4 && relationshipInviteTraces.activate_audits === 2, "Relationship invitation audit/outbox/notification trace is incomplete.");
+
+  // ── Invitation activation token reaches the email (phase_8_invitation_activation_token) ──────────
+  // Every invitation notification linked to a bare /invitations/accept, and that page answers "The
+  // invitation link is incomplete." The command only ever sees the token HASH — correctly, since
+  // public.invitations stores a hash — so the caller passes the raw token and it is stamped onto the
+  // QUEUED job for the worker to build the URL from, then scrubbed once the job is terminal, exactly
+  // as deliver_document treats a secure-link token.
+  // Replayed against the resident's existing pending invitation rather than minting a new one: an
+  // accepted relationship cannot be re-invited, a fresh owner has no ownership interest to be scoped
+  // by, and another staff seat exceeds the plan. The inner command short-circuits on the matching
+  // idempotency key and returns the stored response, so nothing new is created and no trace count
+  // moves — while the wrapper still does the one thing under test: stamp the token on the queued job.
+  const activationRaw = "raw-activation-token_ABC-123";
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const tokenInvite = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-resident-0002','${activationRaw}') as result`)).rows[0].result;
+  assert(tokenInvite.invitationId === residentReinvite.invitationId, "The token overload did not replay the existing invitation idempotently.");
+  await db.exec("reset role");
+  const tokenJob = (await db.query(`select id::text as id, payload->>'invitationToken' as token from private.notification_jobs where idempotency_key='relationship-invitation:${tokenInvite.invitationId}'`)).rows[0];
+  assert(tokenJob && tokenJob.token === activationRaw, "The activation token did not reach the invitation notification payload.");
+
+  await db.query(`update private.notification_jobs set status='sent' where id='${tokenJob.id}'`);
+  const scrubbedJob = (await db.query(`select (payload->'invitationToken') is null as scrubbed from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  assert(scrubbedJob.scrubbed === true, "A terminal notification job kept the plaintext activation token.");
 
   // Reconciliation-exception resolution (phase_5_reconciliation_resolution). The po_CrecyMismatch001
   // batch left two open exceptions above; drive resolve/waive/escalate against them.

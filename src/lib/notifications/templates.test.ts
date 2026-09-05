@@ -107,3 +107,48 @@ describe("renderNotification", () => {
     expect(rendered.body).toContain("http://localhost:3000/invitations/accept");
   });
 });
+
+describe("invitation activation links", () => {
+  it("carries the activation token so the accept page is reachable", () => {
+    // Without it every invitation email linked to a bare /invitations/accept, and the page answered
+    // "The invitation link is incomplete." — the invitation was undeliverable by its own email.
+    const rendered = renderNotification({
+      templateCode: "resident_invitation",
+      locale: "en-US",
+      payload: { organizationName: "Northstar", invitationToken: "abc-DEF_123" },
+    });
+    expect(rendered?.body).toContain("/invitations/accept?token=abc-DEF_123");
+  });
+
+  it("carries the token for owner and staff invitations too", () => {
+    const owner = renderNotification({
+      templateCode: "owner_invitation", locale: "en-US", payload: { invitationToken: "tok_owner-1" },
+    });
+    const staff = renderNotification({
+      templateCode: "staff_invitation", locale: "en-US", payload: { roleCode: "org_owner", invitationToken: "tok_staff-1" },
+    });
+    expect(owner?.body).toContain("/invitations/accept?token=tok_owner-1");
+    expect(staff?.body).toContain("/settings/team/accept?token=tok_staff-1");
+    // And the role reads as a role, not as a database identifier.
+    expect(staff?.body).toContain("an owner");
+    expect(staff?.body).not.toContain("org_owner");
+  });
+
+  it("falls back to the bare path when no token is present, so older queued jobs still render", () => {
+    const rendered = renderNotification({
+      templateCode: "resident_invitation", locale: "en-US", payload: { organizationName: "Northstar" },
+    });
+    expect(rendered?.body).toContain("/invitations/accept");
+    expect(rendered?.body).not.toContain("?token=");
+  });
+
+  it("refuses a malformed token rather than emitting a broken query string", () => {
+    const rendered = renderNotification({
+      templateCode: "resident_invitation",
+      locale: "en-US",
+      payload: { invitationToken: "not a token&injected=1" },
+    });
+    expect(rendered?.body).not.toContain("?token=");
+    expect(rendered?.body).not.toContain("injected");
+  });
+});

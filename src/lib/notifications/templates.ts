@@ -74,6 +74,24 @@ function link(path: string, audience: LinkAudience): string {
 }
 
 /**
+ * The activation link for an invitation.
+ *
+ * The accept page requires `?token=`; without it the recipient is told "The invitation link is
+ * incomplete", which is what every invitation email said before the worker was given the token. The
+ * token is injected into the job payload by the invite command and scrubbed once the job is terminal.
+ *
+ * A missing or malformed token falls back to the bare path rather than emitting a broken query
+ * string, so jobs queued before the token existed still render exactly as they did.
+ */
+function invitationLink(p: Record<string, unknown>, path: string, audience: LinkAudience): string {
+  const base = link(path, audience);
+  const token = typeof p.invitationToken === "string" ? p.invitationToken.trim() : "";
+  // base64url only — the shape the invitation route mints. Anything else is not appended.
+  if (!token || !/^[A-Za-z0-9_-]+$/.test(token)) return base;
+  return `${base}?token=${encodeURIComponent(token)}`;
+}
+
+/**
  * A secure_link delivery points at a one-time tokenized URL the recipient can open without an account;
  * every other channel points at the portal. `secureLinkUrl` is injected by the worker at send time —
  * it is never persisted with the job beyond the send.
@@ -98,43 +116,43 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
   staff_invitation: {
     en: (p) => ({
       subject: `You have been invited to join ${text(p.organizationName, "your team")} on Crecy`,
-      body: `You have been invited to join ${text(p.organizationName, "your team")} on Crecy as ${roleLabel(p.roleCode, "en", "a team member")}.\n\nAccept the invitation: ${link("/settings/team/accept", "operator")}\n\nIf you were not expecting this, you can ignore this message.`,
+      body: `You have been invited to join ${text(p.organizationName, "your team")} on Crecy as ${roleLabel(p.roleCode, "en", "a team member")}.\n\nAccept the invitation: ${invitationLink(p, "/settings/team/accept", "operator")}\n\nIf you were not expecting this, you can ignore this message.`,
     }),
     es: (p) => ({
       subject: `Te invitaron a unirte a ${text(p.organizationName, "tu equipo")} en Crecy`,
-      body: `Te invitaron a unirte a ${text(p.organizationName, "tu equipo")} en Crecy como ${roleLabel(p.roleCode, "es", "miembro del equipo")}.\n\nAcepta la invitación: ${link("/settings/team/accept", "operator")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
+      body: `Te invitaron a unirte a ${text(p.organizationName, "tu equipo")} en Crecy como ${roleLabel(p.roleCode, "es", "miembro del equipo")}.\n\nAcepta la invitación: ${invitationLink(p, "/settings/team/accept", "operator")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
     }),
     fr: (p) => ({
       subject: `Vous avez été invité à rejoindre ${text(p.organizationName, "votre équipe")} sur Crecy`,
-      body: `Vous avez été invité à rejoindre ${text(p.organizationName, "votre équipe")} sur Crecy en tant que ${roleLabel(p.roleCode, "fr", "membre de l'équipe")}.\n\nAccepter l'invitation : ${link("/settings/team/accept", "operator")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
+      body: `Vous avez été invité à rejoindre ${text(p.organizationName, "votre équipe")} sur Crecy en tant que ${roleLabel(p.roleCode, "fr", "membre de l'équipe")}.\n\nAccepter l'invitation : ${invitationLink(p, "/settings/team/accept", "operator")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
     }),
   },
   resident_invitation: {
     en: (p) => ({
       subject: `Your resident portal for ${text(p.organizationName, "your home")} is ready`,
-      body: `You can now access your resident portal to view charges, make payments, and submit maintenance requests.\n\nAccept the invitation: ${link("/invitations/accept", "resident")}\n\nIf you were not expecting this, you can ignore this message.`,
+      body: `You can now access your resident portal to view charges, make payments, and submit maintenance requests.\n\nAccept the invitation: ${invitationLink(p, "/invitations/accept", "resident")}\n\nIf you were not expecting this, you can ignore this message.`,
     }),
     es: (p) => ({
       subject: `Tu portal de residente para ${text(p.organizationName, "tu hogar")} está listo`,
-      body: `Ya puedes acceder a tu portal de residente para ver cargos, hacer pagos y enviar solicitudes de mantenimiento.\n\nAcepta la invitación: ${link("/invitations/accept", "resident")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
+      body: `Ya puedes acceder a tu portal de residente para ver cargos, hacer pagos y enviar solicitudes de mantenimiento.\n\nAcepta la invitación: ${invitationLink(p, "/invitations/accept", "resident")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
     }),
     fr: (p) => ({
       subject: `Votre portail résident pour ${text(p.organizationName, "votre logement")} est prêt`,
-      body: `Vous pouvez maintenant accéder à votre portail résident pour consulter les frais, payer et soumettre des demandes d'entretien.\n\nAccepter l'invitation : ${link("/invitations/accept", "resident")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
+      body: `Vous pouvez maintenant accéder à votre portail résident pour consulter les frais, payer et soumettre des demandes d'entretien.\n\nAccepter l'invitation : ${invitationLink(p, "/invitations/accept", "resident")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
     }),
   },
   owner_invitation: {
     en: (p) => ({
       subject: `Your owner portal for ${text(p.organizationName, "your portfolio")} is ready`,
-      body: `You can now access your owner portal to review statements, approvals, and property performance.\n\nAccept the invitation: ${link("/invitations/accept", "owner")}\n\nIf you were not expecting this, you can ignore this message.`,
+      body: `You can now access your owner portal to review statements, approvals, and property performance.\n\nAccept the invitation: ${invitationLink(p, "/invitations/accept", "owner")}\n\nIf you were not expecting this, you can ignore this message.`,
     }),
     es: (p) => ({
       subject: `Tu portal de propietario para ${text(p.organizationName, "tu portafolio")} está listo`,
-      body: `Ya puedes acceder a tu portal de propietario para revisar estados de cuenta, aprobaciones y el desempeño de tus propiedades.\n\nAcepta la invitación: ${link("/invitations/accept", "owner")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
+      body: `Ya puedes acceder a tu portal de propietario para revisar estados de cuenta, aprobaciones y el desempeño de tus propiedades.\n\nAcepta la invitación: ${invitationLink(p, "/invitations/accept", "owner")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
     }),
     fr: (p) => ({
       subject: `Votre portail propriétaire pour ${text(p.organizationName, "votre portefeuille")} est prêt`,
-      body: `Vous pouvez maintenant accéder à votre portail propriétaire pour consulter les relevés, les approbations et la performance de vos biens.\n\nAccepter l'invitation : ${link("/invitations/accept", "owner")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
+      body: `Vous pouvez maintenant accéder à votre portail propriétaire pour consulter les relevés, les approbations et la performance de vos biens.\n\nAccepter l'invitation : ${invitationLink(p, "/invitations/accept", "owner")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
     }),
   },
   document_delivered: {

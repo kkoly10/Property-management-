@@ -97,6 +97,7 @@ export async function POST(request: Request) {
     p_token_hash: tokenHash,
     p_token_prefix: tokenPrefix,
     p_audit_reason: input.auditReason,
+    p_activation_token: rawToken,
     p_idempotency_key: idempotencyKey,
   });
   if (error || !data) {

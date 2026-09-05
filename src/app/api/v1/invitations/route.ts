@@ -81,6 +81,7 @@ export async function POST(request: Request) {
     p_redirect_surface: input.redirectSurface,
     p_token_hash: tokenHash,
     p_token_prefix: tokenPrefix,
+    p_activation_token: rawToken,
     p_idempotency_key: idempotencyKey,
   });
   if (error || !data) {

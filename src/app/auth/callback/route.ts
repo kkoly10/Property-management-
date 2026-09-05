@@ -1,9 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { safeRedirectPath } from "@/lib/auth/redirect";
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
-  const next = request.nextUrl.searchParams.get("next") ?? "/onboarding/organization";
+  // Constrained to this origin: `new URL(next, base)` returns another host for an absolute or
+  // protocol-relative value, which would make this an open redirect on the authentication path.
+  const next = safeRedirectPath(request.nextUrl.searchParams.get("next"), "/onboarding/organization");
 
   if (code) {
     const supabase = await createClient();

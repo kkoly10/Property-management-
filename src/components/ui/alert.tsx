@@ -8,6 +8,8 @@ const alertVariants = cva("relative grid w-full grid-cols-[auto_1fr] gap-x-3 rou
       default: "bg-card text-card-foreground",
       info: "border-[#b2ddff] bg-[#eff8ff] text-[#1849a9]",
       warning: "border-[#fedf89] bg-[#fffaeb] text-[#93370d]",
+      // Matches Badge's success palette so a confirmed state reads the same wherever it appears.
+      success: "border-[#abefc6] bg-[#ecfdf3] text-success",
       destructive: "border-[#fecdca] bg-[#fef3f2] text-destructive",
     },
   },
