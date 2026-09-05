@@ -296,7 +296,7 @@ export function LivingCommunityForm({
             <div className="overflow-hidden rounded-[0.9rem] bg-[#0b3427] text-white">
               <div className="relative aspect-[16/10] bg-[linear-gradient(135deg,#087f55,#064e3b)]">
                 {profile?.heroImageUrl ? (
-                  <Image src={profile.heroImageUrl} alt="" fill sizes="360px" className="object-cover" />
+                  <Image src={profile.heroImageUrl} alt="" fill unoptimized sizes="360px" className="object-cover" />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <ImageIcon aria-hidden="true" className="h-7 w-7 text-white/45" />
@@ -327,7 +327,7 @@ export function LivingCommunityForm({
               <div key={label} className="bg-card p-3">
                 <div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-muted">
                   {src ? (
-                    <Image src={src} alt="" fill sizes="180px" className="object-cover" />
+                    <Image src={src} alt="" fill unoptimized sizes="180px" className="object-cover" />
                   ) : (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <ImageIcon aria-hidden="true" className="h-5 w-5 text-muted-foreground" />
