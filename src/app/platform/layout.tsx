@@ -15,8 +15,14 @@ export default async function PlatformLayout({ children }: { children: React.Rea
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
           <Link href="/platform" className="flex items-center gap-3">
             <Wordmark />
-            <Badge variant="neutral">Platform support</Badge>
+            <Badge variant="neutral">Platform</Badge>
           </Link>
+          {/* /platform/support is a static segment, so Next resolves it ahead of the sibling
+              [organizationId] route; organization ids are uuids and can never collide with it. */}
+          <nav className="flex items-center gap-1 text-sm">
+            <Link href="/platform" className="rounded-md px-3 py-1.5 font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">Overview</Link>
+            <Link href="/platform/support" className="rounded-md px-3 py-1.5 font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">Support</Link>
+          </nav>
         </div>
       </header>
       <main className="mx-auto max-w-6xl space-y-6 p-5 sm:py-8">{children}</main>

@@ -61,6 +61,7 @@ const documentSignaturesSql = await readFile(resolve(root, "supabase/migrations/
 const invitationActivationTokenSql = await readFile(resolve(root, "supabase/migrations/20260905000000_phase_8_invitation_activation_token.sql"), "utf8");
 const deferredConstraintAuthoritySql = await readFile(resolve(root, "supabase/migrations/20260905010000_phase_4_deferred_constraint_authority.sql"), "utf8");
 const activationTokenBoundsSql = await readFile(resolve(root, "supabase/migrations/20260905020000_phase_8_activation_token_bounds.sql"), "utf8");
+const platformBusinessOverviewSql = await readFile(resolve(root, "supabase/migrations/20260905030000_phase_8_platform_business_overview.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
@@ -858,6 +859,7 @@ async function validateRecurringCharges() {
   await db.exec(invitationActivationTokenSql);
   await db.exec(deferredConstraintAuthoritySql);
   await db.exec(activationTokenBoundsSql);
+  await db.exec(platformBusinessOverviewSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
@@ -3813,6 +3815,44 @@ async function validateRecurringCharges() {
   const suspendedActor = (await db.query(`select public.set_platform_actor_status('${provisioned.platformActorId}','suspended','suspend-ok-1') as r`)).rows[0].r;
   assert(suspendedActor.status === "suspended", "Suspend did not change the platform actor status.");
   await expectDatabaseError(() => db.query(`select public.set_platform_actor_status('e8000000-0000-4000-8000-000000000093','suspended','suspend-lastadmin-1')`), "CANNOT_SUSPEND_LAST_ADMIN");
+
+  // (J) The founder's business overview. It aggregates across EVERY customer, so it is gated harder
+  // than a support read -- platform_admin, not merely an active actor -- and it deliberately takes no
+  // support session: a session is a justified, audited grant to look at one named customer, and
+  // stretching it to cover an aggregate over all of them would hollow out the concept.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAgent}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query("select public.platform_business_overview()"), "NOT_PLATFORM_ADMIN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${nonPlatformUser}'; set request.jwt.claim.aal='aal2'`);
+  await expectDatabaseError(() => db.query("select public.platform_business_overview()"), "NOT_PLATFORM_ADMIN");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${platformAdmin}'; set request.jwt.claim.aal='aal1'`);
+  await expectDatabaseError(() => db.query("select public.platform_business_overview()"), "MFA_STEP_UP_REQUIRED");
+  await db.exec("set request.jwt.claim.aal='aal2'");
+  const businessOverview = (await db.query("select public.platform_business_overview() as r")).rows[0].r;
+  assert(businessOverview.customers.total >= 1 && businessOverview.portfolio.units >= 1, "The business overview reported an empty platform.");
+
+  // Outstanding must be net of live allocations. The face value of open charges is the wrong answer
+  // for every partially paid one, and it is the mistake this shape invites.
+  await db.exec("reset role");
+  const openFaceValue = Number((await db.query("select coalesce(sum(amount_minor),0)::bigint as v from public.charges where status in ('open','partially_paid') and currency_code='USD'")).rows[0].v);
+  const liveAllocations = Number((await db.query(`select coalesce(sum(a.amount_minor),0)::bigint as v from public.payment_allocations a
+    join public.charges c on c.id = a.charge_id
+    where a.reversed_at is null and c.status in ('open','partially_paid') and c.currency_code='USD'`)).rows[0].v);
+  // Without this guard the assertion below passes trivially on a fixture that has no allocation at
+  // all, proving nothing -- which is exactly how a money bug survives a green suite.
+  assert(liveAllocations > 0, "No live allocation against an open charge, so the outstanding assertion would be vacuous.");
+  assert(
+    Number(businessOverview.money.outstandingMinorByCurrency.USD) === openFaceValue - liveAllocations,
+    "Outstanding was not reported net of live allocations.",
+  );
+
+  // No invented revenue. plan_catalog carries no price, so any MRR/ARR figure would be fabricated,
+  // and a fabricated number on a founder's dashboard is worse than an absent one.
+  const moneyKeys = Object.keys(businessOverview.money).join(" ").toLowerCase();
+  assert(!/mrr|arr|revenue/.test(moneyKeys), `The business overview reported a revenue figure it cannot compute: ${moneyKeys}`);
+
+  // A platform-scoped read leaves a trace, exactly as a per-customer one does.
+  const platformReadAudits = (await db.query("select count(*)::integer as c from audit.audit_events where action_code='platform.viewedBusinessOverview' and organization_id is null")).rows[0].c;
+  assert(platformReadAudits === 1, "Reading every customer's numbers at once was not audited.");
   await db.exec("reset role");
 
   // ── Correction A/B/C: control-plane hardening (phase_8_platform_control_plane_hardening) ─────────
