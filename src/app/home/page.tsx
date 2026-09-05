@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -9,12 +10,14 @@ import {
   Wrench,
 } from "lucide-react";
 import { LivingCommunityIdentity } from "@/components/crecy/living-community-identity";
+import { LivingCommunityGallery } from "@/components/living/living-community-gallery";
 import { LivingShell } from "@/components/living/living-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getRecipientAnnouncementWorkspace } from "@/lib/data/announcements";
 import { getResidentBalance } from "@/lib/data/finance";
+import { getResidentLivingCommunityPresentations } from "@/lib/data/living-community";
 import { getResidentMaintenanceWorkspace } from "@/lib/data/maintenance";
 import { getConversationWorkspace } from "@/lib/data/messaging";
 
@@ -33,14 +36,18 @@ const shortDate = (value: string) => new Intl.DateTimeFormat("en-US", {
 }).format(new Date(`${value}T12:00:00.000Z`));
 
 export default async function ResidentHomePage() {
-  const [summary, announcements, maintenance, conversations] = await Promise.all([
+  const [summary, announcements, maintenance, conversations, communities] = await Promise.all([
     getResidentBalance(),
     getRecipientAnnouncementWorkspace(),
     getResidentMaintenanceWorkspace(),
     getConversationWorkspace(),
+    getResidentLivingCommunityPresentations(),
   ]);
 
   const home = summary.items[0];
+  const community = home
+    ? communities.items.find((item) => item.tenancyId === home.tenancyId)
+    : undefined;
   const openMaintenance = maintenance.items.filter((item) => !["completed", "canceled"].includes(item.residentVisibleStatus)).length;
   const openConversations = conversations.items.filter((item) => item.status === "open").length;
 
@@ -75,9 +82,22 @@ export default async function ResidentHomePage() {
         {home ? (
           <>
             <LivingCommunityIdentity
-              title={home.propertyName}
-              subtitle={`Unit ${home.unitCode} · Your resident portal`}
-              badge={<Badge className="border-white/20 bg-white/14 text-white">Your home</Badge>}
+              title={community?.displayName ?? home.propertyName}
+              subtitle={[
+                `Unit ${home.unitCode}`,
+                community?.publicAddressText,
+              ].filter(Boolean).join(" · ")}
+              media={community?.heroImageUrl ? (
+                <Image
+                  src={community.heroImageUrl}
+                  alt=""
+                  fill
+                  priority
+                  sizes="(min-width: 1024px) 1100px, 100vw"
+                  className="object-cover"
+                />
+              ) : undefined}
+              badge={<Badge className="border-white/20 bg-black/15 text-white backdrop-blur-sm">{community?.isDemo ? "Demo community" : "Your home"}</Badge>}
               action={
                 <Button asChild variant="secondary" size="sm" className="bg-white text-[#05603e] hover:bg-white/90">
                   <Link href="/documents">Documents</Link>
@@ -200,6 +220,8 @@ export default async function ResidentHomePage() {
             )}
           </section>
         </div>
+
+        {community ? <LivingCommunityGallery community={community} /> : null}
 
         <section aria-labelledby="recent-payments-title" className="overflow-hidden rounded-xl border bg-card">
           <header className="flex items-start justify-between gap-4 border-b px-5 py-4 sm:px-6">

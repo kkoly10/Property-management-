@@ -1,10 +1,10 @@
+import Image from "next/image";
 import {
   ArrowRight,
   Building2,
   CircleCheckBig,
   FileCheck2,
   FileText,
-  Home,
   Landmark,
   MessageSquareText,
   ReceiptText,
@@ -14,15 +14,18 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { LivingCommunityIdentity } from "@/components/crecy/living-community-identity";
 import { SurfaceTheme } from "@/components/crecy/surface-theme";
 import type { AuthSurface, AuthSurfaceCopy } from "@/lib/auth/surface-copy";
+import type { LivingCommunityPresentation } from "@/lib/data/living-community";
 
 export function AuthSurfaceStage({
   surface,
   copy,
+  community,
 }: {
   surface: AuthSurface;
   copy: AuthSurfaceCopy;
+  community?: LivingCommunityPresentation | null;
 }) {
-  if (surface === "resident") return <ResidentStage copy={copy} />;
+  if (surface === "resident") return <ResidentStage copy={copy} community={community} />;
   if (surface === "owner") return <OwnerStage copy={copy} />;
   return <OperatorStage copy={copy} />;
 }
@@ -92,29 +95,56 @@ function OperatorStage({ copy }: { copy: AuthSurfaceCopy }) {
   );
 }
 
-function ResidentStage({ copy }: { copy: AuthSurfaceCopy }) {
+function ResidentStage({
+  copy,
+  community,
+}: {
+  copy: AuthSurfaceCopy;
+  community?: LivingCommunityPresentation | null;
+}) {
+  const communityTitle = community?.displayName ?? "Your home. Your community.";
+  const communitySubtitle = community?.publicAddressText
+    ?? (community ? "Your resident portal" : "Payments, requests, messages, and documents stay together.");
+
   return (
     <SurfaceTheme surface="living" className="h-full bg-[#eef8f3] text-foreground">
       <div className="flex h-full min-h-[660px] flex-col px-8 py-8 xl:px-12 xl:py-10">
         <Wordmark product="Living" className="max-w-[9rem]" />
 
-        <div className="my-auto max-w-xl py-10">
-          <p className="text-sm font-medium text-[#067647]">Crecy Living</p>
-          <h1 className="mt-4 text-[3.25rem] font-semibold leading-[1.02] tracking-[-0.05em] text-balance xl:text-[3.75rem]">
-            {copy.headline}
-          </h1>
-          <p className="mt-6 max-w-lg text-base leading-7 text-muted-foreground">
-            Your resident portal keeps the home relationship simple: what you owe, what you requested, what your property team sent, and what changed.
-          </p>
-
+        <div className="my-auto max-w-2xl py-8">
           <LivingCommunityIdentity
-            className="mt-9 min-h-60 shadow-[0_24px_60px_rgba(6,95,63,.14)]"
-            title="Your home. Your community."
-            subtitle="Payments, requests, messages, and documents stay together."
-            badge={<span className="rounded-full bg-white/14 px-2.5 py-1 text-[10px] font-semibold text-white">Resident portal</span>}
+            className="min-h-[330px] shadow-[0_26px_70px_rgba(6,95,63,.17)] xl:min-h-[390px]"
+            title={communityTitle}
+            subtitle={communitySubtitle}
+            media={community?.heroImageUrl ? (
+              <Image
+                src={community.heroImageUrl}
+                alt=""
+                fill
+                priority
+                sizes="(min-width: 1024px) 55vw, 100vw"
+                className="object-cover"
+              />
+            ) : undefined}
+            badge={
+              <span className="rounded-full border border-white/20 bg-black/15 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur-sm">
+                {community?.isDemo ? "Crecy Living · Demo" : "Crecy Living"}
+              </span>
+            }
           />
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="mt-6">
+            <h1 className="text-[2rem] font-semibold leading-[1.05] tracking-[-0.045em] text-balance xl:text-[2.35rem]">
+              {community?.headline ?? copy.headline}
+            </h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
+              {community
+                ? `Sign in to ${community.displayName} for payments, maintenance, messages, documents, and community updates.`
+                : "Your resident portal keeps the home relationship simple: what you owe, what you requested, what your property team sent, and what changed."}
+            </p>
+          </div>
+
+          <div className="mt-6 grid gap-3 sm:grid-cols-3">
             {[
               [ReceiptText, "Pay", "Balance & receipts"],
               [Wrench, "Request", "Maintenance"],
