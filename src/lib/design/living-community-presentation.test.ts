@@ -55,4 +55,10 @@ describe("Crecy Living community presentation", () => {
     expect(communityData).toContain('normalizedSubdomain === MAPLE_COURT_DEMO_PRESENTATION.subdomain');
     expect(communityData).not.toContain("propertyName ===");
   });
+
+  it("keeps resident community media same-origin", () => {
+    expect(migration).toContain("hero_image_url like '/media/%'");
+    expect(migration).not.toContain("hero_image_url ~ '^https://'");
+    expect(communityData).toContain('url?.startsWith("/media/")');
+  });
 });
