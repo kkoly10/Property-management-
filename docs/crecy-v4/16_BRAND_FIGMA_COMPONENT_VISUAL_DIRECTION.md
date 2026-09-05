@@ -34,19 +34,25 @@ A global rental operating system for independent landlords and growing property 
 ### Core visual idea
 A light-first, precise, modern operating system with calm information density. It should feel more approachable than legacy property-management software and more operationally serious than a consumer marketplace.
 
-### Seed palette
-- **Primary Indigo:** `#4F46E5`
-- **Primary Dark:** `#3730A3`
-- **Secondary Teal:** `#0F766E`
-- **Ink:** `#111827`
+### Production palette
+- **Crecy OS / master purple:** `#3A37EB`
+- **Crecy OS hover:** `#302DD4`
+- **Crecy OS strong:** `#2724B8`
+- **Crecy Living green:** `#01A065`
+- **Crecy Living hover:** `#008A57`
+- **Crecy Living strong:** `#067647`
+- **Financial/secondary teal:** `#0F766E`
+- **Ink:** `#101828`
 - **Muted Text:** `#667085`
-- **Canvas:** `#F8FAFC`
+- **Canvas:** `#F7F8FB` (Living may use the warmer `#F6F9F8`)
 - **Surface:** `#FFFFFF`
 - **Border:** `#E4E7EC`
 - **Success:** `#067647`
 - **Warning:** `#B54708`
 - **Danger:** `#B42318`
 - **Information:** `#175CD3`
+
+The master purple and Living green are product identity colors, not interchangeable accents. Surface theming is host-aware: Crecy OS and Owner are purple; Crecy Living is green.
 
 All production combinations must be WCAG 2.2 AA contrast-tested. Semantic status colors must always be paired with text and/or icons.
 
@@ -84,16 +90,21 @@ The **product name is permanently locked as Crecy**. The founder-approved produc
 - Left navigation, global search/command palette, attention queue
 - Tables and split views for portfolio, leasing, money, maintenance, and owners
 - Dashboard prioritizes unresolved work over decorative metrics
+- Use asymmetric workspaces and metric strips; do not express every summary, filter, queue, and table as an independent card
+- Navigation is grouped by operating domain rather than one flat list of equally weighted routes
 
 ### Resident Portal/PWA
 - Mobile-first
-- Bottom navigation: Home, Payments, Maintenance, Messages, More
+- Green Crecy Living semantic theme across logo, actions, focus states, selected navigation, and PWA chrome
+- Bottom navigation: Home, Payments, central New Request action, Messages, More
 - Balance, next payment, open maintenance, and management requests appear first
+- Community/property identity may use operator-supplied public-safe imagery and presentation data when available
 - No download required; installable PWA is optional
 
 ### Owner Portal
-- Read-heavy, trust-centered presentation
+- Read-heavy, trust-centered presentation with the purple Crecy OS family identity
 - Occupancy, income, expenses, maintenance approvals, statements, and remittance visibility
+- Financial-first hierarchy rather than a resident-style stack of shortcut cards
 - Financial explanations use plain language and audit trails
 
 ### Private Vendor Workspace
