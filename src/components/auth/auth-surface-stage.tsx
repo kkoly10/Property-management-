@@ -121,6 +121,7 @@ function ResidentStage({
                 src={community.heroImageUrl}
                 alt=""
                 fill
+                unoptimized
                 priority
                 sizes="(min-width: 1024px) 55vw, 100vw"
                 className="object-cover"
