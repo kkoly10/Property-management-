@@ -55,7 +55,7 @@ export function ResolveExceptionControl({ exceptionId, organizationId, status, d
 
   return <div className="mt-4 space-y-3 rounded-lg border p-4">
     <div className="flex items-center justify-between gap-2">
-      <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Resolution</span>
+      <span className="text-xs font-medium text-muted-foreground">Resolution note</span>
       <Badge variant={status === "escalated" ? "warning" : "neutral"}>{label(status)}</Badge>
     </div>
     <Textarea rows={2} maxLength={1000} placeholder="Record the evidence or reason (required to resolve or waive)." value={evidence} disabled={disabled || pending !== null} onChange={(event) => changed(event.target.value)} />

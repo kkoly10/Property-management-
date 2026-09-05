@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { WorkspacePanel } from "@/components/crecy/workspace-panel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -162,7 +162,11 @@ export function WorkOrderActions({ workOrderId, organizationId, status, version,
   // and the organization requires it, the command answers COMPLETION_EVIDENCE_REQUIRED, surfaced below.
   const completionBlocked = scanning.length > 0 || rejected.length > 0;
 
-  return <Card><CardHeader><CardTitle>Update status</CardTitle><CardDescription>Current status: {status.replaceAll("_", " ")}</CardDescription></CardHeader><CardContent className="space-y-4">
+  return <WorkspacePanel
+    title="Advance work order"
+    description={<>Current status: <span className="font-medium text-foreground">{status.replaceAll("_", " ")}</span></>}
+    bodyClassName="space-y-4 p-5 sm:p-6"
+  >
     {error ? <Alert variant="destructive"><AlertTitle>Not updated</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {primary === "schedule" ? <div className="grid gap-3 rounded-lg border p-4"><div className="space-y-2"><Label htmlFor="wo-start">Visit start</Label><Input id="wo-start" type="datetime-local" value={scheduledStart} disabled={busy} onChange={(event) => { setScheduledStart(event.target.value); changed(); }} /></div><div className="space-y-2"><Label htmlFor="wo-end">Visit end</Label><Input id="wo-end" type="datetime-local" value={scheduledEnd} disabled={busy} onChange={(event) => { setScheduledEnd(event.target.value); changed(); }} /></div></div> : null}
     {primary === "complete" ? <div className="space-y-4 rounded-lg border p-4">
@@ -196,5 +200,5 @@ export function WorkOrderActions({ workOrderId, organizationId, status, version,
     </div> : null}
     {primary ? <Button className="w-full" size="lg" disabled={busy || (primary === "schedule" && (!scheduledStart || !scheduledEnd)) || (primary === "complete" && (!completionSummary.trim() || completionBlocked))} onClick={() => run(primary, primary === "schedule" ? { scheduledStart: new Date(scheduledStart).toISOString(), scheduledEnd: new Date(scheduledEnd).toISOString() } : primary === "complete" ? { completionSummary, actualCostMinor: toMinor(actualCost) ?? undefined } : {})}>{pending === primary ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}{actionLabel[primary]}</Button> : null}
     {canCancel ? showCancel ? <div className="space-y-3 rounded-lg border border-destructive/40 p-4"><div className="space-y-2"><Label htmlFor="wo-cancel-reason">Cancellation reason</Label><Input id="wo-cancel-reason" required minLength={3} maxLength={1000} value={cancelReason} disabled={busy} onChange={(event) => { setCancelReason(event.target.value); changed(); }} /></div><Button variant="destructive" className="w-full" disabled={busy || !cancelReason.trim()} onClick={() => run("cancel", { reason: cancelReason })}>{pending === "cancel" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CircleX className="h-4 w-4" />}Confirm cancellation</Button></div> : <Button variant="ghost" className="w-full text-destructive" disabled={disabled} onClick={() => setShowCancel(true)}><RotateCcw className="h-4 w-4" />Cancel this work order</Button> : null}
-  </CardContent></Card>;
+  </WorkspacePanel>;
 }

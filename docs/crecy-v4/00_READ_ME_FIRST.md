@@ -147,6 +147,7 @@ See `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` for product exclusions and file
 - `29_VISUAL_SYSTEM_FOUNDATION.md` — binding semantic themes, Crecy layout primitives, anti-generic rules, and redesign rollout order
 - `30_VISUAL_ADVERSARIAL_REVIEW.md` — adversarial assessment of generic-design risks and required surface signatures
 - `31_ANCHOR_SCREEN_ADVERSARIAL_REVIEW.md` — cross-surface review of the implemented OS, Living, Owner, and Marketing anchor screens plus propagation gates
+- `32_OPERATOR_CANONICAL_WORKSPACE_PROPAGATION.md` — adversarial review of the first Operator propagation batch: property detail, payments, maintenance queue/detail
 - `AGENTS.md` — repository agent rules
 
 ## 8. Non-negotiable invariants

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, LoaderCircle, Receipt } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { WorkspacePanel } from "@/components/crecy/workspace-panel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -57,7 +57,11 @@ export function RecordCostForm({ workOrderId, organizationId, defaultCurrencyCod
   }
 
   return <form onSubmit={submit} className="space-y-5">
-    <Card><CardHeader><CardTitle>Record maintenance cost</CardTitle><CardDescription>Post the vendor cost to the ledger. This debits repairs &amp; maintenance and credits accounts payable, and flows onto the owner statement.</CardDescription></CardHeader><CardContent className="space-y-4">
+    <WorkspacePanel
+      title="Record maintenance cost"
+      description="Post the vendor cost to the ledger. It debits repairs & maintenance, credits accounts payable, and flows onto the owner statement."
+      bodyClassName="space-y-4 p-5 sm:p-6"
+    >
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2"><Label htmlFor="wo-cost-amount">Cost amount</Label><Input id="wo-cost-amount" inputMode="decimal" required placeholder="0.00" value={amount} disabled={disabled || pending} onChange={(event) => { setAmount(event.target.value); changed(); }} /></div>
         <div className="space-y-2"><Label htmlFor="wo-cost-currency">Currency</Label><NativeSelect id="wo-cost-currency" value={currencyCode} disabled={disabled || pending} onChange={(event) => { setCurrencyCode(event.target.value); changed(); }}><option value="USD">USD</option><option value="CAD">CAD</option><option value="MXN">MXN</option></NativeSelect></div>
@@ -65,6 +69,6 @@ export function RecordCostForm({ workOrderId, organizationId, defaultCurrencyCod
       <div className="space-y-2"><Label htmlFor="wo-cost-memo">Memo (optional)</Label><Input id="wo-cost-memo" maxLength={240} placeholder="Replaced the trap and gasket." value={memo} disabled={disabled || pending} onChange={(event) => { setMemo(event.target.value); changed(); }} /></div>
       {error ? <Alert variant="destructive"><AlertTitle>Cost not recorded</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       <Button className="w-full" size="lg" disabled={disabled || pending || !amount.trim()}>{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}{pending ? "Posting…" : "Post cost to ledger"}</Button>
-    </CardContent></Card>
+    </WorkspacePanel>
   </form>;
 }
