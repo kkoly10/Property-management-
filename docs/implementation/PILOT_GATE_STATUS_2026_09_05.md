@@ -83,6 +83,20 @@ exercised. External configuration, not a code gap — the pipeline itself is bui
 `test:db`-green (clean, rejected, dead-letter and stall-sweep paths all covered).
 
 ### Gate 4 — Communication / Auth · **AMBER**
+Three defects found and fixed on the resident activation path today, all of them past the
+point where the email was working:
+
+1. **The sign-in screen addressed the wrong audience.** One `(auth)` layout and one `/login`
+   page serve all three domains and said the same thing on each, so a resident who followed
+   their invitation to `crecyliving.com` was asked for a *work email* to continue to their
+   *operator workspace*, under a headline about operating a portfolio and keeping
+   USD/CAD/MXN books from mixing. Verified by rendering the live pages under each `Host`.
+2. **The default landing path was `/app` for everybody.** A returning resident signing in
+   without a `next` was handed the operator workspace. Now resolved server-side from the
+   request host — `/home` for a resident, `/owner` for an owner.
+3. **`/signup` was reachable on the resident and owner hosts**, offering a self-serve trial
+   to people who cannot create their own tenancy. It now redirects to `/login`.
+
 - Email leaves the building: Resend on `mail.crecyos.com`, DKIM + SPF + MX verified,
   DMARC added. Branded HTML shipped. Confirmed received.
 - The dead invitation link is fixed — the activation token now travels in the email
