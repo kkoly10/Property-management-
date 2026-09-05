@@ -60,6 +60,7 @@ const secureLinkRawTokenSql = await readFile(resolve(root, "supabase/migrations/
 const documentSignaturesSql = await readFile(resolve(root, "supabase/migrations/20260904120000_phase_2_document_signatures.sql"), "utf8");
 const invitationActivationTokenSql = await readFile(resolve(root, "supabase/migrations/20260905000000_phase_8_invitation_activation_token.sql"), "utf8");
 const deferredConstraintAuthoritySql = await readFile(resolve(root, "supabase/migrations/20260905010000_phase_4_deferred_constraint_authority.sql"), "utf8");
+const activationTokenBoundsSql = await readFile(resolve(root, "supabase/migrations/20260905020000_phase_8_activation_token_bounds.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
@@ -856,6 +857,7 @@ async function validateRecurringCharges() {
   await db.exec(documentSignaturesSql);
   await db.exec(invitationActivationTokenSql);
   await db.exec(deferredConstraintAuthoritySql);
+  await db.exec(activationTokenBoundsSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
@@ -3461,6 +3463,20 @@ async function validateRecurringCharges() {
   await db.query(`update private.notification_jobs set status='sent' where id='${tokenJob.id}'`);
   const scrubbedJob = (await db.query(`select (payload->'invitationToken') is null as scrubbed from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
   assert(scrubbedJob.scrubbed === true, "A terminal notification job kept the plaintext activation token.");
+
+  // The token overload is granted to `authenticated`, so PostgREST hands any signed-in caller straight
+  // to it. A real token is a base64url HMAC digest — 43 characters of [A-Za-z0-9_-] — so anything
+  // outside those bounds is either a bug or someone stuffing private.notification_jobs by hand.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const rejectedTokens = { oversized: "a".repeat(201), tooShort: "short", illegalCharset: "has spaces and ; semicolons" };
+  for (const [label, candidate] of Object.entries(rejectedTokens)) {
+    await expectDatabaseError(
+      () => db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-resident-0002','${candidate}') as result`),
+      "INVALID_ACTIVATION_TOKEN",
+    );
+    void label;
+  }
+  await db.exec("reset role");
 
   // Reconciliation-exception resolution (phase_5_reconciliation_resolution). The po_CrecyMismatch001
   // batch left two open exceptions above; drive resolve/waive/escalate against them.
