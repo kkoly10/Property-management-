@@ -46,6 +46,10 @@ const strings = (value: unknown) => Array.isArray(value)
   : [];
 
 const nullableString = (value: unknown) => value == null ? null : String(value);
+const mediaUrl = (value: unknown) => {
+  const url = nullableString(value);
+  return url?.startsWith("/media/") ? url : null;
+};
 
 function normalize(value: unknown): LivingCommunityPresentation | null {
   if (!value || typeof value !== "object") return null;
@@ -62,10 +66,10 @@ function normalize(value: unknown): LivingCommunityPresentation | null {
     leasingPhoneE164: nullableString(item.leasingPhoneE164),
     officeHours: strings(item.officeHours),
     amenities: strings(item.amenities),
-    heroImageUrl: nullableString(item.heroImageUrl),
-    lobbyImageUrl: nullableString(item.lobbyImageUrl),
-    courtyardImageUrl: nullableString(item.courtyardImageUrl),
-    modelHomeImageUrl: nullableString(item.modelHomeImageUrl),
+    heroImageUrl: mediaUrl(item.heroImageUrl),
+    lobbyImageUrl: mediaUrl(item.lobbyImageUrl),
+    courtyardImageUrl: mediaUrl(item.courtyardImageUrl),
+    modelHomeImageUrl: mediaUrl(item.modelHomeImageUrl),
     publicNoticeTitle: nullableString(item.publicNoticeTitle),
     publicNoticeBody: nullableString(item.publicNoticeBody),
   };
