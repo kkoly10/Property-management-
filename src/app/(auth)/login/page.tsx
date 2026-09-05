@@ -51,7 +51,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           {community ? "Welcome home." : "Welcome back"}
         </p>
         <h2 className="mt-2 text-[2rem] font-semibold leading-[1.1] tracking-[-0.04em] text-foreground">
-          {community ? \`Sign in to \${community.displayName}\` : copy.title}
+          {community ? "Sign in to " + community.displayName : copy.title}
         </h2>
         <p className="mt-3 max-w-sm text-sm leading-6 text-muted-foreground">
           {community
