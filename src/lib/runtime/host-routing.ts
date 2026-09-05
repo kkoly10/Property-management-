@@ -78,6 +78,13 @@ export function routeForHost(rawHost: string | null | undefined, pathname: strin
       if (root && pathname === "/") {
         return { type: "redirect", location: `${root}${search}`, permanent: false };
       }
+      // Only the operator surface is self-serve. A resident or owner reaches Crecy by invitation --
+      // they cannot create their own tenancy or ownership interest -- so /signup on their host is a
+      // dead end that ends in an organization they would be alone inside. Send them to sign in
+      // instead. Path-only, so it stays on the host they arrived on.
+      if (classification.kind !== "app" && underPrefix(pathname, ["/signup"])) {
+        return { type: "redirect", location: `/login${search}`, permanent: false };
+      }
       // A marketing page reached on a product host canonicalizes back to the marketing origin, so
       // app.crecyos.com/pricing cannot become a second copy of the public site.
       if (isCacheablePublicPage(pathname)) {

@@ -58,6 +58,20 @@ describe("host routing", () => {
     expect(classifyHost("lakewood.crecyliving.com")).toEqual({ kind: "living-community", community: "lakewood" });
   });
 
+  it("does not offer self-serve signup to surfaces that arrive by invitation", () => {
+    // Residents and owners cannot create their own tenancy or ownership interest, so /signup on
+    // their host ends in an organization they would be alone inside. The operator surface keeps it.
+    expect(routeForHost("crecyliving.com", "/signup")).toEqual({ type: "redirect", location: "/login", permanent: false });
+    expect(routeForHost("lakewood.crecyliving.com", "/signup")).toEqual({ type: "redirect", location: "/login", permanent: false });
+    expect(routeForHost("owner.crecyos.com", "/signup")).toEqual({ type: "redirect", location: "/login", permanent: false });
+    expect(routeForHost("crecyliving.com", "/signup", "?next=%2Fhome")).toEqual({ type: "redirect", location: "/login?next=%2Fhome", permanent: false });
+    // The operator surface is the one that IS self-serve, and localhost must stay developable.
+    expect(routeForHost("app.crecyos.com", "/signup")).toEqual({ type: "continue" });
+    expect(routeForHost("localhost:3000", "/signup")).toEqual({ type: "continue" });
+    // /login itself is untouched on every surface, or the redirect above would loop.
+    expect(routeForHost("crecyliving.com", "/login")).toEqual({ type: "continue" });
+  });
+
   it("canonicalizes a marketing path reached on a product host back to marketing", () => {
     expect(routeForHost("app.crecyos.com", "/pricing"))
       .toEqual({ type: "redirect", location: "https://crecyos.com/pricing", permanent: false });
