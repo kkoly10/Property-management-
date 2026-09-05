@@ -42,13 +42,15 @@ Use semantic tokens such as:
 - `--brand-hover`
 - `--brand-strong`
 - `--brand-soft`
+- `--action`
+- `--action-hover`
 - `--surface-canvas`
 - `--surface-raised`
 - `--finance-accent`
 - `--border`
 - `--shadow-panel`
 
-Do not add new page-local literals for Crecy purple/green when a semantic token exists.
+Do not add new page-local literals for Crecy purple/green when a semantic token exists. Identity color and action color may differ when accessibility requires it; Crecy Living intentionally keeps `#01A065` as the identity green while normal-size text-bearing actions use the darker AA-safe action green.
 
 ## 4. Crecy layout primitives
 
