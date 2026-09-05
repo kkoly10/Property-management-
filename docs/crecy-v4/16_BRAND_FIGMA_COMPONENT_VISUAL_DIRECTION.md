@@ -38,9 +38,9 @@ A light-first, precise, modern operating system with calm information density. I
 - **Crecy OS / master purple:** `#3A37EB`
 - **Crecy OS hover:** `#302DD4`
 - **Crecy OS strong:** `#2724B8`
-- **Crecy Living green:** `#01A065`
-- **Crecy Living hover:** `#008A57`
-- **Crecy Living strong:** `#067647`
+- **Crecy Living identity green:** `#01A065`
+- **Crecy Living identity hover/accent:** `#008A57`
+- **Crecy Living text-bearing action green:** `#067647`
 - **Financial/secondary teal:** `#0F766E`
 - **Ink:** `#101828`
 - **Muted Text:** `#667085`
@@ -52,7 +52,7 @@ A light-first, precise, modern operating system with calm information density. I
 - **Danger:** `#B42318`
 - **Information:** `#175CD3`
 
-The master purple and Living green are product identity colors, not interchangeable accents. Surface theming is host-aware: Crecy OS and Owner are purple; Crecy Living is green.
+The master purple and Living green are product identity colors, not interchangeable accents. Surface theming is host-aware: Crecy OS and Owner are purple; Crecy Living is green. The approved Living identity green is not used blindly for white-on-green normal-size text: text-bearing controls use the darker AA-safe Living action green.
 
 All production combinations must be WCAG 2.2 AA contrast-tested. Semantic status colors must always be paired with text and/or icons.
 

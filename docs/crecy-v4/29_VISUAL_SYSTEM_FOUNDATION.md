@@ -42,13 +42,15 @@ Use semantic tokens such as:
 - `--brand-hover`
 - `--brand-strong`
 - `--brand-soft`
+- `--action`
+- `--action-hover`
 - `--surface-canvas`
 - `--surface-raised`
 - `--finance-accent`
 - `--border`
 - `--shadow-panel`
 
-Do not add new page-local literals for Crecy purple/green when a semantic token exists.
+Do not add new page-local literals for Crecy purple/green when a semantic token exists. Identity color and action color may differ when accessibility requires it; Crecy Living intentionally keeps `#01A065` as the identity green while normal-size text-bearing actions use the darker AA-safe action green.
 
 ## 4. Crecy layout primitives
 
@@ -72,7 +74,21 @@ A compact horizontal tab pattern with an active underline and optional counts.
 ### `EmptyState`
 A shared empty-state pattern with one clear next action.
 
-These components sit above low-level UI primitives and are expected to expand only when repeated real product patterns justify it.
+These components sit above low-level UI primitives and are deliberately neutral scaffolding. They do **not** by themselves make a page feel like Crecy. A production surface must combine them with the role-specific signatures below.
+
+### Role-specific visual signatures
+
+#### `OperatorAttentionRail`
+Crecy OS unresolved-work list with urgency rails, chronology, and compact operational density. It is a queue, not a set of cards.
+
+#### `LivingCommunityIdentity`
+Crecy Living community/property identity block. The resident experience is allowed to be image-led and place-led; the property is part of the product experience rather than an anonymous SaaS workspace.
+
+#### `OwnerFinancialBand`
+Crecy Owner continuous financial summary with primary figures separated by hairlines rather than four interchangeable dashboard cards.
+
+#### `MarketingProductStage`
+Editorial product-proof frame intended to hold real Crecy UI or deterministic demo-state product components. It must not become a replacement for the product with invented miniature mock UI.
 
 ## 5. Layout grammar
 
@@ -112,7 +128,42 @@ A redesign is not acceptable if it:
 - hard-codes product brand colors in individual pages;
 - turns every data grouping into a bordered rounded rectangle;
 - fabricates mini product UIs for marketing when reusable real product components can be shown;
-- adds decorative charts where exact values, queues or tables communicate better.
+- adds decorative charts where exact values, queues or tables communicate better;
+- relies on color and the logo as the only visible difference between product surfaces;
+- uses icon-in-pastel-circle decoration as a default visual motif;
+- places four or more same-size sibling cards above the fold without a documented information-hierarchy reason;
+- uses a centered generic empty-state illustration when a contextual next action or object-specific explanation is available.
+
+### Surface-recognition test
+
+Every anchor screen must pass a **logo-off, color-off silhouette test**.
+
+Temporarily remove the Crecy wordmark, convert the screen to grayscale, and ignore all product names. A reviewer should still be able to distinguish the surfaces by structure:
+
+- **Crecy OS:** persistent operating rail, command/search chrome, asymmetric work canvas, attention queue, dense operational rows.
+- **Crecy Living:** property/community identity, resident-task hierarchy, mobile bottom navigation, larger touch targets, warmer spatial rhythm.
+- **Crecy Owner:** financial summary band, portfolio performance, statements/distributions/approvals, restrained read-heavy navigation.
+- **Marketing:** editorial typography and large real-product stages rather than an authenticated-app shell.
+
+If the surfaces become indistinguishable after color/logo removal, the design is generic and must be revised.
+
+### Card-budget test
+
+Cards are containers of last resort, not the default layout unit. Before adding a card, ask whether spacing, a divider, a table row, a rail, a section background, or a split pane communicates the grouping more clearly.
+
+Above the fold, a screen with four or more visually identical sibling cards fails review unless the data contract genuinely requires equal-weight comparison.
+
+### Brand-decoration test
+
+The following do not count as brand personality by themselves:
+- purple/green fills;
+- rounded corners;
+- shadows;
+- Lucide icons;
+- gradient buttons;
+- a custom wordmark placed above otherwise-generic UI.
+
+Crecy personality must come from information architecture, role-specific composition, product imagery where appropriate, typography rhythm, and workflow prioritization.
 
 ## 7. Rollout order
 
@@ -128,7 +179,20 @@ A redesign is not acceptable if it:
 
 Do not mass-restyle every route before the anchor screens pass design review.
 
-## 8. Quality gate
+## 8. Adversarial design gate
+
+Before implementation is considered visually mature, review each anchor screen against these questions:
+
+1. Could this screen plausibly be sold as another SaaS product by changing only the logo and colors? If yes, fail.
+2. Is the primary user task obvious within three seconds without reading every card title? If no, fail.
+3. Does the screen expose working software—queues, rows, timelines, financial truth, property context—or mostly decorative summary containers? Decorative wins fail.
+4. Does the mobile transformation preserve task priority rather than merely stack desktop blocks? If not, fail.
+5. Are Operator, Living and Owner structurally different because their jobs differ? If not, fail.
+6. Is any chart present only because dashboards are expected to have charts? If yes, remove it.
+7. Is any photo decorative rather than tied to a real community/property/product story? If yes, remove or replace it.
+8. Are repeated component patterns earning their repetition through a shared user task? If not, redesign the composition.
+
+## 9. Quality gate
 
 Before broad propagation, the four anchor screens must be reviewed at:
 - 390 px

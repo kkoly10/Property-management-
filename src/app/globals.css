@@ -28,16 +28,18 @@
   --brand-soft: #efefff;
   --brand-subtle: #f7f7ff;
   --brand-foreground: #ffffff;
+  --action: #3a37eb;
+  --action-hover: #302dd4;
 
-  --primary: var(--brand);
+  --primary: var(--action);
   --primary-foreground: var(--brand-foreground);
   --secondary: var(--brand-soft);
   --secondary-foreground: var(--brand-strong);
 
   --muted: #f2f4f7;
   --muted-foreground: #667085;
-  --accent: #ecfdf3;
-  --accent-foreground: #067647;
+  --accent: var(--brand-subtle);
+  --accent-foreground: var(--brand-strong);
   --destructive: #b42318;
   --border: #e4e7ec;
   --border-strong: #d0d5dd;
@@ -63,7 +65,15 @@
   --brand-strong: #067647;
   --brand-soft: #e8f8f1;
   --brand-subtle: #f4fbf7;
-  --primary: var(--brand);
+  /*
+   * The approved Living identity green is intentionally brighter than the
+   * interactive green. #01A065 is 3.38:1 against white, so it remains the
+   * wordmark/identity color while normal-size white button/link text uses the
+   * darker AA-safe action green.
+   */
+  --action: #067647;
+  --action-hover: #05603e;
+  --primary: var(--action);
   --primary-foreground: #ffffff;
   --secondary: var(--brand-soft);
   --secondary-foreground: #05603e;
@@ -83,7 +93,9 @@
   --brand-strong: #2724b8;
   --brand-soft: #efefff;
   --brand-subtle: #f7f7ff;
-  --primary: var(--brand);
+  --action: #3a37eb;
+  --action-hover: #302dd4;
+  --primary: var(--action);
   --primary-foreground: #ffffff;
   --secondary: var(--brand-soft);
   --secondary-foreground: var(--brand-strong);
