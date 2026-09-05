@@ -145,3 +145,73 @@ export const getResidentLivingCommunityPresentations = cache(async (): Promise<{
     };
   }
 });
+
+
+export type OperatorLivingCommunityProfile = LivingCommunityPresentation & {
+  propertyId: string;
+  status: "draft" | "published" | "archived";
+  publishedAt: string | null;
+  version: number;
+};
+
+export type OperatorLivingCommunityWorkspace = {
+  mode: "setup" | "ready" | "unavailable" | "error";
+  profile: OperatorLivingCommunityProfile | null;
+  requestId?: string;
+};
+
+export const getOperatorLivingCommunityProfile = cache(async (
+  propertyId: string,
+): Promise<OperatorLivingCommunityWorkspace> => {
+  if (!getPublicSupabaseConfig()) {
+    return { mode: "setup", profile: null };
+  }
+
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("living_community_profiles")
+      .select("property_id,subdomain,display_name,public_address_text,headline,leasing_email,leasing_phone_e164,office_hours_text,amenities,hero_image_url,lobby_image_url,courtyard_image_url,model_home_image_url,public_notice_title,public_notice_body,status,published_at,version")
+      .eq("property_id", propertyId)
+      .maybeSingle();
+
+    if (error) {
+      if (error.code === "42P01" || error.code === "PGRST205") {
+        return { mode: "unavailable", profile: null };
+      }
+      throw error;
+    }
+    if (!data) return { mode: "ready", profile: null };
+
+    const presentation = normalize({
+      subdomain: data.subdomain,
+      displayName: data.display_name,
+      publicAddressText: data.public_address_text,
+      headline: data.headline,
+      leasingEmail: data.leasing_email,
+      leasingPhoneE164: data.leasing_phone_e164,
+      officeHours: data.office_hours_text,
+      amenities: data.amenities,
+      heroImageUrl: data.hero_image_url,
+      lobbyImageUrl: data.lobby_image_url,
+      courtyardImageUrl: data.courtyard_image_url,
+      modelHomeImageUrl: data.model_home_image_url,
+      publicNoticeTitle: data.public_notice_title,
+      publicNoticeBody: data.public_notice_body,
+    });
+    if (!presentation) return { mode: "error", profile: null, requestId: crypto.randomUUID() };
+
+    return {
+      mode: "ready",
+      profile: {
+        ...presentation,
+        propertyId: String(data.property_id),
+        status: data.status as OperatorLivingCommunityProfile["status"],
+        publishedAt: data.published_at ? String(data.published_at) : null,
+        version: Number(data.version),
+      },
+    };
+  } catch {
+    return { mode: "error", profile: null, requestId: crypto.randomUUID() };
+  }
+});

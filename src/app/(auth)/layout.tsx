@@ -21,7 +21,7 @@ export default async function AuthLayout({ children }: { children: React.ReactNo
         <section className="hidden min-h-screen lg:block">
           <AuthSurfaceStage surface={surface} copy={copy} community={community} />
         </section>
-        <section className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-10 lg:bg-card">
+        <section className="flex min-h-screen items-start justify-center px-5 pb-10 pt-7 sm:px-10 sm:pt-9 lg:items-center lg:bg-card lg:py-10">
           {children}
         </section>
       </main>

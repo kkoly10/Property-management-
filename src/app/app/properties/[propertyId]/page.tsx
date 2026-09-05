@@ -8,6 +8,7 @@ import {
   FileSignature,
   MapPin,
 } from "lucide-react";
+import { LivingCommunityForm } from "@/app/app/properties/[propertyId]/living-community-form";
 import { UnitForm } from "@/app/app/properties/unit-form";
 import { EmptyState } from "@/components/crecy/empty-state";
 import { MetricStrip, type MetricStripItem } from "@/components/crecy/metric-strip";
@@ -16,6 +17,7 @@ import { WorkspacePanel } from "@/components/crecy/workspace-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { getOperatorLivingCommunityProfile } from "@/lib/data/living-community";
 import { getPropertyWorkspace } from "@/lib/data/portfolio";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +36,10 @@ export default async function PropertyWorkspacePage({
   searchParams: Promise<{ unit_created?: string }>;
 }) {
   const [{ propertyId }, query] = await Promise.all([params, searchParams]);
-  const workspace = await getPropertyWorkspace(propertyId);
+  const [workspace, livingCommunity] = await Promise.all([
+    getPropertyWorkspace(propertyId),
+    getOperatorLivingCommunityProfile(propertyId),
+  ]);
 
   if (workspace.mode === "ready" && !workspace.property) notFound();
   if (!workspace.property) {
@@ -126,6 +131,7 @@ export default async function PropertyWorkspacePage({
       <nav aria-label="Property sections" className="flex gap-5 overflow-x-auto border-b text-sm">
         {[
           ["Foundation", "#foundation"],
+          ["Resident portal", "#resident-portal"],
           [`Units · ${workspace.units.length}`, "#units"],
           [`Residents & leases · ${workspace.occupancies.length}`, "#residents"],
         ].map(([label, href]) => (
@@ -168,6 +174,45 @@ export default async function PropertyWorkspacePage({
                 </div>
               ))}
             </dl>
+          </WorkspacePanel>
+
+          <WorkspacePanel
+            title="Resident portal"
+            description="Control the public-safe Crecy Living identity residents see for this property."
+            className="scroll-mt-28"
+          >
+            <div id="resident-portal" className="space-y-5">
+              {livingCommunity.mode === "unavailable" ? (
+                <Alert variant="warning">
+                  <CircleAlert aria-hidden="true" className="h-5 w-5" />
+                  <AlertTitle>Community publishing setup pending</AlertTitle>
+                  <AlertDescription>
+                    The operator controls are built, but the Living community migration has not been applied to this Crecy database yet. These controls stay read-only until that runtime contract is present.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {livingCommunity.mode === "error" ? (
+                <Alert variant="destructive">
+                  <CircleAlert aria-hidden="true" className="h-5 w-5" />
+                  <AlertTitle>Resident portal settings unavailable</AlertTitle>
+                  <AlertDescription>Refresh and try again. Request {livingCommunity.requestId}.</AlertDescription>
+                </Alert>
+              ) : null}
+              {livingCommunity.mode === "setup" ? (
+                <Alert variant="info">
+                  <CircleAlert aria-hidden="true" className="h-5 w-5" />
+                  <AlertTitle>Resident portal preview</AlertTitle>
+                  <AlertDescription>Connect the Crecy Supabase project to save and publish operator-managed community profiles.</AlertDescription>
+                </Alert>
+              ) : null}
+
+              <LivingCommunityForm
+                propertyId={property.id}
+                propertyName={property.name}
+                profile={livingCommunity.profile}
+                disabled={livingCommunity.mode !== "ready"}
+              />
+            </div>
           </WorkspacePanel>
 
           <WorkspacePanel
