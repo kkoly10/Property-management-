@@ -29,6 +29,7 @@ describe("Crecy Living community presentation", () => {
     expect(authLayout).toContain('classification.kind === "living-community"');
     expect(authLayout).toContain("getPublicLivingCommunityPresentation");
     expect(stage).toContain("community?.heroImageUrl");
+    expect(stage).toContain('"Crecy Living · Demo"');
     expect(login).toContain("Sign in to");
   });
 
@@ -66,8 +67,11 @@ describe("Crecy Living community presentation", () => {
   });
 
   it("keeps resident community media same-origin", () => {
-    expect(migration).toContain("hero_image_url like '/media/%'");
+    expect(migration).toContain("hero_image_url ~ '^/media/");
+    expect(migration).toContain("'maplecourt'");
     expect(migration).not.toContain("hero_image_url ~ '^https://'");
     expect(communityData).toContain('url?.startsWith("/media/")');
+    expect(communityData).toContain('url.includes("..")');
+    expect(communityData).toContain("isDemo: true");
   });
 });
