@@ -26,7 +26,15 @@ export function LivingRequestProgress({
     );
   }
 
-  const activeIndex = Math.max(0, steps.findIndex(([value]) => value === status));
+  const activeIndex = steps.findIndex(([value]) => value === status);
+  if (activeIndex < 0) {
+    return (
+      <div className={cn("rounded-xl border bg-card px-4 py-3", className)}>
+        <p className="text-sm font-semibold">Status update</p>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{status.replaceAll("_", " ")}</p>
+      </div>
+    );
+  }
 
   return (
     <ol aria-label="Maintenance request progress" className={cn("grid gap-0 overflow-hidden rounded-xl border bg-card sm:grid-cols-6", className)}>
