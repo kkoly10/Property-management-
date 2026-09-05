@@ -13,7 +13,7 @@ import { LEGAL_ROUTES, MARKETING_ROUTES } from "@/lib/marketing/navigation";
 export function SiteFooter() {
   return (
     <footer className="border-t bg-background">
-      <div className="mx-auto max-w-6xl px-5 py-14 lg:px-8">
+      <div className="mx-auto max-w-[1280px] px-5 py-14 lg:px-8">
         <div className="grid gap-10 md:grid-cols-[1.5fr_1fr_1fr]">
           <div className="max-w-sm">
             <Wordmark />
