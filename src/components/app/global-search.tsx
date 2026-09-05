@@ -26,7 +26,7 @@ export function GlobalSearch() {
   }, []);
 
   return (
-    <form action="/app/search" method="get" role="search" className="relative w-full max-w-xl">
+    <form action="/app/search" method="get" role="search" className="relative w-full max-w-2xl">
       <label htmlFor="global-operator-search" className="sr-only">Search your workspace</label>
       <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
       <Input
@@ -39,7 +39,7 @@ export function GlobalSearch() {
         autoComplete="off"
         enterKeyHint="search"
         aria-keyshortcuts="/ Control+K Meta+K"
-        placeholder="Search names or references"
+        placeholder="Search properties, residents, leases, references…"
         className="h-9 bg-background pr-15 pl-9"
       />
       <kbd className="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:block">
