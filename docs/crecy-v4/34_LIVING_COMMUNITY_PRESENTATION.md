@@ -23,7 +23,7 @@ The repository includes one deterministic fictional community used for design, p
 
 These four images are one coherent property family. They are not placeholders for arbitrary real properties and must not be selected by matching only a property name.
 
-The explicit demo community label is `maplecourt`.
+The explicit demo community label is `maplecourt`. It is reserved from operator-created community profiles so a real property can never collide with the bundled fixture. Public Maple Court surfaces visibly identify themselves as a demo community rather than silently presenting generated media as a real operator property.
 
 ## 3. Public-safe data model
 
@@ -97,7 +97,7 @@ The gallery is asymmetric and image-led rather than a row of equal feature cards
 
 The database stores same-origin presentation paths, not binary image contents.
 
-Community media URLs are restricted to `/media/...` and the server-side normalizer rejects third-party URLs. This avoids turning an operator-configurable image into a resident-tracking pixel or leaking resident IP/browser metadata to an arbitrary external host.
+Community media URLs are restricted to same-origin `/media/...` image files. Both the database constraint and server-side normalizer reject third-party URLs, path traversal, query strings, fragments, and non-image extensions. This avoids turning operator-configurable media into a resident-tracking pixel or a route escape.
 
 The current Maple Court media is bundled with the application because it is a deterministic fictional design fixture. Real operator media should later use a controlled Crecy upload/storage pipeline that publishes into the same-origin media namespace, plus a dedicated operator edit command rather than arbitrary direct table writes.
 
