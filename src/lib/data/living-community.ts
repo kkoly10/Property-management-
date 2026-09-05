@@ -7,6 +7,7 @@ import type { DataMode } from "@/lib/data/maintenance";
 
 export type LivingCommunityPresentation = {
   tenancyId?: string;
+  isDemo?: boolean;
   subdomain: string;
   displayName: string;
   publicAddressText: string | null;
@@ -25,6 +26,7 @@ export type LivingCommunityPresentation = {
 
 export const MAPLE_COURT_DEMO_PRESENTATION: LivingCommunityPresentation = {
   tenancyId: "20000000-0000-4000-8000-000000000002",
+  isDemo: true,
   subdomain: "maplecourt",
   displayName: "Maple Court",
   publicAddressText: null,
@@ -48,7 +50,9 @@ const strings = (value: unknown) => Array.isArray(value)
 const nullableString = (value: unknown) => value == null ? null : String(value);
 const mediaUrl = (value: unknown) => {
   const url = nullableString(value);
-  return url?.startsWith("/media/") ? url : null;
+  if (!url?.startsWith("/media/")) return null;
+  if (url.includes("..") || url.includes("?") || url.includes("#") || url.includes("\\")) return null;
+  return /^\/media\/[a-z0-9][a-z0-9/_-]*\.(?:webp|png|jpe?g)$/i.test(url) ? url : null;
 };
 
 function normalize(value: unknown): LivingCommunityPresentation | null {
@@ -58,6 +62,7 @@ function normalize(value: unknown): LivingCommunityPresentation | null {
 
   return {
     tenancyId: item.tenancyId ? String(item.tenancyId) : undefined,
+    isDemo: false,
     subdomain: String(item.subdomain),
     displayName: String(item.displayName),
     publicAddressText: nullableString(item.publicAddressText),
