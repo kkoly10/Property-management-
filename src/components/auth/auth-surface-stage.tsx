@@ -128,7 +128,7 @@ function ResidentStage({
             ) : undefined}
             badge={
               <span className="rounded-full border border-white/20 bg-black/15 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur-sm">
-                Crecy Living
+                {community?.isDemo ? "Crecy Living · Demo" : "Crecy Living"}
               </span>
             }
           />
