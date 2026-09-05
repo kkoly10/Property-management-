@@ -149,6 +149,7 @@ See `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` for product exclusions and file
 - `31_ANCHOR_SCREEN_ADVERSARIAL_REVIEW.md` — cross-surface review of the implemented OS, Living, Owner, and Marketing anchor screens plus propagation gates
 - `32_OPERATOR_CANONICAL_WORKSPACE_PROPAGATION.md` — adversarial review of the first Operator propagation batch: property detail, payments, maintenance queue/detail
 - `33_LIVING_ROUTE_FAMILY_PROPAGATION.md` — Living shell/payment/maintenance/messages/documents/preferences propagation and remaining community-presentation gap
+- `34_LIVING_COMMUNITY_PRESENTATION.md` — public-safe community profile/media contract, Maple Court fixture, and image-led Living login/home rules
 - `AGENTS.md` — repository agent rules
 
 ## 8. Non-negotiable invariants
