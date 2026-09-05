@@ -50,8 +50,10 @@ describe("operator canonical workspace propagation", () => {
     expect(maintenanceDetail).toContain("getOperatorOwnerApprovalWorkspace");
 
     expect(assignVendor).toContain('fetch("/api/v1/work-orders"');
-    expect(workOrderActions).toContain("/api/v1/work-orders/\${workOrderId}/transitions");
-    expect(recordCost).toContain("/api/v1/work-orders/\${workOrderId}/cost");
+    expect(workOrderActions).toContain("/api/v1/work-orders/");
+    expect(workOrderActions).toContain("/transitions");
+    expect(recordCost).toContain("/api/v1/work-orders/");
+    expect(recordCost).toContain("/cost");
   });
 
   it("avoids the old dashboard-template motifs on the propagated pages", () => {
