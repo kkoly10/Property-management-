@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 import type { LivingCommunityPresentation } from "@/lib/data/living-community";
 
@@ -91,10 +92,12 @@ function CommunityPhoto({
 }) {
   return (
     <figure className={cn("group relative isolate overflow-hidden rounded-[1rem] bg-muted", className)}>
-      <img
+      <Image
         src={image.src}
         alt={image.alt}
-        className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.015]"
+        fill
+        sizes="(min-width: 1024px) 60vw, 100vw"
+        className="object-cover transition-transform duration-500 group-hover:scale-[1.015]"
       />
       <div className="absolute inset-0 bg-[linear-gradient(180deg,transparent_55%,rgba(7,24,18,.62)_100%)]" />
       <figcaption className="absolute inset-x-0 bottom-0 px-4 py-3 text-sm font-medium text-white sm:px-5 sm:py-4">
