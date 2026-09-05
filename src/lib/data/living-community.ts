@@ -6,7 +6,6 @@ import { createClient } from "@/lib/supabase/server";
 import type { DataMode } from "@/lib/data/maintenance";
 
 export type LivingCommunityPresentation = {
-  propertyId: string;
   tenancyId?: string;
   subdomain: string;
   displayName: string;
@@ -25,7 +24,6 @@ export type LivingCommunityPresentation = {
 };
 
 export const MAPLE_COURT_DEMO_PRESENTATION: LivingCommunityPresentation = {
-  propertyId: "20000000-0000-4000-8000-000000000002",
   tenancyId: "20000000-0000-4000-8000-000000000002",
   subdomain: "maplecourt",
   displayName: "Maple Court",
@@ -52,10 +50,9 @@ const nullableString = (value: unknown) => value == null ? null : String(value);
 function normalize(value: unknown): LivingCommunityPresentation | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
-  if (!item.propertyId || !item.subdomain || !item.displayName) return null;
+  if (!item.subdomain || !item.displayName) return null;
 
   return {
-    propertyId: String(item.propertyId),
     tenancyId: item.tenancyId ? String(item.tenancyId) : undefined,
     subdomain: String(item.subdomain),
     displayName: String(item.displayName),
