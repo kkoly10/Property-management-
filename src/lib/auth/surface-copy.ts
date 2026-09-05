@@ -98,11 +98,11 @@ export const AUTH_SURFACE_COPY: Record<AuthSurface, AuthSurfaceCopy> = {
   },
   owner: {
     product: "Owner",
-    eyebrow: "Your portfolio, clearly",
-    headline: "See how the properties you own are performing.",
+    eyebrow: "Your ownership, clearly",
+    headline: "Finalized statements, recorded distributions, and decisions in one place.",
     promises: [
-      { icon: "portfolio", text: "Every property you own, with the numbers behind it." },
       { icon: "statement", text: "Owner statements you can open, print, or export." },
+      { icon: "portfolio", text: "Recorded remittances stay tied to the property and statement history." },
       { icon: "shield", text: "Approve the work that needs your decision." },
     ],
     footnote: "Crecy Owner",
