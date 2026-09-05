@@ -16,10 +16,6 @@ export const metadata: Metadata = {
   },
   description: "A clear operating system for every rental relationship.",
   manifest: "/manifest.webmanifest",
-  icons: {
-    icon: [{ url: "/brand/favicon.svg", type: "image/svg+xml" }],
-    apple: "/apple-icon",
-  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
