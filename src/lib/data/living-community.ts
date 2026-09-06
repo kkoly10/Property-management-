@@ -37,7 +37,7 @@ export const MAPLE_COURT_DEMO_PRESENTATION: LivingCommunityPresentation = {
   amenities: ["Resident lounge", "Landscaped courtyard", "Outdoor grilling"],
   heroImageUrl: "/media/maple-court/exterior.jpg",
   lobbyImageUrl: "/media/maple-court/lobby.webp",
-  courtyardImageUrl: "/media/maple-court/courtyard.jpg",
+  courtyardImageUrl: null,
   modelHomeImageUrl: "/media/maple-court/model-home.webp",
   publicNoticeTitle: null,
   publicNoticeBody: null,

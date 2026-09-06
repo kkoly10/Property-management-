@@ -13,7 +13,6 @@ const packageJson = JSON.parse(readFileSync(resolve(__dirname, "../../../package
 const media = [
   "../../../public/media/maple-court/exterior.jpg",
   "../../../public/media/maple-court/lobby.webp",
-  "../../../public/media/maple-court/courtyard.jpg",
   "../../../public/media/maple-court/model-home.webp",
 ];
 
@@ -40,7 +39,7 @@ describe("Crecy Living community presentation", () => {
 
   it("serves the broken hero and courtyard sources as direct JPEGs with no build-time conversion", () => {
     expect(communityData).toContain('/media/maple-court/exterior.jpg');
-    expect(communityData).toContain('/media/maple-court/courtyard.jpg');
+    expect(communityData).toContain('courtyardImageUrl: null');
     expect(communityData).toContain('/media/maple-court/lobby.webp');
     expect(communityData).toContain('/media/maple-court/model-home.webp');
     expect(packageJson.scripts?.build).toBe("next build");

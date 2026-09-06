@@ -18,10 +18,10 @@ The repository includes one deterministic fictional community used for design, p
 
 - hero exterior: `/public/media/maple-court/exterior.jpg`
 - resident lobby: `/public/media/maple-court/lobby.webp`
-- landscaped courtyard: `/public/media/maple-court/courtyard.jpg`
+- landscaped courtyard: approved visual role, temporarily omitted from the bundled demo fixture rather than serving a known-corrupt source
 - model home: `/public/media/maple-court/model-home.webp`
 
-The earlier exterior and courtyard WebP files were found to be truncated: their RIFF headers declared more bytes than were actually stored. They are not runtime sources. Those two surfaces now ship as direct baseline JPEGs, while the structurally valid lobby and model-home WebPs remain direct same-origin assets. No build-time image conversion is required.
+The earlier exterior and courtyard WebP files were found to be truncated: their RIFF headers declared more bytes than were actually stored. They are not runtime sources. The exterior now ships as a direct baseline JPEG. The structurally valid lobby and model-home WebPs remain direct same-origin assets. The bundled courtyard role is intentionally null until a clean replacement is added through the controlled media path. No build-time image conversion is required.
 
 Crecy Living renders these same-origin community assets directly rather than routing them through the Next image optimizer. This keeps the fixture compatible with embedded iOS browsers and removes image decoding from the Vercel build path.
 
