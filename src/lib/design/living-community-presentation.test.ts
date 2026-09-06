@@ -8,33 +8,42 @@ const stage = readFileSync(resolve(__dirname, "../../components/auth/auth-surfac
 const home = readFileSync(resolve(__dirname, "../../app/home/page.tsx"), "utf8");
 const communityData = readFileSync(resolve(__dirname, "../data/living-community.ts"), "utf8");
 const migration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260905040000_phase_8_living_community_presentation.sql"), "utf8");
-const materializer = readFileSync(resolve(__dirname, "../../../scripts/materialize-maple-court-media.mjs"), "utf8");
+const packageJson = JSON.parse(readFileSync(resolve(__dirname, "../../../package.json"), "utf8")) as { scripts?: Record<string,string> };
 
 const media = [
-  "../../../public/media/maple-court/exterior.webp",
+  "../../../public/media/maple-court/exterior.jpg",
   "../../../public/media/maple-court/lobby.webp",
-  "../../../public/media/maple-court/courtyard.webp",
+  "../../../public/media/maple-court/courtyard.jpg",
   "../../../public/media/maple-court/model-home.webp",
 ];
 
 describe("Crecy Living community presentation", () => {
-  it("ships the cohesive Maple Court media set as real repository assets", () => {
+  it("ships decodable Maple Court media instead of truncated assets", () => {
     for (const relative of media) {
       const path = resolve(__dirname, relative);
       expect(existsSync(path)).toBe(true);
       expect(statSync(path).size).toBeGreaterThan(6_000);
+      const bytes = readFileSync(path);
+
+      if (relative.endsWith(".jpg")) {
+        expect(bytes[0]).toBe(0xff);
+        expect(bytes[1]).toBe(0xd8);
+        expect(bytes[bytes.length - 2]).toBe(0xff);
+        expect(bytes[bytes.length - 1]).toBe(0xd9);
+      } else {
+        expect(bytes.subarray(0, 4).toString("ascii")).toBe("RIFF");
+        expect(bytes.subarray(8, 12).toString("ascii")).toBe("WEBP");
+        expect(bytes.readUInt32LE(4) + 8).toBe(bytes.length);
+      }
     }
   });
 
-  it("serves browser-facing Maple Court photos as generated baseline JPEGs", () => {
+  it("serves the broken hero and courtyard sources as direct JPEGs with no build-time conversion", () => {
     expect(communityData).toContain('/media/maple-court/exterior.jpg');
-    expect(communityData).toContain('/media/maple-court/lobby.jpg');
     expect(communityData).toContain('/media/maple-court/courtyard.jpg');
-    expect(communityData).toContain('/media/maple-court/model-home.jpg');
-    expect(materializer).toContain('sharp(source)');
-    expect(materializer).toContain('.resize(1440, 810');
-    expect(materializer).toContain('progressive: false');
-    expect(materializer).toContain('.jpeg({');
+    expect(communityData).toContain('/media/maple-court/lobby.webp');
+    expect(communityData).toContain('/media/maple-court/model-home.webp');
+    expect(packageJson.scripts?.build).toBe("next build");
   });
 
   it("resolves explicit community hosts without making host classification an authorization grant", () => {

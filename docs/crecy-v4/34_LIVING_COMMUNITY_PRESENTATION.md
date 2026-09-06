@@ -16,16 +16,18 @@ A Living community hostname is presentation context only. It never grants access
 
 The repository includes one deterministic fictional community used for design, preview, screenshot review, and marketing/product proof:
 
-- source: `/public/media/maple-court/exterior.webp` → browser-facing `/media/maple-court/exterior.jpg`
-- source: `/public/media/maple-court/lobby.webp` → browser-facing `/media/maple-court/lobby.jpg`
-- source: `/public/media/maple-court/courtyard.webp` → browser-facing `/media/maple-court/courtyard.jpg`
-- source: `/public/media/maple-court/model-home.webp` → browser-facing `/media/maple-court/model-home.jpg`
+- hero exterior: `/public/media/maple-court/exterior.jpg`
+- resident lobby: `/public/media/maple-court/lobby.webp`
+- landscaped courtyard: `/public/media/maple-court/courtyard.jpg`
+- model home: `/public/media/maple-court/model-home.webp`
 
-The checked-in WebP files are build inputs only for the deterministic demo fixture. Before each production build, `scripts/materialize-maple-court-media.mjs` re-encodes them as 1440×810 non-progressive JPEGs. Living surfaces reference only the generated JPEG paths. This avoids depending on WebP decoding or the Next image optimizer in embedded iOS browsers.
+The earlier exterior and courtyard WebP files were found to be truncated: their RIFF headers declared more bytes than were actually stored. They are not runtime sources. Those two surfaces now ship as direct baseline JPEGs, while the structurally valid lobby and model-home WebPs remain direct same-origin assets. No build-time image conversion is required.
+
+Crecy Living renders these same-origin community assets directly rather than routing them through the Next image optimizer. This keeps the fixture compatible with embedded iOS browsers and removes image decoding from the Vercel build path.
 
 These four images are one coherent property family. They are not placeholders for arbitrary real properties and must not be selected by matching only a property name.
 
-The explicit demo community label is `maplecourt`. It is reserved from operator-created community profiles so a real property can never collide with the bundled fixture. Public Maple Court surfaces visibly identify themselves as a demo community rather than silently presenting generated media as a real operator property.
+The explicit demo community label is `maplecourt`. It is reserved from operator-created community profiles so a real property can never collide with the bundled fixture. Public Maple Court surfaces visibly identify themselves as a demo community rather than silently presenting generated imagery as a real operator property.
 
 ## 3. Public-safe data model
 
