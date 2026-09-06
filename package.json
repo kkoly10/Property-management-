@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/materialize-maple-court-media.mjs && next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -38,7 +38,8 @@
     "sonner": "2.0.7",
     "stripe": "22.3.2",
     "tailwind-merge": "3.6.0",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "sharp": "0.34.5"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.4",

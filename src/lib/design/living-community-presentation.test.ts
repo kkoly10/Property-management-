@@ -8,6 +8,7 @@ const stage = readFileSync(resolve(__dirname, "../../components/auth/auth-surfac
 const home = readFileSync(resolve(__dirname, "../../app/home/page.tsx"), "utf8");
 const communityData = readFileSync(resolve(__dirname, "../data/living-community.ts"), "utf8");
 const migration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260905040000_phase_8_living_community_presentation.sql"), "utf8");
+const materializer = readFileSync(resolve(__dirname, "../../../scripts/materialize-maple-court-media.mjs"), "utf8");
 
 const media = [
   "../../../public/media/maple-court/exterior.webp",
@@ -23,6 +24,17 @@ describe("Crecy Living community presentation", () => {
       expect(existsSync(path)).toBe(true);
       expect(statSync(path).size).toBeGreaterThan(6_000);
     }
+  });
+
+  it("serves browser-facing Maple Court photos as generated baseline JPEGs", () => {
+    expect(communityData).toContain('/media/maple-court/exterior.jpg');
+    expect(communityData).toContain('/media/maple-court/lobby.jpg');
+    expect(communityData).toContain('/media/maple-court/courtyard.jpg');
+    expect(communityData).toContain('/media/maple-court/model-home.jpg');
+    expect(materializer).toContain('sharp(source)');
+    expect(materializer).toContain('.resize(1440, 810');
+    expect(materializer).toContain('progressive: false');
+    expect(materializer).toContain('.jpeg({');
   });
 
   it("resolves explicit community hosts without making host classification an authorization grant", () => {

@@ -16,10 +16,12 @@ A Living community hostname is presentation context only. It never grants access
 
 The repository includes one deterministic fictional community used for design, preview, screenshot review, and marketing/product proof:
 
-- `/public/media/maple-court/exterior.webp`
-- `/public/media/maple-court/lobby.webp`
-- `/public/media/maple-court/courtyard.webp`
-- `/public/media/maple-court/model-home.webp`
+- source: `/public/media/maple-court/exterior.webp` → browser-facing `/media/maple-court/exterior.jpg`
+- source: `/public/media/maple-court/lobby.webp` → browser-facing `/media/maple-court/lobby.jpg`
+- source: `/public/media/maple-court/courtyard.webp` → browser-facing `/media/maple-court/courtyard.jpg`
+- source: `/public/media/maple-court/model-home.webp` → browser-facing `/media/maple-court/model-home.jpg`
+
+The checked-in WebP files are build inputs only for the deterministic demo fixture. Before each production build, `scripts/materialize-maple-court-media.mjs` re-encodes them as 1440×810 non-progressive JPEGs. Living surfaces reference only the generated JPEG paths. This avoids depending on WebP decoding or the Next image optimizer in embedded iOS browsers.
 
 These four images are one coherent property family. They are not placeholders for arbitrary real properties and must not be selected by matching only a property name.
 
