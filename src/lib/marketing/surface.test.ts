@@ -61,7 +61,12 @@ describe("the public marketing route group", () => {
     const [route, source] = PAGES.find(([r]) => r === "/")!;
     expect(route).toBe("/");
     expect(source).not.toMatch(/redirect\(/);
-    expect(source).toContain("Rental operations, finally connected.");
+    // Anchored on the behaviour the requirement is about -- the root is a real page that OFFERS
+    // signup -- rather than on the hero wording. The previous assertion pinned the exact headline,
+    // so the #47 redesign failed this test by rewording "finally connected" to "made clear" without
+    // touching the redirect behaviour it exists to protect.
+    expect(source).toMatch(/<h1/);
+    expect(source).toContain('href="/signup"');
   });
 
   it("gives every page exactly one h1 and a unique title, description and canonical", () => {

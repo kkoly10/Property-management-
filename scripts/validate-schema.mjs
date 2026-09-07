@@ -62,6 +62,8 @@ const invitationActivationTokenSql = await readFile(resolve(root, "supabase/migr
 const deferredConstraintAuthoritySql = await readFile(resolve(root, "supabase/migrations/20260905010000_phase_4_deferred_constraint_authority.sql"), "utf8");
 const activationTokenBoundsSql = await readFile(resolve(root, "supabase/migrations/20260905020000_phase_8_activation_token_bounds.sql"), "utf8");
 const platformBusinessOverviewSql = await readFile(resolve(root, "supabase/migrations/20260905030000_phase_8_platform_business_overview.sql"), "utf8");
+const livingCommunityPresentationSql = await readFile(resolve(root, "supabase/migrations/20260905040000_phase_8_living_community_presentation.sql"), "utf8");
+const livingCommunityControlsSql = await readFile(resolve(root, "supabase/migrations/20260905170000_phase_8_living_community_controls.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
@@ -860,6 +862,8 @@ async function validateRecurringCharges() {
   await db.exec(deferredConstraintAuthoritySql);
   await db.exec(activationTokenBoundsSql);
   await db.exec(platformBusinessOverviewSql);
+  await db.exec(livingCommunityPresentationSql);
+  await db.exec(livingCommunityControlsSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
@@ -3853,6 +3857,60 @@ async function validateRecurringCharges() {
   // A platform-scoped read leaves a trace, exactly as a per-customer one does.
   const platformReadAudits = (await db.query("select count(*)::integer as c from audit.audit_events where action_code='platform.viewedBusinessOverview' and organization_id is null")).rows[0].c;
   assert(platformReadAudits === 1, "Reading every customer's numbers at once was not audited.");
+
+  // ── Crecy Living public community presentation ─────────────────────────────────────────────────
+  // The migration makes a strong claim in its own header: "A community hostname may reveal only the
+  // fields in the public profile RPC. It never grants access to residents, leases, balances,
+  // documents, owner data, vendor data, or internal operator notes." That RPC is granted to `anon`,
+  // which makes it the most exposed surface in the product, so the claim is proven here rather than
+  // trusted. These two migrations shipped with no coverage at all.
+  await db.exec("reset role");
+  await db.exec(`insert into public.living_community_profiles
+    (property_id, organization_id, subdomain, display_name, public_address_text, headline, status, published_at)
+    values ('${property.propertyId}','${organization.organizationId}','maple-court','Maple Court',
+            '100 Main Street','Live at Maple Court','published', now())`);
+
+  await db.exec("reset role; set role anon");
+  const anonProfile = (await db.query("select public.get_public_living_community_profile('maple-court') as r")).rows[0].r;
+  assert(anonProfile && anonProfile.displayName === "Maple Court", "An anonymous visitor could not read a published community profile.");
+  // The projection is the boundary: anything not on this list is not the public's business.
+  const publicKeys = Object.keys(anonProfile).sort().join(",");
+  assert(
+    publicKeys === "amenities,courtyardImageUrl,displayName,headline,heroImageUrl,leasingEmail,leasingPhoneE164,lobbyImageUrl,modelHomeImageUrl,officeHours,publicAddressText,publicNoticeBody,publicNoticeTitle,subdomain",
+    `The public community projection changed shape and may now leak internal fields: ${publicKeys}`,
+  );
+  // Case and padding are normalised, so a host header cannot dodge the published filter.
+  const anonMixedCase = (await db.query("select public.get_public_living_community_profile('  MAPLE-Court ') as r")).rows[0].r;
+  assert(anonMixedCase?.displayName === "Maple Court", "Subdomain lookup did not normalise case and whitespace.");
+  // anon holds no table privilege; the definer RPC is the only way in.
+  await expectDatabaseError(() => db.query("select count(*) from public.living_community_profiles"), "permission denied");
+
+  // A community that is not published must not be reachable by guessing its hostname.
+  await db.exec(`reset role; update public.living_community_profiles set status='draft' where subdomain='maple-court'`);
+  await db.exec("set role anon");
+  const anonDraft = (await db.query("select public.get_public_living_community_profile('maple-court') as r")).rows[0].r;
+  assert(anonDraft === null, "An unpublished community profile was served to an anonymous visitor.");
+  await db.exec(`reset role; update public.living_community_profiles set status='published' where subdomain='maple-court'`);
+
+  // The resident projection is scoped to the caller's own active tenancies.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${invitedResidentUser}'`);
+  const residentCommunities = (await db.query("select public.get_resident_living_community_profiles() as r")).rows[0].r;
+  assert(
+    residentCommunities.items.length === 1 && residentCommunities.items[0].subdomain === "maple-court",
+    `A resident did not receive exactly their own community: ${JSON.stringify(residentCommunities.items)}`,
+  );
+  assert(residentCommunities.items[0].tenancyId, "The resident projection omitted the tenancy id it exists to provide.");
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  const outsiderCommunities = (await db.query("select public.get_resident_living_community_profiles() as r")).rows[0].r;
+  assert(outsiderCommunities.items.length === 0, "A user with no resident relationship received a community presentation.");
+
+  // Presentation media is same-origin by constraint, so an operator cannot turn a resident's page
+  // into a third-party tracking pixel. This is the invariant that check exists for.
+  await db.exec("reset role");
+  await expectDatabaseError(
+    () => db.query(`update public.living_community_profiles set hero_image_url='https://tracker.example/pixel.png' where subdomain='maple-court'`),
+    "violates check constraint",
+  );
   await db.exec("reset role");
 
   // ── Correction A/B/C: control-plane hardening (phase_8_platform_control_plane_hardening) ─────────

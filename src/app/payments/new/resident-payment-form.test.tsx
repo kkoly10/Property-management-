@@ -32,7 +32,9 @@ describe("ResidentPaymentForm retry", () => {
     render(<ResidentPaymentForm options={[option]} retry={retry} disabled={false} />);
 
     expect(screen.getByLabelText("Payment amount (USD)")).toHaveValue("300.00");
-    expect(screen.getByLabelText("Apply")).toHaveValue("300.00");
+    // Each allocation input now carries its own accessible name ("Apply to Monthly rent") instead of
+    // every one of them being labelled "Apply" -- the visible "Apply" is a column heading now.
+    expect(screen.getByLabelText("Apply to Monthly rent")).toHaveValue("300.00");
     expect(screen.getByRole("radio", { name: /bank account/i })).toBeChecked();
     expect(screen.getByText("$300.00 / $300.00")).toBeInTheDocument();
   });
