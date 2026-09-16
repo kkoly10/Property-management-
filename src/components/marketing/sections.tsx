@@ -59,57 +59,6 @@ export function SectionHeading({
 }
 
 /**
- * A capability, described as a claim plus the mechanism behind it.
- *
- * The mechanism line is the point: file 18 forbids outcome claims we cannot evidence, so each item says
- * what the system DOES rather than what it will achieve for you. The hairline is what makes a grid of
- * these read as an editorial table rather than a drift of gray paragraphs — structure without a card.
- */
-export function FeatureItem({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="border-t pt-5">
-      <h3 className="text-[0.9375rem] font-semibold">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">{children}</p>
-    </div>
-  );
-}
-
-export function FeatureGrid({ children, columns = 3 }: { children: ReactNode; columns?: 2 | 3 }) {
-  return (
-    <div className={`mt-12 grid gap-x-10 gap-y-8 sm:grid-cols-2 ${columns === 3 ? "lg:grid-cols-3" : ""}`}>
-      {children}
-    </div>
-  );
-}
-
-/**
- * A product composition: a real Crecy screen described structurally.
- *
- * File 27: "product imagery should come from real Crecy UI/demo compositions, not fabricated customer
- * evidence." These render the actual shapes of the product's screens with sample values, and every one
- * is labelled Sample data per file 18 §4 — so nothing here can be mistaken for a customer's numbers.
- */
-export function ProductComposition({
-  label,
-  children,
-  className = "",
-}: {
-  label: string;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <figure className={`overflow-hidden rounded-xl border bg-card shadow-sm ${className}`}>
-      <div className="flex items-center justify-between gap-3 border-b bg-muted/40 px-4 py-2.5">
-        <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
-        <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Sample data</span>
-      </div>
-      <div className="p-4 sm:p-5">{children}</div>
-    </figure>
-  );
-}
-
-/**
  * A short list of statements with hairlines between them.
  *
  * The alternative that kept appearing — four bordered boxes in a two-column grid — is exactly the

@@ -28,7 +28,9 @@ const items: Item[] = [
 
 function active(pathname: string, href: string) {
   if (href === "/owner") return pathname === "/owner";
-  if (href.startsWith("/owner#")) return pathname === "/owner";
+  if (href === "/owner#statements") return pathname.startsWith("/owner/statements");
+  if (href === "/owner#remittances") return false;
+  if (href === "/owner#approvals") return pathname.startsWith("/owner/approvals");
   return pathname.startsWith(href);
 }
 
@@ -45,14 +47,14 @@ export function OwnerNavigation({ compact = false }: { compact?: boolean }) {
               <Link
                 key={href}
                 href={href}
-                aria-current={current && href === "/owner" ? "page" : undefined}
+                aria-current={current ? "page" : undefined}
                 className={cn(
                   "relative px-3 py-3 text-sm font-medium transition-colors",
                   current ? "text-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {label}
-                {current && href === "/owner" ? <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary" /> : null}
+                {current ? <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary" /> : null}
               </Link>
             );
           })}
@@ -69,16 +71,16 @@ export function OwnerNavigation({ compact = false }: { compact?: boolean }) {
           <Link
             key={href}
             href={href}
-            aria-current={current && href === "/owner" ? "page" : undefined}
+            aria-current={current ? "page" : undefined}
             className={cn(
               "relative flex items-center gap-3 rounded-r-lg px-3 py-2.5 text-sm font-medium transition-colors",
               "before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-transparent",
-              current && href === "/owner"
+              current
                 ? "bg-[var(--brand-subtle)] text-foreground before:bg-primary"
                 : "text-muted-foreground hover:bg-muted/65 hover:text-foreground",
             )}
           >
-            <Icon aria-hidden="true" className={cn("h-4 w-4", current && href === "/owner" && "text-primary")} />
+            <Icon aria-hidden="true" className={cn("h-4 w-4", current && "text-primary")} />
             {label}
           </Link>
         );

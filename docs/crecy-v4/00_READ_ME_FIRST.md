@@ -151,6 +151,9 @@ See `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` for product exclusions and file
 - `33_LIVING_ROUTE_FAMILY_PROPAGATION.md` — Living shell/payment/maintenance/messages/documents/preferences propagation and remaining community-presentation gap
 - `34_LIVING_COMMUNITY_PRESENTATION.md` — public-safe community profile/media contract, Maple Court fixture, and image-led Living login/home rules
 - `35_LIVING_MOBILE_AND_OPERATOR_CONTROLS.md` — mobile community-login correction, operator Resident portal controls, and save/publish boundary
+- `36_OWNER_SECONDARY_FAMILY_PROPAGATION.md` — Owner statement/approval/document/correspondence/preferences propagation, preserved contracts, and adversarial gate
+- `37_MARKETING_IMAGE_DIRECTION.md` — Maple Court marketing image canon, narrative roles, crop guidance, and fictional-demo boundary
+- `38_MARKETING_SECONDARY_FAMILY_PROPAGATION.md` — Product/Living/Security narrative propagation, targeted marketing continuity work, preserved contracts, and validation evidence
 - `AGENTS.md` — repository agent rules
 
 ## 8. Non-negotiable invariants

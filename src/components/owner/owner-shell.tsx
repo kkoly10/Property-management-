@@ -3,18 +3,29 @@ import { Bell, FileText, MessageSquareText } from "lucide-react";
 import { Wordmark } from "@/components/brand/wordmark";
 import { SurfaceTheme } from "@/components/crecy/surface-theme";
 import { OwnerNavigation } from "@/components/owner/owner-navigation";
+import { cn } from "@/lib/utils";
 
-export function OwnerShell({ children }: { children: React.ReactNode }) {
+export function OwnerShell({
+  children,
+  chromeTitle = "Owner Dashboard",
+  chromeDescription = "Statements, distributions, and approvals",
+  mainClassName,
+}: {
+  children: React.ReactNode;
+  chromeTitle?: string;
+  chromeDescription?: string;
+  mainClassName?: string;
+}) {
   return (
     <SurfaceTheme surface="owner" className="min-h-screen bg-[var(--surface-canvas)]">
       <div className="min-h-screen lg:grid lg:grid-cols-[236px_minmax(0,1fr)]">
-        <aside className="hidden min-h-screen border-r bg-card lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col">
+        <aside className="hidden min-h-screen border-r bg-card print:hidden lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col">
           <div className="flex h-[4.5rem] items-center border-b px-5">
             <Wordmark product="Owner" className="max-w-[8.8rem]" />
           </div>
 
           <div className="px-5 py-5">
-            <p className="text-[0.7rem] font-medium text-muted-foreground">OWNER PORTAL</p>
+            <p className="text-xs font-medium text-muted-foreground">Private ownership</p>
             <p className="mt-1 text-sm font-semibold tracking-[-0.01em] text-foreground">Financial visibility</p>
           </div>
 
@@ -28,15 +39,15 @@ export function OwnerShell({ children }: { children: React.ReactNode }) {
         </aside>
 
         <div className="min-w-0">
-          <header className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/90">
+          <header className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur print:hidden supports-[backdrop-filter]:bg-card/90">
             <div className="mx-auto flex h-[4.5rem] max-w-[1380px] items-center gap-4 px-4 sm:px-6 lg:px-8">
               <div className="shrink-0 lg:hidden">
                 <Wordmark product="Owner" className="max-w-[8rem]" />
               </div>
 
               <div className="hidden min-w-0 flex-1 lg:block">
-                <p className="text-sm font-semibold tracking-[-0.01em] text-foreground">Owner Dashboard</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Statements, distributions, and approvals</p>
+                <p className="text-sm font-semibold tracking-[-0.01em] text-foreground">{chromeTitle}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{chromeDescription}</p>
               </div>
 
               <div className="ml-auto flex items-center gap-1">
@@ -54,7 +65,7 @@ export function OwnerShell({ children }: { children: React.ReactNode }) {
             <div className="lg:hidden"><OwnerNavigation compact /></div>
           </header>
 
-          <main className="mx-auto max-w-[1380px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">{children}</main>
+          <main className={cn("mx-auto max-w-[1380px] px-4 py-6 print:max-w-none print:p-0 sm:px-6 sm:py-8 lg:px-8", mainClassName)}>{children}</main>
         </div>
       </div>
     </SurfaceTheme>

@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 export function MarketingProductStage({
   label,
-  meta,
+  meta = "Representative demo data",
   children,
   className,
   chrome = "browser",

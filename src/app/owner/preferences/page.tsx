@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { ArrowLeft, BellRing, CircleAlert } from "lucide-react";
+import { PageHeader } from "@/components/crecy/page-header";
 import { NotificationPreferencesForm } from "@/components/notifications/notification-preferences-form";
-import { Wordmark } from "@/components/brand/wordmark";
+import { OwnerShell } from "@/components/owner/owner-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getNotificationPreferencesWorkspace } from "@/lib/data/notification-preferences";
@@ -9,30 +10,41 @@ import { getNotificationPreferencesWorkspace } from "@/lib/data/notification-pre
 export const dynamic = "force-dynamic";
 
 /**
- * Owner notification preferences.
- *
- * Lives under /owner rather than reusing /settings/notifications so the page keeps the Crecy Owner
- * shell an owner arrives in — and, more concretely, so the List-Unsubscribe header on owner mail can
- * point at owner.crecyos.com, matching the From domain and the body's links. The underlying record is
- * the same one the operator and resident pages edit.
+ * The owner route keeps the owner.crecyos.com origin used by owner-mail links and unsubscribe
+ * headers. The record itself remains the same user-bound notification preference record edited by
+ * the resident and operator surfaces.
  */
 export default async function OwnerNotificationPreferencesPage() {
   const workspace = await getNotificationPreferencesWorkspace();
+
   return (
-    <div className="min-h-screen bg-[#f6f8fb] pb-12">
-      <header className="border-b bg-white"><div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5"><Wordmark product="Owner" /></div></header>
-      <main className="mx-auto max-w-5xl space-y-5 p-5 sm:py-8">
-        <Button asChild variant="ghost" size="sm"><Link href="/owner"><ArrowLeft className="h-4 w-4" />Owner workspace</Link></Button>
-        <div>
-          <p className="flex items-center gap-2 text-sm text-muted-foreground"><BellRing className="h-4 w-4" />Preferences</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Notifications and accessibility</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Choose how Crecy tells you about statements, approvals, and messages for your ownership. Invitations and security messages always reach you, whatever you choose here.</p>
-        </div>
+    <OwnerShell chromeTitle="Owner account controls" chromeDescription="Delivery channels, accessibility, and diagnostics">
+      <div className="space-y-7">
+        <Button asChild variant="ghost" size="sm" className="-ml-2">
+          <Link href="/owner"><ArrowLeft aria-hidden="true" className="h-4 w-4" />Owner overview</Link>
+        </Button>
+
+        <PageHeader
+          context="Personal delivery record"
+          title="Notifications and accessibility"
+          description="Set how operational records reach you and review sanitized delivery activity. Invitations and security messages remain available regardless of these choices."
+          meta="Preferences apply to your signed-in account across Crecy surfaces"
+        />
+
         {workspace.mode === "setup" ? (
-          <Alert variant="info"><BellRing className="h-5 w-5" /><AlertTitle>Preferences preview</AlertTitle><AlertDescription>This sample is read-only until Supabase is connected.</AlertDescription></Alert>
+          <Alert variant="info">
+            <BellRing aria-hidden="true" className="h-5 w-5" />
+            <AlertTitle>Preferences preview</AlertTitle>
+            <AlertDescription>This sample is read-only until Supabase is connected.</AlertDescription>
+          </Alert>
         ) : null}
+
         {workspace.mode === "error" || !workspace.profile ? (
-          <Alert variant="destructive"><CircleAlert className="h-5 w-5" /><AlertTitle>Preferences unavailable</AlertTitle><AlertDescription>Refresh and try again. Request {workspace.requestId ?? "unavailable"}.</AlertDescription></Alert>
+          <Alert variant="destructive">
+            <CircleAlert aria-hidden="true" className="h-5 w-5" />
+            <AlertTitle>Preferences unavailable</AlertTitle>
+            <AlertDescription>Refresh and try again. Request {workspace.requestId ?? "unavailable"}.</AlertDescription>
+          </Alert>
         ) : (
           <NotificationPreferencesForm
             audience="owner"
@@ -41,9 +53,10 @@ export default async function OwnerNotificationPreferencesPage() {
             deliverySummary={workspace.deliverySummary}
             recentDeliveries={workspace.recentDeliveries}
             disabled={workspace.mode !== "ready"}
+            presentation="owner"
           />
         )}
-      </main>
-    </div>
+      </div>
+    </OwnerShell>
   );
 }

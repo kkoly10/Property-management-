@@ -8,7 +8,7 @@ const proofs = readFileSync(resolve(__dirname, "../../components/marketing/produ
 describe("Crecy marketing home design contract", () => {
   it("tells the product story through role-specific product proofs rather than generic feature-card grids", () => {
     expect(home).toContain("<OperatorCommandCenterProof");
-    expect(home).toContain("<LivingHomeProof");
+    expect(home).toContain("<LivingPlaceProof");
     expect(home).toContain("<OwnerOverviewProof");
     expect(home).toContain("<RelationshipIndex");
     expect(home).not.toContain("<FeatureGrid");
@@ -20,6 +20,7 @@ describe("Crecy marketing home design contract", () => {
     expect(proofs).toContain("<MetricStrip");
     expect(proofs).toContain("<OperatorAttentionRail");
     expect(proofs).toContain("<LivingCommunityIdentity");
+    expect(proofs).toContain("marketing-lobby-v2.webp");
     expect(proofs).toContain("<OwnerFinancialBand");
     expect(proofs).toContain("Representative demo data");
   });

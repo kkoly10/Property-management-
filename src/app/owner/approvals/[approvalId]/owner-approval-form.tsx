@@ -43,7 +43,7 @@ export function OwnerApprovalForm({ approvalRequestId, version, disabled }: { ap
     }
   }
 
-  if (result) return <Alert className="border-[#abefc6] bg-[#ecfdf3] text-success"><CheckCircle2 className="h-5 w-5" /><AlertTitle>Decision recorded</AlertTitle><AlertDescription>This request is {result.decision}. The work order approval status is {result.workOrderApprovalStatus.replaceAll("_", " ")}.</AlertDescription></Alert>;
+  if (result) return <Alert variant="success"><CheckCircle2 className="h-5 w-5" /><AlertTitle>Decision recorded</AlertTitle><AlertDescription>This request is {result.decision}. The work order approval status is {result.workOrderApprovalStatus.replaceAll("_", " ")}.</AlertDescription></Alert>;
 
   return <div className="space-y-4">
     {error ? <Alert variant="destructive"><AlertTitle>Decision not recorded</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}

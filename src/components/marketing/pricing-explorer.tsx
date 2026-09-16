@@ -82,8 +82,8 @@ export function PricingExplorer() {
         price books rather than converting one currency at checkout.
       </p>
 
-      <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {PLAN_ORDER.map((plan) => {
+      <div className="mt-8 grid overflow-hidden border-y bg-card sm:grid-cols-2 lg:grid-cols-4">
+        {PLAN_ORDER.map((plan, index) => {
           const price = country.plans[plan];
           const minor = period === "monthly" ? price.monthlyMinor : price.annualMinor;
           const saving = period === "annual" ? annualSavingLabel(price) : null;
@@ -91,12 +91,20 @@ export function PricingExplorer() {
           return (
             <div
               key={plan}
-              className={`flex flex-col rounded-xl border bg-card p-6 ${featured ? "border-primary/60 ring-1 ring-primary/25" : ""}`}
+              className={`flex flex-col p-6 ${
+                index === 1
+                  ? "border-t sm:border-l sm:border-t-0"
+                  : index === 2
+                    ? "border-t lg:border-l lg:border-t-0"
+                    : index === 3
+                      ? "border-t sm:border-l lg:border-t-0"
+                      : ""
+              } ${featured ? "bg-[var(--brand-subtle)]" : ""}`}
             >
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-base font-semibold">{PLAN_LABELS[plan]}</h3>
                 {featured ? (
-                  <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Most complete</span>
+                  <span className="border-b border-primary/40 pb-0.5 text-xs font-medium text-primary">Growth trial</span>
                 ) : null}
               </div>
 
@@ -155,7 +163,7 @@ export function PricingExplorer() {
         role="region"
         aria-label="Plan feature comparison, scrollable"
         tabIndex={0}
-        className="mt-4 overflow-x-auto rounded-xl border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:mt-8"
+        className="mt-4 overflow-x-auto border-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:mt-8"
       >
         <table className="w-full min-w-[44rem] border-collapse text-sm">
           <caption className="sr-only">Feature comparison across the Free, Starter, Growth and Pro plans</caption>

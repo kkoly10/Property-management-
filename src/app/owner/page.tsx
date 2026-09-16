@@ -20,8 +20,6 @@ import { getOwnerStatementWorkspace, type OwnerStatementSummary } from "@/lib/da
 
 export const dynamic = "force-dynamic";
 
-const label = (value: string) => value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
-
 const money = (amountMinor: number, currency: string) => new Intl.NumberFormat("en-US", {
   style: "currency",
   currency,

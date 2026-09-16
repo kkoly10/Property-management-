@@ -53,15 +53,28 @@ for (const entry of entries) {
   }
 }
 
-const expected = `${JSON.stringify({ $schema: "https://openapi.vercel.sh/vercel.json", crons: entries }, null, 2)}\n`;
 const configPath = resolve(root, "vercel.json");
+const schema = "https://openapi.vercel.sh/vercel.json";
+const actual = await readFile(configPath, "utf8").catch(() => null);
+let config = {};
+
+if (actual !== null) {
+  try {
+    config = JSON.parse(actual);
+  } catch {
+    console.error("vercel.json is not valid JSON.");
+    process.exit(1);
+  }
+}
 
 if (write) {
-  await writeFile(configPath, expected);
+  const nextConfig = { ...config, $schema: schema, crons: entries };
+  await writeFile(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`);
   console.log(JSON.stringify({ scheduledJobs: entries.length, wrote: "vercel.json" }));
 } else {
-  const actual = await readFile(configPath, "utf8").catch(() => null);
-  if (actual !== expected) {
+  const scheduledConfig = { $schema: config.$schema, crons: config.crons };
+  const expectedConfig = { $schema: schema, crons: entries };
+  if (JSON.stringify(scheduledConfig) !== JSON.stringify(expectedConfig)) {
     console.error("vercel.json is out of date with src/lib/runtime/schedule.ts. Run: npm run schedule:write");
     process.exit(1);
   }

@@ -18,9 +18,19 @@ export function ConversationList({
 }: {
   items: ConversationSummary[];
   routeBase: string;
-  presentation?: "default" | "living";
+  presentation?: "default" | "living" | "owner";
 }) {
   if (!items.length) {
+    if (presentation === "owner") {
+      return (
+        <div className="border-y bg-card px-6 py-12 text-center sm:rounded-xl sm:border">
+          <MessageSquareText aria-hidden="true" className="mx-auto h-7 w-7 text-primary" />
+          <h2 className="mt-4 font-semibold">No correspondence yet</h2>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Conversations connected to your exact owner relationship will appear in this register.</p>
+        </div>
+      );
+    }
+
     if (presentation === "living") {
       return (
         <div className="rounded-[1.05rem] border bg-card px-6 py-12 text-center">
@@ -39,6 +49,45 @@ export function ConversationList({
           <p className="mt-1 text-sm text-muted-foreground">A conversation appears when an active resident or owner relationship is connected.</p>
         </CardContent>
       </Card>
+    );
+  }
+
+  if (presentation === "owner") {
+    return (
+      <section aria-label="Owner correspondence register" className="overflow-hidden border-y bg-card sm:rounded-xl sm:border">
+        <div className="hidden grid-cols-[minmax(150px,.65fr)_minmax(170px,.7fr)_minmax(0,1.2fr)_auto] gap-4 border-b bg-[var(--surface-subtle)]/70 px-6 py-3 text-xs font-medium text-muted-foreground md:grid">
+          <span>Relationship</span>
+          <span>Property / subject</span>
+          <span>Latest correspondence</span>
+          <span className="text-right">Updated</span>
+        </div>
+        <div className="divide-y">
+          {items.map((item) => (
+            <Link
+              key={item.conversationId}
+              href={`${routeBase}/${item.conversationId}`}
+              className="group grid gap-4 px-5 py-5 transition-colors hover:bg-[var(--brand-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-6 md:grid-cols-[minmax(150px,.65fr)_minmax(170px,.7fr)_minmax(0,1.2fr)_auto] md:items-center"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="truncate text-sm font-semibold tracking-[-0.01em] group-hover:text-primary">{item.audienceLabel}</h2>
+                  {item.status !== "open" ? <Badge variant="neutral">{item.status}</Badge> : null}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground md:hidden">Relationship</p>
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{item.propertyName ?? item.subject}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{item.conversationType.replaceAll("_", " ")}</p>
+              </div>
+              <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">{item.latestMessage?.bodyText ?? "No messages recorded"}</p>
+              <div className="flex items-center justify-between gap-3 md:justify-end">
+                <time className="text-xs text-muted-foreground">{timestamp(item.updatedAt)}</time>
+                <ArrowRight aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
     );
   }
 

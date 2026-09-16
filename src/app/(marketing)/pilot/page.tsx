@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Button } from "@/components/ui/button";
-import { Eyebrow, Section, SectionHeading } from "@/components/marketing/sections";
+import { Section, SectionHeading } from "@/components/marketing/sections";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 import { CUSTOM_AGREEMENT_UNITS, GROWTH_TRIAL_COPY } from "@/lib/marketing/pricing";
 
@@ -72,7 +72,7 @@ export default function PilotPage() {
     <>
       <Section className="!pb-10 lg:!pb-14">
         <div className="max-w-3xl">
-          <Eyebrow>Early program</Eyebrow>
+          <p className="text-sm font-medium text-primary">Early operating partnership</p>
           <h1 className="mt-4 text-4xl font-semibold leading-[1.1] tracking-[-0.04em] text-balance sm:text-5xl">
             Run a real portfolio on Crecy, early.
           </h1>
@@ -91,17 +91,13 @@ export default function PilotPage() {
       </Section>
 
       <Section tone="surface">
-        <SectionHeading eyebrow="How it goes" title="Four steps, in the order they actually happen." />
-        <ol className="mt-12 grid gap-x-10 gap-y-10 sm:grid-cols-2">
+        <SectionHeading title="Four steps, in the order they actually happen." />
+        <ol className="mt-12 border-y">
           {STEPS.map((step, index) => (
-            <li key={step.title} className="flex gap-4">
-              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border font-mono text-sm font-semibold tabular-nums">
-                {index + 1}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-base font-semibold">{step.title}</span>
-                <span className="mt-2 block text-sm leading-6 text-muted-foreground">{step.detail}</span>
-              </span>
+            <li key={step.title} className="grid gap-3 border-b py-6 last:border-b-0 sm:grid-cols-[50px_210px_1fr] sm:items-baseline">
+              <span className="font-mono text-xs font-semibold text-primary">0{index + 1}</span>
+              <span className="font-semibold">{step.title}</span>
+              <span className="text-sm leading-6 text-muted-foreground">{step.detail}</span>
             </li>
           ))}
         </ol>
@@ -109,23 +105,22 @@ export default function PilotPage() {
 
       <Section>
         <SectionHeading
-          eyebrow="What to expect"
           title="An honest account of where the product is."
           lede="A pilot is worth joining only if you know what you are joining. This is the current state, stated without rounding it up."
         />
-        <dl className="mt-12 grid gap-x-10 gap-y-8 sm:grid-cols-2">
+        <dl className="mt-12 border-y">
           {EXPECT.map((item) => (
-            <div key={item.title}>
+            <div key={item.title} className="grid gap-2 border-b py-5 last:border-b-0 sm:grid-cols-[210px_1fr] sm:gap-8">
               <dt className="text-base font-semibold">{item.title}</dt>
-              <dd className="mt-2 text-sm leading-6 text-muted-foreground">{item.detail}</dd>
+              <dd className="text-sm leading-6 text-muted-foreground">{item.detail}</dd>
             </div>
           ))}
         </dl>
       </Section>
 
       <Section tone="surface">
-        <div className="grid gap-10 lg:grid-cols-2">
-          <div className="rounded-xl border bg-background p-6 sm:p-8">
+        <div className="grid border-y lg:grid-cols-2">
+          <div className="p-6 sm:p-8 lg:pr-12">
             <h2 className="text-base font-semibold">Smaller portfolios</h2>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
               Start on Free with a single unit to see the whole system with your own data, or start the
@@ -133,7 +128,7 @@ export default function PilotPage() {
             </p>
             <Button asChild className="mt-6"><Link href="/signup">Start free</Link></Button>
           </div>
-          <div className="rounded-xl border bg-background p-6 sm:p-8">
+          <div className="border-t p-6 sm:p-8 lg:border-l lg:border-t-0 lg:pl-12">
             <h2 className="text-base font-semibold">More than {CUSTOM_AGREEMENT_UNITS} units</h2>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
               Above {CUSTOM_AGREEMENT_UNITS} active units Crecy works on a custom agreement rather than a

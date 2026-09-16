@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import {
-  LivingHomeProof,
+  LivingPlaceProof,
   MoneyRail,
   OperatorCommandCenterProof,
   OwnerOverviewProof,
@@ -76,7 +76,7 @@ export default function HomePage() {
 
       <Section className="!py-20 lg:!py-28">
         <div className="grid items-center gap-12 lg:grid-cols-[0.95fr_1.05fr] lg:gap-16">
-          <LivingHomeProof className="mx-auto w-full max-w-md lg:mx-0" />
+          <LivingPlaceProof className="mx-auto w-full max-w-xl lg:mx-0" />
 
           <div className="max-w-xl">
             <p className="text-sm font-medium text-[#067647]">Crecy Living</p>

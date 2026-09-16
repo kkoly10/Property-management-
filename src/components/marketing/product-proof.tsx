@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { ArrowRight, CircleCheckBig, CreditCard, FileText, MessageSquareText, Wrench } from "lucide-react";
 import { Wordmark } from "@/components/brand/wordmark";
 import { LivingCommunityIdentity } from "@/components/crecy/living-community-identity";
@@ -191,6 +192,27 @@ export function LivingHomeProof({ className = "" }: { className?: string }) {
         </div>
       </SurfaceTheme>
     </MarketingProductStage>
+  );
+}
+
+export function LivingPlaceProof({ className = "" }: { className?: string }) {
+  return (
+    <div className={className}>
+      <figure className="relative aspect-[16/10] overflow-hidden rounded-[1rem] bg-muted">
+        <Image
+          src="/media/maple-court/marketing-lobby-v2.webp"
+          alt="The Maple Court lobby with a reception desk, resident seating, and garden-facing entry."
+          fill
+          unoptimized
+          sizes="(max-width: 1024px) 100vw, 48vw"
+          className="object-cover"
+        />
+        <figcaption className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/65 to-transparent px-5 pb-5 pt-16 text-sm text-white">
+          Maple Court · fictional demonstration community
+        </figcaption>
+      </figure>
+      <LivingHomeProof className="relative z-10 -mt-14 ml-auto mr-4 w-[82%] max-w-[360px] sm:-mt-24" />
+    </div>
   );
 }
 

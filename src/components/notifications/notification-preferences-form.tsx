@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { BellRing, CheckCircle2, FileLock2, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -24,15 +25,17 @@ import {
   type NotificationChannel,
   type NotificationChannelMatrix,
 } from "@/lib/validation/notification-preferences";
+import { cn } from "@/lib/utils";
 
 /**
  * The five categories are `private.notification_template_category`'s five non-NULL values, taken from
  * `notificationCategories` rather than restated. That is what keeps access mail unsuppressible: the
  * function returns NULL for invitations, so no toggle for them can exist here to begin with.
  *
- * Only the WORDING varies by audience. The record behind it does not: `public.notification_preferences`
- * is keyed by `(user_id, category, channel)`, so an operator who is also an owner is editing one set of
- * preferences through two doors, and both doors must name the same thing recognizably.
+ * Wording and presentation may vary by audience, but the record behind them does not:
+ * `public.notification_preferences` is keyed by `(user_id, category, channel)`, so an operator who is
+ * also an owner is editing one set of preferences through two doors, and both doors must name the same
+ * thing recognizably.
  */
 const categoryLabels: Record<LinkAudience, Record<NotificationCategory, string>> = {
   resident: {
@@ -71,6 +74,17 @@ const deliverySummaryLabels: Array<[keyof NotificationDeliverySummary, string]> 
   ["deadLetter", "Needs review"],
 ];
 
+function PreferenceSection({ presentation, children }: { presentation: "default" | "owner"; children: ReactNode }) {
+  if (presentation === "owner") {
+    return (
+      <section className="grid lg:grid-cols-[minmax(220px,.45fr)_minmax(0,1fr)] [&>[data-slot=card-content]]:pt-6 [&>[data-slot=card-header]]:border-b lg:[&>[data-slot=card-header]]:border-r lg:[&>[data-slot=card-header]]:border-b-0">
+        {children}
+      </section>
+    );
+  }
+  return <Card>{children}</Card>;
+}
+
 export function NotificationPreferencesForm({
   audience,
   profile,
@@ -78,14 +92,16 @@ export function NotificationPreferencesForm({
   deliverySummary,
   recentDeliveries,
   disabled,
+  presentation = "default",
 }: {
-  /** Which surface is rendering this. Changes the wording and the return path, never the record. */
+  /** Which surface is rendering this. Changes the wording and return path, never the record. */
   audience: LinkAudience;
   profile: NotificationPreferenceProfile;
   initialChannels: NotificationChannelMatrix;
   deliverySummary: NotificationDeliverySummary;
   recentDeliveries: RecentNotificationDelivery[];
   disabled: boolean;
+  presentation?: "default" | "owner";
 }) {
   const router = useRouter();
   const labels = categoryLabels[audience];
@@ -137,7 +153,8 @@ export function NotificationPreferencesForm({
 
   return (
     <form className="space-y-6" onSubmit={save}>
-      <Card>
+      <div className={cn(presentation === "owner" && "divide-y overflow-hidden border-y bg-card sm:rounded-xl sm:border")}>
+      <PreferenceSection presentation={presentation}>
         <CardHeader>
           <CardTitle>Transactional notifications</CardTitle>
           <CardDescription>
@@ -157,7 +174,7 @@ export function NotificationPreferencesForm({
           */}
           <div className="space-y-3 md:hidden">
             {notificationCategories.map((category) => (
-              <fieldset key={category} className="rounded-xl border p-4">
+              <fieldset key={category} className={cn("border p-4", presentation === "owner" ? "border-x-0 border-b-0 first:border-t-0" : "rounded-xl")}>
                 <legend className="px-1 text-sm font-medium">{labels[category]}</legend>
                 <div className="mt-1 grid grid-cols-2 gap-2">
                   {notificationChannels.map((channel) => {
@@ -165,7 +182,7 @@ export function NotificationPreferencesForm({
                     return (
                       <label
                         key={channel}
-                        className={`flex items-center gap-2.5 rounded-lg border p-3 text-sm ${unavailable ? "opacity-60" : ""}`}
+                        className={cn("flex items-center gap-2.5 border p-3 text-sm", presentation !== "owner" && "rounded-lg", unavailable && "opacity-60")}
                       >
                         <input
                           type="checkbox"
@@ -229,9 +246,9 @@ export function NotificationPreferencesForm({
             Preferences are saved independently of provider availability. A channel is used only when the operator and Crecy have configured a compliant delivery provider.
           </p>
         </CardContent>
-      </Card>
+      </PreferenceSection>
 
-      <Card>
+      <PreferenceSection presentation={presentation}>
         <CardHeader>
           <CardTitle>Language and accessibility</CardTitle>
           <CardDescription>These choices follow your account across resident, owner, and operator surfaces.</CardDescription>
@@ -256,47 +273,47 @@ export function NotificationPreferencesForm({
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex items-start gap-3 rounded-xl border p-4">
+            <label className={cn("flex items-start gap-3 border p-4", presentation !== "owner" && "rounded-xl")}>
               <input type="checkbox" name="reduceMotion" defaultChecked={profile.reduceMotion} disabled={disabled || busy} className="mt-0.5 h-4 w-4 rounded border-input accent-primary" />
               <span><span className="block text-sm font-medium">Reduce motion</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Minimize nonessential animation and movement.</span></span>
             </label>
-            <label className="flex items-start gap-3 rounded-xl border p-4">
+            <label className={cn("flex items-start gap-3 border p-4", presentation !== "owner" && "rounded-xl")}>
               <input type="checkbox" name="highContrast" defaultChecked={profile.highContrast} disabled={disabled || busy} className="mt-0.5 h-4 w-4 rounded border-input accent-primary" />
               <span><span className="block text-sm font-medium">Higher contrast</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Use stronger visual separation where supported.</span></span>
             </label>
           </div>
         </CardContent>
-      </Card>
+      </PreferenceSection>
 
-      <Card>
+      <PreferenceSection presentation={presentation}>
         <CardHeader>
           <CardTitle>Marketing communications</CardTitle>
           <CardDescription>Marketing consent is separate from operational notifications.</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-muted/30 p-4">
+          <div className={cn("flex flex-wrap items-center justify-between gap-4 border bg-muted/30 p-4", presentation !== "owner" && "rounded-xl")}>
             <div><p className="text-sm font-medium">Email and SMS marketing</p><p className="mt-1 text-xs text-muted-foreground">No marketing consent is recorded through this screen.</p></div>
             <Badge variant="neutral">Off</Badge>
           </div>
         </CardContent>
-      </Card>
+      </PreferenceSection>
 
-      <Card>
+      <PreferenceSection presentation={presentation}>
         <CardHeader>
           <CardTitle>Delivery diagnostics</CardTitle>
           <CardDescription>Last 30 days. Addresses, provider identifiers, and message payloads are never shown here.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <div className={cn("grid grid-cols-2 sm:grid-cols-5", presentation === "owner" ? "overflow-hidden border" : "gap-3")}>
             {deliverySummaryLabels.map(([key, label]) => (
-              <div key={key} className="rounded-xl border bg-muted/20 p-3">
+              <div key={key} className={cn("bg-muted/20 p-3", presentation === "owner" ? "border-r border-b last:border-r-0 sm:border-b-0" : "rounded-xl border")}>
                 <p className="font-mono text-xl font-semibold">{deliverySummary[key]}</p>
                 <p className="mt-1 text-xs text-muted-foreground">{label}</p>
               </div>
             ))}
           </div>
           {recentDeliveries.length ? (
-            <div className="divide-y rounded-xl border">
+            <div className={cn("divide-y border", presentation !== "owner" && "rounded-xl")}>
               {recentDeliveries.map((item) => (
                 <div key={item.notificationJobId} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -309,9 +326,10 @@ export function NotificationPreferencesForm({
                 </div>
               ))}
             </div>
-          ) : <p className="rounded-xl border bg-muted/20 p-6 text-center text-sm text-muted-foreground">No recent delivery activity.</p>}
+          ) : <p className={cn("border bg-muted/20 p-6 text-center text-sm text-muted-foreground", presentation !== "owner" && "rounded-xl")}>No recent delivery activity.</p>}
         </CardContent>
-      </Card>
+      </PreferenceSection>
+      </div>
 
       {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
       {success ? <Alert variant="info"><CheckCircle2 className="h-5 w-5" /><AlertDescription>{success}</AlertDescription></Alert> : null}
@@ -325,4 +343,3 @@ export function NotificationPreferencesForm({
     </form>
   );
 }
-

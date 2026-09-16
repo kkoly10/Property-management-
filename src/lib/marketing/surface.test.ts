@@ -157,15 +157,11 @@ describe("claims on the public pages", () => {
     expect(copy).not.toMatch(/\b(now )?available in (the United States|Canada|Mexico)\b/i);
   });
 
-  it("labels every product composition as sample data", () => {
-    // File 18 §4: demo dashboards display "Sample data". The label lives on the shared component so it
-    // cannot be omitted per-instance, and this asserts that is still true.
-    const component = readFileSync(resolve(__dirname, "../../components/marketing/sections.tsx"), "utf8");
-    expect(component).toContain("Sample data");
-    for (const [route, source] of PAGES) {
-      const uses = (source.match(/<ProductComposition/g) ?? []).length;
-      if (uses > 0) expect(source, `${route} hand-rolls a composition`).not.toMatch(/data-sample-exempt/);
-    }
+  it("labels every shared product stage as representative demo data by default", () => {
+    // File 18 §4: demo dashboards display a sample-data label. The default lives on the shared stage,
+    // so a new proof cannot silently omit it.
+    const component = readFileSync(resolve(__dirname, "../../components/crecy/marketing-product-stage.tsx"), "utf8");
+    expect(component).toContain('meta = "Representative demo data"');
   });
 
   it("carries the operator-document disclaimer wherever documents are described to residents", () => {
