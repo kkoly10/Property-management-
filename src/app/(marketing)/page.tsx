@@ -9,7 +9,8 @@ import {
   TrustProof,
   WorkflowProof,
 } from "@/components/marketing/product-proof";
-import { Section, SectionHeading } from "@/components/marketing/sections";
+import { SurfaceTheme } from "@/components/crecy/surface-theme";
+import { Section } from "@/components/marketing/sections";
 import { Button } from "@/components/ui/button";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 import {
@@ -32,17 +33,16 @@ const usd = PRICE_BOOKS.US;
 export default function HomePage() {
   return (
     <>
-      <Section className="!pb-14 !pt-14 sm:!pt-20 lg:!pb-24 lg:!pt-24">
-        <div className="grid items-center gap-12 xl:grid-cols-[0.82fr_1.18fr] xl:gap-16">
-          <div className="max-w-xl">
-            <h1 className="text-[2.9rem] font-semibold leading-[0.98] tracking-[-0.055em] text-balance sm:text-[4rem] lg:text-[4.5rem]">
-              Rental operations,
-              <span className="block text-primary">made clear.</span>
+      <Section className="!pb-16 !pt-14 sm:!pt-20 lg:!pb-28 lg:!pt-24">
+        <div className="grid items-center gap-14 xl:grid-cols-[0.86fr_1.14fr] xl:gap-20">
+          <div className="max-w-2xl">
+            <h1 className="text-[clamp(3.4rem,7vw,6.75rem)] font-normal leading-[0.88] tracking-[-0.075em] text-balance">
+              The operating system for <span className="text-primary">every rental relationship.</span>
             </h1>
 
-            <p className="mt-7 max-w-lg text-lg leading-8 text-muted-foreground text-pretty">
-              Crecy connects the operator, resident, and owner relationship around the same properties,
-              payments, work, documents, and financial records.
+            <p className="mt-8 max-w-xl text-lg leading-8 text-muted-foreground text-pretty sm:text-xl sm:leading-9">
+              Crecy keeps operators, residents and owners connected to the same properties, payments,
+              maintenance, documents and financial records—without giving every relationship the same view.
             </p>
 
             <div className="mt-9 flex flex-wrap items-center gap-3">
@@ -56,125 +56,104 @@ export default function HomePage() {
             </div>
           </div>
 
-          <OperatorCommandCenterProof />
+          <OperatorCommandCenterProof className="min-w-0" />
         </div>
       </Section>
 
-      <Section tone="surface" className="!py-16 lg:!py-20">
-        <div className="max-w-3xl">
-          <p className="text-sm font-medium text-primary">One operating model</p>
-          <h2 className="mt-3 text-3xl font-semibold leading-[1.08] tracking-[-0.04em] text-balance sm:text-[2.75rem]">
-            The same rental facts, seen from the relationship that needs them.
-          </h2>
-          <p className="mt-5 max-w-2xl text-lg leading-8 text-muted-foreground">
-            The operator should not rebuild a resident balance or an owner statement in another tool.
-            Crecy projects one operating record into three purpose-built surfaces.
-          </p>
-        </div>
-        <RelationshipIndex />
-      </Section>
-
-      <Section className="!py-20 lg:!py-28">
-        <div className="grid items-center gap-12 lg:grid-cols-[0.95fr_1.05fr] lg:gap-16">
-          <LivingPlaceProof className="mx-auto w-full max-w-xl lg:mx-0" />
-
-          <div className="max-w-xl">
-            <p className="text-sm font-medium text-[#067647]">Crecy Living</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-[1.08] tracking-[-0.04em] text-balance sm:text-[2.75rem]">
-              A resident portal that feels like a home, not back-office software.
+      <section className="bg-[var(--surface-inverse)] text-white">
+        <div className="mx-auto max-w-[1280px] px-5 py-20 sm:py-24 lg:px-8 lg:py-32">
+          <div className="grid gap-8 lg:grid-cols-[1.25fr_0.75fr] lg:items-end">
+            <h2 className="max-w-4xl text-[clamp(2.8rem,5.8vw,5.75rem)] font-normal leading-[0.94] tracking-[-0.065em] text-balance">
+              One property. Three relationships. No duplicated truth.
             </h2>
-            <p className="mt-5 text-lg leading-8 text-muted-foreground">
-              Balance and the next payment come first. Maintenance, messages, documents, and community
-              notices sit one tap away. Each community can carry its own public-safe identity while the
-              operating truth stays in Crecy.
-            </p>
-            <div className="mt-8 divide-y border-y text-sm">
-              <div className="grid gap-2 py-4 sm:grid-cols-[150px_1fr]">
-                <span className="font-semibold">Payment clarity</span>
-                <span className="text-muted-foreground">Current balance, upcoming charge, method, status, and receipts.</span>
-              </div>
-              <div className="grid gap-2 py-4 sm:grid-cols-[150px_1fr]">
-                <span className="font-semibold">Home requests</span>
-                <span className="text-muted-foreground">Maintenance follows the same request the operator actually works.</span>
-              </div>
-              <div className="grid gap-2 py-4 sm:grid-cols-[150px_1fr]">
-                <span className="font-semibold">Relationship scope</span>
-                <span className="text-muted-foreground">Residents see their tenancy, not someone else&rsquo;s property data.</span>
-              </div>
-            </div>
-            <p className="mt-7">
-              <Link href="/crecy-living" className="text-sm font-semibold text-primary hover:underline">
-                See Crecy Living →
-              </Link>
+            <p className="max-w-lg text-base leading-7 text-white/65 lg:pb-2">
+              The operator works the complete record. Residents receive the home-facing parts. Owners receive
+              finalized financial and decision records tied to their interests.
             </p>
           </div>
+          <RelationshipIndex />
         </div>
-      </Section>
+      </section>
 
-      <Section tone="surface" className="!py-20 lg:!py-28">
-        <div className="grid items-center gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16">
+      <SurfaceTheme surface="living">
+        <section className="bg-[var(--brand-soft)]">
+          <div className="mx-auto grid max-w-[1280px] items-center gap-14 px-5 py-20 sm:py-24 lg:grid-cols-[0.78fr_1.22fr] lg:gap-20 lg:px-8 lg:py-32">
+            <div className="max-w-xl">
+              <h2 className="text-[clamp(3rem,5vw,5rem)] font-normal leading-[0.96] tracking-[-0.06em] text-balance">
+                Home is not a dashboard. It is the resident relationship.
+              </h2>
+              <p className="mt-7 text-lg leading-8 text-muted-foreground sm:text-xl sm:leading-9">
+                Balance and the next payment come first. Maintenance, messages, documents and community
+                notices stay close, while the operating books and private work remain where they belong.
+              </p>
+              <dl className="mt-10 border-y border-[var(--brand-strong)]/20 text-sm">
+                <div className="grid gap-2 py-4 sm:grid-cols-[150px_1fr]">
+                  <dt className="font-semibold">Payment clarity</dt>
+                  <dd className="text-muted-foreground">Current balance, upcoming charge, method, status and receipts.</dd>
+                </div>
+                <div className="grid gap-2 border-t border-[var(--brand-strong)]/20 py-4 sm:grid-cols-[150px_1fr]">
+                  <dt className="font-semibold">Home requests</dt>
+                  <dd className="text-muted-foreground">Maintenance follows the same request the operator works.</dd>
+                </div>
+                <div className="grid gap-2 border-t border-[var(--brand-strong)]/20 py-4 sm:grid-cols-[150px_1fr]">
+                  <dt className="font-semibold">Relationship scope</dt>
+                  <dd className="text-muted-foreground">Residents see their tenancy, not someone else&rsquo;s property data.</dd>
+                </div>
+              </dl>
+              <p className="mt-7">
+                <Link href="/crecy-living" className="text-sm font-semibold text-primary hover:underline">
+                  See Crecy Living →
+                </Link>
+              </p>
+            </div>
+
+            <LivingPlaceProof className="mx-auto w-full max-w-2xl lg:mx-0" />
+          </div>
+        </section>
+      </SurfaceTheme>
+
+      <Section className="!py-20 lg:!py-32">
+        <div className="grid items-center gap-14 lg:grid-cols-[0.78fr_1.22fr] lg:gap-20">
           <div className="max-w-xl">
-            <p className="text-sm font-medium text-primary">Crecy Owner</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-[1.08] tracking-[-0.04em] text-balance sm:text-[2.75rem]">
-              Owner visibility built from finalized records, not a second spreadsheet.
+            <h2 className="text-[clamp(3rem,5vw,5rem)] font-normal leading-[0.96] tracking-[-0.06em] text-balance">
+              Owner visibility begins with a finalized record.
             </h2>
-            <p className="mt-5 text-lg leading-8 text-muted-foreground">
-              Statements, recorded remittances, and approvals come from the same property and ledger
-              history the operator already uses. Each property and currency stays explicit rather than
-              disappearing inside a fabricated portfolio total.
+            <p className="mt-7 text-lg leading-8 text-muted-foreground sm:text-xl sm:leading-9">
+              Statements, recorded remittances and approvals come from the same property and ledger history
+              the operator already uses. Property and currency stay explicit.
             </p>
-            <p className="mt-7 text-sm leading-6 text-muted-foreground">
+            <p className="mt-7 max-w-lg border-l-2 border-[var(--finance-accent)] pl-5 text-sm leading-6 text-muted-foreground">
               Owner access follows the ownership relationship. Resident-level details remain outside the
               owner projection.
             </p>
           </div>
-
-          <OwnerOverviewProof />
+          <OwnerOverviewProof className="min-w-0" />
         </div>
+        <div className="mt-16 lg:mt-24"><MoneyRail /></div>
       </Section>
 
-      <Section className="!py-20 lg:!py-28">
-        <div className="max-w-3xl">
-          <SectionHeading
-            title="A maintenance request should not become four separate stories."
-            lede="Crecy keeps the resident request, operator workflow, completion evidence, recorded cost, and owner-facing financial result connected as the work moves."
-          />
+      <Section tone="surface" className="!py-20 lg:!py-32">
+        <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
+          <h2 className="max-w-4xl text-[clamp(3rem,5.4vw,5.5rem)] font-normal leading-[0.94] tracking-[-0.065em] text-balance">
+            A maintenance request should remain one continuous story.
+          </h2>
+          <p className="max-w-lg text-lg leading-8 text-muted-foreground lg:pb-2">
+            The resident request, operator work, completion evidence, recorded cost and owner-facing result
+            stay connected as the work moves.
+          </p>
         </div>
         <WorkflowProof />
       </Section>
 
-      <Section tone="surface" className="!py-20 lg:!py-28">
-        <div className="grid gap-12 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
-          <div className="max-w-lg">
-            <p className="text-sm font-medium text-primary">Money</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-[1.08] tracking-[-0.04em] sm:text-[2.75rem]">
-              The money trail stays one trail.
-            </h2>
-            <p className="mt-5 text-lg leading-8 text-muted-foreground">
-              Charges, payments, allocations, refunds, corrections, settlement reconciliation, and owner
-              statements belong to the same accounting history.
-            </p>
-            <p className="mt-6 text-sm leading-6 text-muted-foreground">
-              Posted financial history is append-only. Corrections reverse and replace rather than silently
-              rewriting what happened.
-            </p>
-          </div>
-          <div>
-            <MoneyRail />
-          </div>
-        </div>
-      </Section>
-
       <Section className="!py-20 lg:!py-28">
-        <div className="grid gap-12 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
-          <div className="max-w-lg">
-            <p className="text-sm font-medium text-primary">Trust architecture</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-[1.08] tracking-[-0.04em] sm:text-[2.75rem]">
-              Security should be visible in how the product behaves.
+        <div className="grid gap-12 lg:grid-cols-[0.72fr_1.28fr] lg:gap-20">
+          <div className="max-w-xl">
+            <h2 className="text-[clamp(2.8rem,4.6vw,4.75rem)] font-normal leading-[0.96] tracking-[-0.06em] text-balance">
+              Trust is a property of the architecture, not a badge wall.
             </h2>
-            <p className="mt-5 text-lg leading-8 text-muted-foreground">
+            <p className="mt-7 text-lg leading-8 text-muted-foreground">
               Crecy uses tenant isolation, relationship-scoped portals, private document delivery, and
-              audit history instead of turning security into a row of unsupported badges.
+              audit history. Posted financial records are corrected by reversal rather than silent edit.
             </p>
             <p className="mt-7">
               <Link href="/security" className="text-sm font-semibold text-primary hover:underline">
@@ -182,15 +161,14 @@ export default function HomePage() {
               </Link>
             </p>
           </div>
-          <TrustProof />
+          <div><TrustProof /></div>
         </div>
       </Section>
 
       <Section tone="surface" className="!py-20 lg:!py-24">
-        <div className="grid gap-10 lg:grid-cols-[0.7fr_1.3fr] lg:gap-16">
+        <div className="grid gap-12 lg:grid-cols-[0.68fr_1.32fr] lg:gap-20">
           <div className="max-w-md">
-            <p className="text-sm font-medium text-primary">Pricing</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-[1.08] tracking-[-0.04em] sm:text-[2.5rem]">
+            <h2 className="text-[clamp(2.8rem,4vw,4.25rem)] font-normal leading-[0.98] tracking-[-0.055em] text-balance">
               Start with the portfolio you have.
             </h2>
             <p className="mt-5 text-base leading-7 text-muted-foreground">
@@ -199,25 +177,30 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="overflow-x-auto border-y">
-            <table className="w-full min-w-[620px] border-collapse text-left">
+          <div className="min-w-0 max-w-full overflow-x-auto border-y">
+            <table className="w-full table-fixed border-collapse text-left">
               <thead className="border-b text-xs font-medium text-muted-foreground">
                 <tr>
                   <th className="py-3 pr-5">Plan</th>
                   <th className="px-5 py-3">Monthly</th>
-                  <th className="px-5 py-3">Included active units</th>
+                  <th className="hidden px-5 py-3 sm:table-cell">Included active units</th>
                   <th className="py-3 pl-5"><span className="sr-only">Action</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {PLAN_ORDER.map((plan) => (
                   <tr key={plan}>
-                    <td className="py-4 pr-5 font-semibold">{PLAN_LABELS[plan]}</td>
+                    <td className="py-4 pr-3 font-semibold sm:pr-5">
+                      {PLAN_LABELS[plan]}
+                      <span className="mt-1 block text-[11px] font-normal leading-4 text-muted-foreground sm:hidden">
+                        {usd.plans[plan].includedUnits} active unit{usd.plans[plan].includedUnits === 1 ? "" : "s"}
+                      </span>
+                    </td>
                     <td data-financial-value className="px-5 py-4 text-lg font-semibold">
                       {formatPrice(usd, usd.plans[plan].monthlyMinor)}
                       <span className="ml-1 text-xs font-normal text-muted-foreground">/mo</span>
                     </td>
-                    <td className="px-5 py-4 text-sm text-muted-foreground">
+                    <td className="hidden px-5 py-4 text-sm text-muted-foreground sm:table-cell">
                       {usd.plans[plan].includedUnits} active unit{usd.plans[plan].includedUnits === 1 ? "" : "s"}
                     </td>
                     <td className="py-4 pl-5 text-right">

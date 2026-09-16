@@ -154,6 +154,7 @@ See `10_PILOT_MVP_SCOPE_AND_RELEASE_BOUNDARY.md` for product exclusions and file
 - `36_OWNER_SECONDARY_FAMILY_PROPAGATION.md` — Owner statement/approval/document/correspondence/preferences propagation, preserved contracts, and adversarial gate
 - `37_MARKETING_IMAGE_DIRECTION.md` — Maple Court marketing image canon, narrative roles, crop guidance, and fictional-demo boundary
 - `38_MARKETING_SECONDARY_FAMILY_PROPAGATION.md` — Product/Living/Security narrative propagation, targeted marketing continuity work, preserved contracts, and validation evidence
+- `39_MARKETING_ANCHOR_VISUAL_CORRECTION.md` — founder-review correction for the homepage and Crecy Living anchors before any further marketing propagation
 - `AGENTS.md` — repository agent rules
 
 ## 8. Non-negotiable invariants

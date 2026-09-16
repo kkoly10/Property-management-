@@ -43,4 +43,12 @@ describe("secondary marketing route design contract", () => {
     expect(security).toContain("<AssuranceLedger");
     expect(security).not.toContain("next/image");
   });
+
+  it("keeps the Living anchor editorial, unnumbered and free of text overlays on Maple Court photography", () => {
+    expect(living).toContain("Home is the interface.");
+    expect(living.match(/text-sm font-medium text-primary/g) ?? []).toHaveLength(0);
+    expect(living).not.toMatch(/\["0[1-9]"/);
+    expect(living).not.toContain("bg-gradient-to-t");
+    expect(living).not.toContain("absolute inset-x-0 bottom-0");
+  });
 });

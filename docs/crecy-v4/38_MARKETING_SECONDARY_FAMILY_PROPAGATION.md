@@ -4,6 +4,17 @@
 **Scope:** `/product`, `/crecy-living`, `/security`, plus targeted continuity work on `/`, `/pricing`, and `/pilot`
 **Authority:** files 18, 27, 29, 31, and 37 plus current executable marketing code
 
+## Subsequent anchor correction
+
+Founder review after this propagation found that the homepage and Crecy Living still relied too heavily on
+small colored labels, repeated medium-weight split sections, numbered scaffolding, and marketing text layered
+over Maple Court photography. File `39_MARKETING_ANCHOR_VISUAL_CORRECTION.md` is the binding correction for
+those two anchors.
+
+This correction is intentionally limited to `/` and `/crecy-living`. It does not authorize another mechanical
+restyle of Product, Security, Pricing, or Pilot. Those routes keep their existing contracts until the two anchors
+pass local multi-viewport visual review and the corrected language is deliberately approved for propagation.
+
 ## Verdict
 
 The three weakest secondary marketing routes no longer share the same feature-grid and miniature-product-card grammar.

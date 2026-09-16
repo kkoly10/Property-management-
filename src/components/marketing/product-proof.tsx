@@ -18,8 +18,8 @@ export function OperatorCommandCenterProof({ className = "" }: { className?: str
       className={className}
     >
       <SurfaceTheme surface="os" className="bg-[var(--surface-canvas)]">
-        <div className="grid min-h-[430px] grid-cols-[124px_minmax(0,1fr)] text-[10px] sm:grid-cols-[148px_minmax(0,1fr)]">
-          <aside className="border-r bg-card p-3">
+        <div className="grid min-h-[430px] grid-cols-1 text-[10px] sm:grid-cols-[132px_minmax(0,1fr)] lg:grid-cols-[148px_minmax(0,1fr)]">
+          <aside className="hidden border-r bg-card p-3 sm:block">
             <Wordmark className="max-w-[5.4rem]" />
             <div className="mt-5 space-y-4">
               {[
@@ -63,7 +63,7 @@ export function OperatorCommandCenterProof({ className = "" }: { className?: str
               </div>
 
               <MetricStrip
-                className="shadow-none"
+                className="grid-cols-2 shadow-none sm:grid-cols-2 xl:grid-cols-4"
                 items={[
                   { label: "Occupancy", value: "94%", detail: "47 of 50 units" },
                   { label: "Open work", value: "7", detail: "3 need review", emphasis: "warning" },
@@ -99,7 +99,7 @@ export function OperatorCommandCenterProof({ className = "" }: { className?: str
               </div>
 
               <div className="overflow-hidden rounded-lg border bg-card">
-                <div className="grid grid-cols-[1fr_70px_80px] border-b bg-[var(--surface-subtle)] px-3 py-2 text-[8px] text-muted-foreground">
+                <div className="grid grid-cols-[minmax(0,1fr)_56px_62px] border-b bg-[var(--surface-subtle)] px-3 py-2 text-[8px] text-muted-foreground sm:grid-cols-[minmax(0,1fr)_64px_70px]">
                   <span>Property</span><span>Occupancy</span><span>Open work</span>
                 </div>
                 {[
@@ -107,7 +107,7 @@ export function OperatorCommandCenterProof({ className = "" }: { className?: str
                   ["Harbour Row", "92%", "4"],
                   ["Riverside", "95%", "1"],
                 ].map((row) => (
-                  <div key={row[0]} className="grid grid-cols-[1fr_70px_80px] border-b px-3 py-2 last:border-0">
+                  <div key={row[0]} className="grid grid-cols-[minmax(0,1fr)_56px_62px] border-b px-3 py-2 last:border-0 sm:grid-cols-[minmax(0,1fr)_64px_70px]">
                     <span className="font-medium">{row[0]}</span><span>{row[1]}</span><span>{row[2]}</span>
                   </div>
                 ))}
@@ -123,8 +123,6 @@ export function OperatorCommandCenterProof({ className = "" }: { className?: str
 export function LivingHomeProof({ className = "" }: { className?: string }) {
   return (
     <MarketingProductStage
-      label="Crecy Living · Resident home"
-      meta="Representative demo data"
       chrome="device"
       className={className}
     >
@@ -198,20 +196,22 @@ export function LivingHomeProof({ className = "" }: { className?: string }) {
 export function LivingPlaceProof({ className = "" }: { className?: string }) {
   return (
     <div className={className}>
-      <figure className="relative aspect-[16/10] overflow-hidden rounded-[1rem] bg-muted">
-        <Image
-          src="/media/maple-court/marketing-lobby-v2.webp"
-          alt="The Maple Court lobby with a reception desk, resident seating, and garden-facing entry."
-          fill
-          unoptimized
-          sizes="(max-width: 1024px) 100vw, 48vw"
-          className="object-cover"
-        />
-        <figcaption className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/65 to-transparent px-5 pb-5 pt-16 text-sm text-white">
-          Maple Court · fictional demonstration community
-        </figcaption>
-      </figure>
-      <LivingHomeProof className="relative z-10 -mt-14 ml-auto mr-4 w-[82%] max-w-[360px] sm:-mt-24" />
+      <div className="relative">
+        <figure className="relative aspect-[16/10] overflow-hidden rounded-[1rem] bg-muted">
+          <Image
+            src="/media/maple-court/marketing-lobby-v2.webp"
+            alt="The Maple Court lobby with a reception desk, resident seating, and garden-facing entry."
+            fill
+            unoptimized
+            sizes="(max-width: 1024px) 100vw, 48vw"
+            className="object-cover"
+          />
+        </figure>
+        <LivingHomeProof className="relative z-10 -mt-10 ml-auto w-[92%] max-w-[360px] sm:-mt-24 sm:mr-5 sm:w-[82%]" />
+      </div>
+      <p className="mt-5 border-t border-[var(--brand-strong)]/20 pt-3 text-xs leading-5 text-muted-foreground">
+        Maple Court is a fictional demonstration community. The resident interface uses representative sample data.
+      </p>
     </div>
   );
 }
@@ -280,18 +280,18 @@ export function OwnerOverviewProof({ className = "" }: { className?: string }) {
 
 export function WorkflowProof() {
   const steps = [
-    ["01", "Resident reports", "Issue, photos, access preference"],
-    ["02", "Operator triages", "Priority, vendor, schedule"],
-    ["03", "Work is recorded", "Completion evidence and cost"],
-    ["04", "Books stay aligned", "Expense and owner statement"],
+    ["Resident", "Report", "Issue, photos and access preference"],
+    ["Operator", "Triage", "Priority, assignment and schedule"],
+    ["Property", "Complete", "Progress, evidence and recorded cost"],
+    ["Owner record", "Reflect", "Expense and finalized statement"],
   ];
 
   return (
     <ol className="mt-10 grid border-y sm:grid-cols-2 lg:grid-cols-4">
-      {steps.map(([number, title, detail], index) => (
-        <li key={number} className={"relative px-1 py-6 sm:px-6 " + (index > 0 ? "border-t sm:border-t-0 sm:border-l" : "")}>
-          <p className="text-xs font-semibold text-primary">{number}</p>
-          <h3 className="mt-4 text-base font-semibold tracking-[-0.015em]">{title}</h3>
+      {steps.map(([role, title, detail], index) => (
+        <li key={role} className={"relative px-1 py-6 sm:px-6 " + (index > 0 ? "border-t sm:border-t-0 sm:border-l" : "")}>
+          <p className="text-xs text-muted-foreground">{role}</p>
+          <h3 className="mt-3 text-xl font-medium tracking-[-0.025em]">{title}</h3>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">{detail}</p>
         </li>
       ))}
@@ -321,17 +321,14 @@ export function RelationshipIndex() {
   return (
     <div className="mt-10 grid border-y md:grid-cols-3">
       {[
-        ["01", "Crecy OS", "Operate", "Portfolio, money, leases, maintenance, communications and owner reporting."],
-        ["02", "Crecy Living", "Live", "Balance, payments, requests, documents and the property relationship on a resident's phone."],
-        ["03", "Crecy Owner", "Understand", "Finalized statements, recorded distributions and decisions tied to an owner's exact interests."],
-      ].map(([number, name, verb, detail], index) => (
+        ["Crecy OS", "Operate", "Portfolio, money, leases, maintenance, communications and owner reporting."],
+        ["Crecy Living", "Live", "Balance, payments, requests, documents and the property relationship on a resident's phone."],
+        ["Crecy Owner", "Understand", "Finalized statements, recorded distributions and decisions tied to an owner's exact interests."],
+      ].map(([name, verb, detail], index) => (
         <div key={name} className={"py-7 md:px-7 " + (index > 0 ? "border-t md:border-l md:border-t-0" : "")}>
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-primary">{number}</span>
-            <span className="text-xs font-medium text-muted-foreground">{verb}</span>
-          </div>
-          <h3 className="mt-8 text-2xl font-semibold tracking-[-0.035em]">{name}</h3>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground">{detail}</p>
+          <span className="text-xs font-medium text-white/55">{verb}</span>
+          <h3 className="mt-5 text-2xl font-medium tracking-[-0.035em] text-white">{name}</h3>
+          <p className="mt-3 text-sm leading-6 text-white/65">{detail}</p>
         </div>
       ))}
     </div>

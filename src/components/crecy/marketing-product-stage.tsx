@@ -3,12 +3,12 @@ import { cn } from "@/lib/utils";
 
 export function MarketingProductStage({
   label,
-  meta = "Representative demo data",
+  meta,
   children,
   className,
   chrome = "browser",
 }: {
-  label: ReactNode;
+  label?: ReactNode;
   meta?: ReactNode;
   children: ReactNode;
   className?: string;
@@ -16,10 +16,6 @@ export function MarketingProductStage({
 }) {
   return (
     <figure className={cn("relative", className)}>
-      <div className="mb-3 flex items-end justify-between gap-4 px-1">
-        <figcaption className="text-sm font-semibold tracking-[-0.01em] text-foreground">{label}</figcaption>
-        {meta ? <div className="text-xs text-muted-foreground">{meta}</div> : null}
-      </div>
       <div
         className={cn(
           "overflow-hidden border bg-card",
@@ -38,6 +34,12 @@ export function MarketingProductStage({
         ) : null}
         {children}
       </div>
+      {label || meta ? (
+        <figcaption className="mt-3 flex flex-col gap-1 px-1 text-xs leading-5 text-muted-foreground sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
+          {label ? <span className="font-medium text-foreground">{label}</span> : null}
+          {meta ? <span>{meta}</span> : null}
+        </figcaption>
+      ) : null}
     </figure>
   );
 }

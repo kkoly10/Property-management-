@@ -157,11 +157,16 @@ describe("claims on the public pages", () => {
     expect(copy).not.toMatch(/\b(now )?available in (the United States|Canada|Mexico)\b/i);
   });
 
-  it("labels every shared product stage as representative demo data by default", () => {
-    // File 18 §4: demo dashboards display a sample-data label. The default lives on the shared stage,
-    // so a new proof cannot silently omit it.
+  it("keeps demo disclosures explicit without repeating them around every shared product stage", () => {
+    // File 18 §4 still requires demo dashboards to disclose sample data. The shared stage is also used
+    // inside a disclosed photo/device composition, so forcing a default here creates duplicate labels
+    // and can place one above an overlapping device. Each complete proof now owns one explicit disclosure.
     const component = readFileSync(resolve(__dirname, "../../components/crecy/marketing-product-stage.tsx"), "utf8");
-    expect(component).toContain('meta = "Representative demo data"');
+    const proofs = readFileSync(resolve(__dirname, "../../components/marketing/product-proof.tsx"), "utf8");
+    expect(component).toContain("meta?: ReactNode");
+    expect(component).not.toContain('meta = "Representative demo data"');
+    expect(proofs.match(/meta="Representative demo data"/g) ?? []).toHaveLength(2);
+    expect(proofs).toContain("The resident interface uses representative sample data");
   });
 
   it("carries the operator-document disclaimer wherever documents are described to residents", () => {
