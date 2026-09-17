@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAXIMUM_SCANNABLE_BYTES,
+  getCloudmersiveScanConfig,
   getDocumentScanRelayConfig,
   getDocumentScanner,
+  readCloudmersiveVerdict,
   readScanVerdict,
   type DocumentObjectSource,
 } from "./scanner";
@@ -54,7 +56,17 @@ describe("getDocumentScanRelayConfig", () => {
   it("returns no scanner at all when nothing is configured, so the route can report 503", () => {
     delete process.env.CRECY_DOCUMENT_SCAN_RELAY_URL;
     delete process.env.CRECY_DOCUMENT_SCAN_RELAY_SECRET;
+    delete process.env.CLOUDMERSIVE_API_KEY;
     expect(getDocumentScanner()).toBeNull();
+  });
+
+  it("accepts a real Cloudmersive key and refuses placeholders or short values", () => {
+    process.env.CLOUDMERSIVE_API_KEY = "replace_me";
+    expect(getCloudmersiveScanConfig()).toBeNull();
+    process.env.CLOUDMERSIVE_API_KEY = "short";
+    expect(getCloudmersiveScanConfig()).toBeNull();
+    process.env.CLOUDMERSIVE_API_KEY = "cloudmersive-test-key-123456";
+    expect(getCloudmersiveScanConfig()).toEqual({ apiKey: "cloudmersive-test-key-123456" });
   });
 });
 
@@ -80,6 +92,28 @@ describe("readScanVerdict", () => {
 
   it("bounds the provider reference", () => {
     expect(readScanVerdict({ verdict: "clean", reference: "x".repeat(500) })?.reference).toHaveLength(200);
+  });
+});
+
+describe("readCloudmersiveVerdict", () => {
+  it("maps a literal CleanResult to Crecy's two-state verdict contract", () => {
+    expect(readCloudmersiveVerdict({ CleanResult: true, FoundViruses: [] })).toEqual({
+      verdict: "clean",
+      reference: null,
+    });
+    expect(readCloudmersiveVerdict({
+      CleanResult: false,
+      FoundViruses: [{ FileName: "eicar.com", VirusName: "EICAR-Test-File" }],
+    })).toEqual({
+      verdict: "infected",
+      reference: "EICAR-Test-File",
+    });
+  });
+
+  it("never invents a verdict from a malformed provider response", () => {
+    expect(readCloudmersiveVerdict(null)).toBeNull();
+    expect(readCloudmersiveVerdict({})).toBeNull();
+    expect(readCloudmersiveVerdict({ CleanResult: "true" })).toBeNull();
   });
 });
 
@@ -176,6 +210,74 @@ describe("getDocumentScanner().scan", () => {
     expect(await getDocumentScanner()!.scan(target, sourceOf(Buffer.from("x")))).toEqual({
       ok: false,
       errorCode: "SCANNER_UNREACHABLE",
+      retryable: true,
+    });
+  });
+});
+
+
+describe("Cloudmersive document scanning", () => {
+  const saved = { ...process.env };
+  beforeEach(() => {
+    delete process.env.CRECY_DOCUMENT_SCAN_RELAY_URL;
+    delete process.env.CRECY_DOCUMENT_SCAN_RELAY_SECRET;
+    process.env.CLOUDMERSIVE_API_KEY = "cloudmersive-test-key-123456";
+  });
+  afterEach(() => {
+    process.env = { ...saved };
+    vi.unstubAllGlobals();
+  });
+
+  it("uses Cloudmersive when no custom relay is configured and binds the verdict to the bytes read", async () => {
+    const bytes = Buffer.from("a signed lease");
+    const fetchMock = vi.fn(async () => relayResponse(200, { CleanResult: true, FoundViruses: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getDocumentScanner()!.scan(target, sourceOf(bytes));
+    expect(result).toEqual({
+      ok: true,
+      verdict: "clean",
+      observedSha256Hex: createHash("sha256").update(bytes).digest("hex"),
+      providerCode: "cloudmersive",
+      providerReference: null,
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.cloudmersive.com/virus/scan/file");
+    expect((init.headers as Record<string, string>).Apikey).toBe("cloudmersive-test-key-123456");
+    expect(init.body).toBeInstanceOf(FormData);
+  });
+
+  it("records an infected verdict and a bounded provider reference", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => relayResponse(200, {
+      CleanResult: false,
+      FoundViruses: [{ VirusName: "X".repeat(500) }],
+    })));
+    const result = await getDocumentScanner()!.scan(target, sourceOf(Buffer.from("eicar")));
+    expect(result).toMatchObject({
+      ok: true,
+      verdict: "infected",
+      providerCode: "cloudmersive",
+    });
+    if (result.ok) expect(result.providerReference).toHaveLength(200);
+  });
+
+  it("keeps provider credential, quota, and outage failures retryable", async () => {
+    for (const status of [401, 402, 403, 429, 500]) {
+      vi.stubGlobal("fetch", vi.fn(async () => relayResponse(status, null)));
+      expect(await getDocumentScanner()!.scan(target, sourceOf(Buffer.from("x"))), String(status)).toEqual({
+        ok: false,
+        errorCode: "SCANNER_HTTP_" + status,
+        retryable: true,
+      });
+    }
+  });
+
+  it("does not release a document on an unreadable Cloudmersive response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => relayResponse(200, { Successful: true })));
+    expect(await getDocumentScanner()!.scan(target, sourceOf(Buffer.from("x")))).toEqual({
+      ok: false,
+      errorCode: "UNREADABLE_SCAN_VERDICT",
       retryable: true,
     });
   });
