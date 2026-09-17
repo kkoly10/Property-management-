@@ -9,7 +9,7 @@ const staticRoutes: Array<{ path: string; expect?: RegExp }> = [
   { path: "/signup" },
   // Crecy Living (resident PWA)
   { path: "/home", expect: /Welcome home/i },
-  { path: "/documents", expect: /Delivered to you/i },
+  { path: "/documents", expect: /Acknowledge receipt/i },
   { path: "/maintenance" },
   { path: "/maintenance/new" },
   { path: "/messages" },
@@ -95,17 +95,18 @@ test.describe("dynamic detail routes do not crash", () => {
 test.describe("document delivery & acknowledgement UI", () => {
   test("resident /documents shows a delivered document and an acknowledge control", async ({ page }) => {
     await page.goto("/documents");
-    await expect(page.getByRole("heading", { name: /Delivered to you/i })).toBeVisible();
-    await expect(page.getByText(/Crecy Living/i)).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: /Documents/i })).toBeVisible();
+    await expect(page.getByLabel(/Crecy Living/i).first()).toBeVisible();
     // Preview delivery card + acknowledge affordance.
     await expect(page.getByRole("button", { name: /Acknowledge receipt/i }).first()).toBeVisible();
-    await expect(page.getByText(/Awaiting acknowledgement|Acknowledged/i).first()).toBeVisible();
+    // The badge still states delivery state; the wording moved to "Awaiting your response".
+    await expect(page.getByText(/Awaiting your response|Acknowledged|Signed/i).first()).toBeVisible();
   });
 
   test("owner /owner/documents shows the owner-scoped delivery view", async ({ page }) => {
     await page.goto("/owner/documents");
     await expect(page.getByRole("heading", { name: /Delivered to you/i })).toBeVisible();
-    await expect(page.getByText(/Crecy Owner/i)).toBeVisible();
+    await expect(page.getByLabel(/Crecy Owner/i).first()).toBeVisible();
   });
 
   test("operator /app/documents shows the register and upload form", async ({ page }) => {
@@ -118,7 +119,7 @@ test.describe("document delivery & acknowledgement UI", () => {
     await page.goto("/home");
     await page.getByRole("link", { name: /Documents/i }).first().click();
     await expect(page).toHaveURL(/\/documents$/);
-    await expect(page.getByRole("heading", { name: /Delivered to you/i })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: /Documents/i })).toBeVisible();
   });
 });
 

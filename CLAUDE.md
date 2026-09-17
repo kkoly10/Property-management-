@@ -127,8 +127,13 @@ npm run typecheck    # tsc --noEmit
 npm run test         # vitest (unit + validation schema tests)
 npm run test:db      # node scripts/validate-schema.mjs — embedded PGlite: replays every
                      # migration + drives RPCs to prove schema, RLS, and command behavior
-npm run check        # lint + typecheck + test + test:db + build — the real gate; run it before every PR
+npm run check       # lint + typecheck + test + test:db + schedule:check + migrations:check +
+                     # build + test:e2e — the real gate; run it before every PR
 ```
+
+`npm run check` ends with `test:e2e`, which drives a real browser over the built app. This container
+ships Chromium at `/opt/pw-browsers/chromium` and the Playwright configs use it when that file exists;
+on a machine without it, run `npx playwright install chromium` once and Playwright uses its own copy.
 
 Unit/validation tests are **Vitest** (`src/**/*.test.ts`), not Jest. There is no configured CI that gates merges or auto-applies migrations, so `npm run check` passing locally is the gate. To run one validation file: `npx vitest run src/lib/validation/<name>.test.ts`.
 

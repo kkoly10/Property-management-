@@ -1,5 +1,17 @@
 import { defineConfig } from "@playwright/test";
 
+import { existsSync } from "node:fs";
+
+/**
+ * The container image this repo is developed in ships a preinstalled Chromium at a fixed path. A
+ * laptop has no such file and uses Playwright's own managed download instead. Pinning the container
+ * path unconditionally is fine while the suite is run by hand, but `npm run check` now runs it, so
+ * an unconditional path would fail the gate on every machine that is not this container. Use the
+ * preinstalled binary when it is actually present, and otherwise let Playwright resolve its own.
+ */
+const preinstalledChromium = process.env.PLAYWRIGHT_CHROMIUM_PATH ?? "/opt/pw-browsers/chromium";
+const launchOptions = existsSync(preinstalledChromium) ? { executablePath: preinstalledChromium } : {};
+
 // Connected-mode E2E: drives the REAL app against a live Supabase project
 // (auth + RPCs + RLS + ledger), unlike the demo-mode smoke suite (playwright.config.ts).
 //
@@ -43,7 +55,7 @@ export default defineConfig({
     headless: true,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
-    launchOptions: { executablePath: "/opt/pw-browsers/chromium" },
+    launchOptions,
   },
   webServer: {
     command: "npx next start -p 3200 -H 127.0.0.1",
