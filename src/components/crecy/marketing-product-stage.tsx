@@ -14,8 +14,13 @@ export function MarketingProductStage({
   className?: string;
   chrome?: "browser" | "device" | "none";
 }) {
+  // `min-w-0` matters here: this figure is usually a grid item, and a grid item defaults to
+  // `min-width: auto`, so it is sized by the intrinsic width of the widest table inside it rather
+  // than by its column. Without it a 640px register made /product render 694px wide on a 390px
+  // phone instead of scrolling the table. It only permits shrinking — where the content already
+  // fits, nothing moves.
   return (
-    <figure className={cn("relative", className)}>
+    <figure className={cn("relative min-w-0 max-w-full", className)}>
       <div
         className={cn(
           "overflow-hidden border bg-card",

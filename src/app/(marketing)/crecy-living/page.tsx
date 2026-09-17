@@ -138,7 +138,7 @@ export default function CrecyLivingPage() {
             </dl>
           </div>
 
-          <div className="mx-auto w-full max-w-md lg:sticky lg:top-28">
+          <div className="mx-auto w-full min-w-0 max-w-md lg:sticky lg:top-28">
             <LivingHomeProof />
             <p className="mt-4 text-xs leading-5 text-muted-foreground">Representative sample data shown in the resident interface.</p>
           </div>

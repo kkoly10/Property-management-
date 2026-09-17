@@ -127,7 +127,7 @@ export function LivingHomeProof({ className = "" }: { className?: string }) {
       className={className}
     >
       <SurfaceTheme surface="living" className="bg-[var(--surface-canvas)]">
-        <div className="mx-auto max-w-[390px] p-4">
+        <div className="mx-auto w-full max-w-[390px] p-4">
           <div className="flex items-center justify-between pb-4">
             <Wordmark product="Living" className="max-w-[6.6rem]" />
             <span className="h-7 w-7 rounded-full border" />

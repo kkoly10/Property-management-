@@ -49,7 +49,12 @@ export function PortfolioRegisterProof() {
           ]}
         />
 
-        <div className="mt-4 overflow-x-auto border-y bg-card">
+        <div
+          role="region"
+          aria-label="Portfolio register, scrollable"
+          tabIndex={0}
+          className="mt-4 min-w-0 max-w-full overflow-x-auto border-y bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
           <table className="w-full min-w-[640px] border-collapse text-left text-xs">
             <thead className="border-b bg-[var(--surface-subtle)] text-muted-foreground">
               <tr>
@@ -108,7 +113,12 @@ export function FinanceDeskProof() {
           ))}
         </div>
 
-        <div className="mt-4 overflow-x-auto border-y bg-card">
+        <div
+          role="region"
+          aria-label="Maintenance record, scrollable"
+          tabIndex={0}
+          className="mt-4 min-w-0 max-w-full overflow-x-auto border-y bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
           <table className="w-full min-w-[680px] border-collapse text-left text-xs">
             <thead className="border-b bg-[var(--surface-subtle)] text-muted-foreground">
               <tr>
@@ -197,7 +207,12 @@ export function RecordContinuityProof() {
   ];
 
   return (
-    <div className="overflow-x-auto border-y">
+    <div
+      role="region"
+      aria-label="Record continuity, scrollable"
+      tabIndex={0}
+      className="min-w-0 max-w-full overflow-x-auto border-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+    >
       <table className="w-full min-w-[760px] border-collapse text-left text-sm">
         <thead className="border-b text-xs text-muted-foreground">
           <tr>

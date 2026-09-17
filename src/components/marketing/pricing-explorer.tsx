@@ -44,7 +44,7 @@ export function PricingExplorer() {
   return (
     <div>
       <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div role="group" aria-label="Billing period" className="inline-flex rounded-lg border bg-card p-1">
+        <div role="group" aria-label="Billing period" className="inline-flex max-w-full flex-wrap rounded-lg border bg-card p-1">
             {(["monthly", "annual"] as BillingPeriod[]).map((value) => (
               <button
                 key={value}
@@ -60,7 +60,7 @@ export function PricingExplorer() {
           ))}
         </div>
 
-        <div role="group" aria-label="Country price book" className="inline-flex rounded-lg border bg-card p-1">
+        <div role="group" aria-label="Country price book" className="inline-flex max-w-full flex-wrap rounded-lg border bg-card p-1">
             {BOOKS.map((value) => (
               <button
                 key={value}
@@ -163,7 +163,7 @@ export function PricingExplorer() {
         role="region"
         aria-label="Plan feature comparison, scrollable"
         tabIndex={0}
-        className="mt-4 overflow-x-auto border-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:mt-8"
+        className="mt-4 min-w-0 max-w-full overflow-x-auto border-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:mt-8"
       >
         <table className="w-full min-w-[44rem] border-collapse text-sm">
           <caption className="sr-only">Feature comparison across the Free, Starter, Growth and Pro plans</caption>
