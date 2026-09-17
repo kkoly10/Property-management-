@@ -26,7 +26,7 @@ export default function SecurityPage() {
       <Section className="!pb-16 !pt-14 sm:!pt-20 lg:!pb-24 lg:!pt-24">
         <div className="grid items-start gap-12 lg:grid-cols-[0.7fr_1.3fr] lg:gap-16">
           <div className="max-w-xl lg:pt-10">
-            <h1 className="text-[3rem] font-medium leading-[0.94] tracking-[-0.065em] text-balance sm:text-[4.6rem] lg:text-[5.15rem]">
+            <h1 className="text-[3rem] font-medium leading-[0.94] tracking-[-0.065em] text-balance sm:text-[4.6rem] lg:text-[clamp(3.9rem,6.44vw,5.15rem)]">
               Every record has a boundary.
             </h1>
             <p className="mt-7 max-w-lg text-lg leading-8 text-muted-foreground text-pretty sm:text-xl sm:leading-9">
