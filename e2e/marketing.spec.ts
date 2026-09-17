@@ -241,3 +241,81 @@ test.describe("indexing policy", () => {
     }
   });
 });
+
+/**
+ * The shared header under 200% text-only enlargement.
+ *
+ * Browsers expose this as "zoom text only": font sizes scale, page zoom does not, so the viewport
+ * stays the width it was. Every length in the header is rem-derived, so doubling the root font size
+ * reproduces that condition faithfully — and a px-specified length (the wordmark cap) correctly stays
+ * put, which is what a real text zoom also does to a logo. Chromium exposes no text-only zoom switch
+ * to automation, so this is the closest faithful harness rather than a convenience.
+ *
+ * The assertion is scoped to the header on purpose. Page content in this family still overflows at
+ * doubled text in places — oversized `clamp()` headlines whose longest word cannot fit a phone, and
+ * rem-capped device mock-ups — and that is a separate, wider piece of work. Asserting the whole
+ * document here would either fail for reasons this header cannot fix or quietly encode those bugs.
+ */
+const TEXT_ZOOM_PX = 32; // 200% of the 16px root.
+
+async function enlargeText(page: Page) {
+  await page.evaluate((px) => { document.documentElement.style.fontSize = `${px}px`; }, TEXT_ZOOM_PX);
+  await page.waitForTimeout(150);
+}
+
+async function headerOverflow(page: Page) {
+  return page.evaluate(() => {
+    // The site header is the banner landmark. A bare `header *` also matches the <header> elements
+    // inside the product mock-ups, which are decorative screenshots of the app and legitimately wider
+    // than the phone they are drawn on — measuring those reports a failure the real header does not have.
+    const banner = document.querySelector<HTMLElement>("body > header, header[class*='sticky']");
+    if (!banner) throw new Error("site header (banner) not found");
+    const viewport = document.documentElement.clientWidth;
+    let worst = 0;
+    for (const element of [banner, ...Array.from(banner.querySelectorAll<HTMLElement>("*"))]) {
+      const rect = element.getBoundingClientRect();
+      if (!rect.width) continue;
+      worst = Math.max(worst, Math.round(rect.right - viewport), Math.round(-rect.left));
+    }
+    return worst;
+  });
+}
+
+test.describe("shared header at 200% text-only enlargement", () => {
+  for (const width of [1440, 1024, 768, 390]) {
+    test(`header fits the viewport and keeps every control reachable at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/");
+      await enlargeText(page);
+
+      expect(await headerOverflow(page), `header exceeds the viewport at ${width}px with doubled text`).toBeLessThanOrEqual(1);
+
+      const header = page.getByRole("banner");
+      await expect(header.getByRole("link", { name: "Crecy home" })).toBeVisible();
+
+      // Below the desktop crossover the destinations live behind the disclosure, which must still open.
+      const desktopNav = header.getByRole("navigation", { name: "Primary" });
+      if (!(await desktopNav.isVisible())) {
+        await page.locator('label[for="marketing-menu"]').click();
+      }
+      const menu = (await desktopNav.isVisible())
+        ? desktopNav
+        : header.getByRole("navigation", { name: "Primary mobile" });
+
+      for (const label of ["Product", "Pricing", "Crecy Living", "Security", "Pilot"]) {
+        await expect(menu.getByRole("link", { name: label }), `${label} unreachable at ${width}px`).toBeVisible();
+      }
+      await expect(header.getByRole("link", { name: "Sign in" }).first()).toBeVisible();
+      await expect(header.getByRole("link", { name: "Start free" }).first()).toBeVisible();
+    });
+  }
+
+  test("the header stays inside the viewport on every public route with doubled text", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    for (const path of ROUTES) {
+      await page.goto(path);
+      await enlargeText(page);
+      expect(await headerOverflow(page), `${path}: header exceeds the viewport with doubled text`).toBeLessThanOrEqual(1);
+    }
+  });
+});
