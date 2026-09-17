@@ -6,6 +6,14 @@ Guidance for Claude Code (claude.ai/code) when working in this repository. Read 
 
 In that order, every time. Each step exists because skipping it produced a real defect in this codebase.
 
+**The rule, stated plainly: always recon first, always research the web to support your reasoning, always
+run an adversarial pass — and implement only the version that survives it.** None of the three is optional
+and none is satisfied by intention. Recon means commands you ran and output you saw, not recollection of
+the repository. Research means fetching the vendor's current documentation, the spec, or the platform's
+actual behaviour rather than reciting it from memory — the details that bite (a CSS sizing rule, an API's
+error contract, a platform limit) are exactly the ones memory gets subtly wrong. The adversarial pass
+happens while the plan is still text, and the thing you build is its survivor, not its first draft.
+
 1. **Recon the actual state first.** Before forming a question, enumerate what is really there —
    `grep` the whole repository, list the routes that exist, read the migration rather than the spec doc.
    Recon is cheap and it changes the question. Two examples from this repo: the onboarding form
@@ -15,8 +23,12 @@ In that order, every time. Each step exists because skipping it produced a real 
    only explicable after finding that the Vercel↔Supabase integration, not a person, had created them.
 
 2. **Research second, once you know what you need.** External facts — a vendor's API contract, a DNS
-   requirement, a platform's behavior — get looked up, not recalled. Research before recon is research
-   against an imagined problem. Research after it is narrow and answerable.
+   requirement, a platform's behavior, a CSS or browser rule — get **looked up on the web**, not recalled.
+   Research before recon is research against an imagined problem. Research after it is narrow and
+   answerable. A worked example: `/product` and `/pilot` rendered at nearly twice the viewport width on a
+   phone, and the cause was not in any page's markup — a grid item defaults to `min-width: auto`, so a
+   figure containing a wide table is sized by that table instead of scrolling it. Reading the sizing rule
+   named the fix (`min-w-0`) in one step; guessing at the markup would not have.
 
 3. **Reason from what recon and research actually produced**, and write the reasoning down. The
    two-sending-subdomain decision for transactional mail is not a preference: it follows from the fact

@@ -82,3 +82,49 @@ describe("secondary marketing route design contract", () => {
     expect(living).not.toContain("absolute inset-x-0 bottom-0");
   });
 });
+
+/**
+ * Responsive integrity of the marketing family.
+ *
+ * Both defects this guards against were live on the branch and invisible to every source-text
+ * assertion above, because both are layout behaviour rather than markup vocabulary:
+ *
+ *  - A horizontally scrollable element that is also a grid item defaults to `min-width: auto`, so it
+ *    is sized by its widest table instead of scrolling it. /pilot rendered 780px wide on a 390px
+ *    phone and /product 694px, in both cases doubling the page instead of scrolling one table.
+ *  - A scroll container with no `tabIndex` cannot be reached by keyboard at all, so on a phone the
+ *    table is simply unreadable without a pointer. `pricing-explorer` already solved this; the rest
+ *    of the family had not followed it.
+ */
+describe("marketing scroll containers stay constrained and reachable", () => {
+  const sources = [
+    "components/marketing/security-architecture.tsx",
+    "components/marketing/pilot-operating-story.tsx",
+    "components/marketing/operating-story.tsx",
+    "components/marketing/pricing-explorer.tsx",
+    "components/crecy/marketing-product-stage.tsx",
+  ].map((rel) => [rel, readFileSync(resolve(__dirname, "../../", rel), "utf8")] as const);
+
+  it("gives every horizontal scroll container a width floor and a keyboard stop", () => {
+    for (const [name, source] of sources) {
+      const tags = source.match(/<(?:div|figure)\b[^>]*overflow-x-auto[^>]*>/g) ?? [];
+      for (const tag of tags) {
+        expect(tag, `${name}: scroll container must carry min-w-0 so it shrinks instead of widening the page`).toContain("min-w-0");
+        expect(tag, `${name}: scroll container must be keyboard reachable`).toContain("tabIndex={0}");
+        expect(tag, `${name}: scroll container needs an accessible name`).toContain("aria-label");
+      }
+    }
+  });
+
+  it("keeps the shared product stage able to shrink inside a grid column", () => {
+    const stage = readFileSync(resolve(__dirname, "../../components/crecy/marketing-product-stage.tsx"), "utf8");
+    expect(stage).toContain('cn("relative min-w-0 max-w-full", className)');
+  });
+
+  it("does not put the security projections three-across while the figure is still narrow", () => {
+    const architecture = readFileSync(resolve(__dirname, "../../components/marketing/security-architecture.tsx"), "utf8");
+    // At md and lg the figure shares the hero row, leaving ~134px of text per cell and a five-line wrap.
+    expect(architecture).not.toContain('className="grid border-b md:grid-cols-3"');
+    expect(architecture).toContain('className="grid border-b xl:grid-cols-3"');
+  });
+});

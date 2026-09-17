@@ -163,7 +163,7 @@ export function PricingExplorer() {
         role="region"
         aria-label="Plan feature comparison, scrollable"
         tabIndex={0}
-        className="mt-4 overflow-x-auto border-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:mt-8"
+        className="mt-4 min-w-0 max-w-full overflow-x-auto border-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:mt-8"
       >
         <table className="w-full min-w-[44rem] border-collapse text-sm">
           <caption className="sr-only">Feature comparison across the Free, Starter, Growth and Pro plans</caption>

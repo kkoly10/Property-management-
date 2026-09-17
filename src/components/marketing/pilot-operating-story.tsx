@@ -38,7 +38,7 @@ export function PilotReadinessBoard() {
           <p className="mt-3 text-[2.4rem] font-normal leading-none tracking-[-0.05em]">72%</p>
           <div className="mt-5 h-1.5 bg-muted"><div className="h-full w-[72%] bg-primary" /></div>
           <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            The portfolio is usable now. Five items remain visible before every configured workflow can run.
+            The portfolio is usable now. Four items remain open before every configured workflow can run.
           </p>
         </div>
 
@@ -79,7 +79,7 @@ export function PilotActivationFlow() {
 
 export function ImportReadinessProof() {
   return (
-    <figure className="border-y bg-card">
+    <figure className="min-w-0 max-w-full border-y bg-card">
       <div className="flex flex-col gap-2 border-b px-5 py-4 sm:flex-row sm:items-end sm:justify-between sm:px-6">
         <div>
           <p className="text-xs text-muted-foreground">Validated import · sample portfolio</p>
@@ -87,7 +87,12 @@ export function ImportReadinessProof() {
         </div>
         <p className="text-xs text-muted-foreground">No silent write on exception</p>
       </div>
-      <div className="overflow-x-auto">
+      <div
+        role="region"
+        aria-label="Validated import result, scrollable"
+        tabIndex={0}
+        className="min-w-0 max-w-full overflow-x-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
         <table className="w-full min-w-[760px] border-collapse text-left text-sm">
           <thead className="border-b text-xs text-muted-foreground">
             <tr>
