@@ -149,7 +149,7 @@ export async function runDocumentScanDispatch(
     return {
       ok: false,
       status: 503,
-      error: "No document scanner is configured. Set CRECY_DOCUMENT_SCAN_RELAY_URL and CRECY_DOCUMENT_SCAN_RELAY_SECRET.",
+      error: "No document scanner is configured. Set CLOUDMERSIVE_API_KEY or CRECY_DOCUMENT_SCAN_RELAY_URL and CRECY_DOCUMENT_SCAN_RELAY_SECRET.",
     };
   }
 
