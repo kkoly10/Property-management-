@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Section, StatementList } from "@/components/marketing/sections";
 import { PricingExplorer } from "@/components/marketing/pricing-explorer";
 import { marketingMetadata } from "@/lib/marketing/metadata";
-import { GROWTH_TRIAL_COPY, PAYMENT_DISCLOSURE } from "@/lib/marketing/pricing";
+import { CUSTOM_AGREEMENT_UNITS, GROWTH_TRIAL_COPY, PAYMENT_DISCLOSURE } from "@/lib/marketing/pricing";
 
 export const metadata: Metadata = marketingMetadata({
   title: "Pricing for the United States, Canada and Mexico",
@@ -19,7 +19,7 @@ const FAQ: { question: string; answer: string }[] = [
   { question: "Does the trial need a card?", answer: "No. The Growth trial runs for 30 days without a card. It does not bypass connected-account verification or the production payment gates, so online payment collection still requires that verification to complete." },
   { question: "Does Crecy take a percentage of rent?", answer: "No. Crecy charges no transaction or application fee on resident rent, and there is no mandatory resident convenience fee. You pay for the software; rent moves separately." },
   { question: "Which currency am I billed in?", answer: "The currency of your country's price book — USD, CAD or MXN. Crecy publishes localized price books rather than converting a single currency at checkout." },
-  { question: "What if I run more than 500 units?", answer: "That is a custom agreement rather than a listed plan. Join the pilot and tell us the shape of the portfolio." },
+  { question: `What if I run more than ${CUSTOM_AGREEMENT_UNITS} units?`, answer: "That is a custom agreement rather than a listed plan. Join the pilot and tell us the shape of the portfolio." },
 ];
 
 export default function PricingPage() {
