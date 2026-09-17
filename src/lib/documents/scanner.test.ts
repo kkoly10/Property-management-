@@ -281,4 +281,25 @@ describe("Cloudmersive document scanning", () => {
       retryable: true,
     });
   });
+
+  it("treats a file-specific provider rejection as non-retryable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => relayResponse(413, null)));
+    expect(await getDocumentScanner()!.scan(target, sourceOf(Buffer.from("x")))).toEqual({
+      ok: false,
+      errorCode: "SCANNER_HTTP_413",
+      retryable: false,
+    });
+  });
+
+  it("keeps the custom relay as the explicit override when both providers are configured", async () => {
+    process.env.CRECY_DOCUMENT_SCAN_RELAY_URL = "https://scanner.example.com/scan";
+    process.env.CRECY_DOCUMENT_SCAN_RELAY_SECRET = "0123456789abcdef0123456789abcdef";
+    const fetchMock = vi.fn(async () => relayResponse(200, { verdict: "clean", reference: "relay-wins" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const scanner = getDocumentScanner();
+    expect(scanner?.providerCode).toBe("relay");
+    await scanner!.scan(target, sourceOf(Buffer.from("x")));
+    expect(fetchMock.mock.calls[0][0]).toBe("https://scanner.example.com/scan");
+  });
 });
