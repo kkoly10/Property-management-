@@ -35,12 +35,19 @@ describe("secondary marketing route design contract", () => {
     expect(living).toContain("Crecy has not verified their legal sufficiency");
   });
 
-  it("makes Security a control architecture instead of a capability wall", () => {
-    expect(security).toContain("<AccessBoundaryMap");
-    expect(security).toContain("<ControlStack");
-    expect(security).toContain("<FinancialIntegrityRail");
-    expect(security).toContain("<DocumentReleaseRail");
+  it("makes Security a property-specific control architecture instead of numbered capability rails", () => {
+    expect(security).toContain("<PropertyAccessBoundary");
+    expect(security).toContain("<RelationshipProjectionProof");
+    expect(security).toContain("<LedgerCorrectionProof");
+    expect(security).toContain("<DocumentCustodyProof");
+    expect(security).toContain("<PaymentBoundaryProof");
+    expect(security).toContain("<SupportAccessRecord");
     expect(security).toContain("<AssuranceLedger");
+    expect(security).not.toContain("<AccessBoundaryMap");
+    expect(security).not.toContain("<ControlStack");
+    expect(security).not.toContain("<FinancialIntegrityRail");
+    expect(security).not.toContain("<DocumentReleaseRail");
+    expect(security).not.toContain("text-sm font-medium text-primary");
     expect(security).not.toContain("next/image");
   });
 
