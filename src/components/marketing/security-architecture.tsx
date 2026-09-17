@@ -40,9 +40,9 @@ export function PropertyAccessBoundary() {
           <p className="text-xs font-medium text-muted-foreground">Property record</p>
           <p className="mt-2 text-2xl font-semibold tracking-[-0.04em]">Maple Court</p>
           <dl className="mt-7 grid grid-cols-2 gap-x-6 gap-y-5 text-sm">
-            <div><dt className="text-muted-foreground">Organization</dt><dd className="mt-1 font-medium">Crecy demo operator</dd></div>
-            <div><dt className="text-muted-foreground">Accounting book</dt><dd className="mt-1 font-medium">USD · one property</dd></div>
-            <div><dt className="text-muted-foreground">Units</dt><dd className="mt-1 font-medium">48</dd></div>
+            <div><dt className="text-muted-foreground">Organization</dt><dd className="mt-1 font-medium">Maple Property Group</dd></div>
+            <div><dt className="text-muted-foreground">Accounting book</dt><dd className="mt-1 font-medium">Toronto · CAD</dd></div>
+            <div><dt className="text-muted-foreground">Units</dt><dd className="mt-1 font-medium">24</dd></div>
             <div><dt className="text-muted-foreground">Access rule</dt><dd className="mt-1 font-medium">Relationship + scope</dd></div>
           </dl>
         </div>
@@ -78,16 +78,16 @@ export function RelationshipProjectionProof() {
 
 export function LedgerCorrectionProof() {
   const entries = [
-    ["Sep 01", "Resident rent", "+$1,850.00", "Posted"],
-    ["Sep 04", "Repair expense", "−$420.00", "Posted"],
-    ["Sep 05", "Repair reversal", "+$420.00", "Reversal"],
-    ["Sep 05", "Corrected repair", "−$395.00", "Posted"],
+    ["Sep 01", "Resident rent", "+CA$1,850.00", "Posted"],
+    ["Sep 04", "Repair expense", "−CA$420.00", "Posted"],
+    ["Sep 05", "Repair reversal", "+CA$420.00", "Reversal"],
+    ["Sep 05", "Corrected repair", "−CA$395.00", "Posted"],
   ] as const;
   return (
     <figure className="border-y bg-card">
-      <div className="flex flex-col gap-5 border-b px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-7"><div><p className="text-xs text-muted-foreground">Maple Court · Operating book</p><p className="mt-1 text-xl font-semibold tracking-[-0.03em]">September ledger activity</p></div><div className="text-sm sm:text-right"><p className="text-muted-foreground">Currency</p><p className="mt-1 font-semibold">USD</p></div></div>
+      <div className="flex flex-col gap-5 border-b px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-7"><div><p className="text-xs text-muted-foreground">Maple Court · Operating book</p><p className="mt-1 text-xl font-semibold tracking-[-0.03em]">September ledger activity</p></div><div className="text-sm sm:text-right"><p className="text-muted-foreground">Currency</p><p className="mt-1 font-semibold">CAD</p></div></div>
       <div className="overflow-x-auto"><table className="w-full min-w-[680px] border-collapse text-left text-sm"><thead className="border-b text-xs text-muted-foreground"><tr><th className="px-5 py-3 font-medium sm:px-7">Date</th><th className="px-5 py-3 font-medium">Entry</th><th className="px-5 py-3 text-right font-medium">Amount</th><th className="px-5 py-3 font-medium sm:pr-7">State</th></tr></thead><tbody className="divide-y">{entries.map(([date, entry, amount, state]) => <tr key={`${date}-${entry}`}><td className="px-5 py-4 text-muted-foreground sm:px-7">{date}</td><td className="px-5 py-4 font-medium">{entry}</td><td className="px-5 py-4 text-right font-mono tabular-nums">{amount}</td><td className="px-5 py-4 text-muted-foreground sm:pr-7">{state}</td></tr>)}</tbody></table></div>
-      <div className="grid border-t sm:grid-cols-[1fr_auto] sm:items-center"><div className="px-5 py-5 sm:px-7"><p className="font-semibold">The original repair posting still exists.</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Correction is represented by a reversal and replacement rather than a quiet overwrite.</p></div><div className="border-t px-5 py-5 sm:border-l sm:border-t-0 sm:px-7 sm:text-right"><p className="text-xs text-muted-foreground">Demonstration net activity</p><p className="mt-1 text-2xl font-semibold tabular-nums">$1,455.00</p></div></div>
+      <div className="grid border-t sm:grid-cols-[1fr_auto] sm:items-center"><div className="px-5 py-5 sm:px-7"><p className="font-semibold">The original repair posting still exists.</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Correction is represented by a reversal and replacement rather than a quiet overwrite.</p></div><div className="border-t px-5 py-5 sm:border-l sm:border-t-0 sm:px-7 sm:text-right"><p className="text-xs text-muted-foreground">Demonstration net activity</p><p className="mt-1 text-2xl font-semibold tabular-nums">CA$1,455.00</p></div></div>
       <figcaption className="border-t px-5 py-3 text-xs leading-5 text-muted-foreground sm:px-7">Representative demonstration data; not a customer financial record.</figcaption>
     </figure>
   );
