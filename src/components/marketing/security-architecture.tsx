@@ -51,9 +51,10 @@ export function PropertyAccessBoundary() {
           <div><dt className="text-muted-foreground">Access rule</dt><dd className="mt-1 font-medium">Relationship + scope</dd></div>
         </dl>
       </div>
-      {/* Three-across only once the figure is genuinely wide. Between 768px and 1279px the figure
-          sits in the hero's narrower column, where three columns left 134px of text and a five-line
-          wrap; stacked, the same copy reads in one or two lines. */}
+      {/* Three-across only once the figure is genuinely wide, for two different reasons either side
+          of 1024px. From 768px to 1023px the figure spans the section but three columns still leave
+          ~195px of text each; from 1024px it also moves into the hero's narrower column, which cut
+          that to ~134px and a five-line wrap. Stacked, the same copy reads in one or two lines. */}
       <div className="grid border-b xl:grid-cols-3">
         <BoundaryCell title="Operator" detail="Sees the permitted operational record for the active organization and property scope." />
         <BoundaryCell title="Resident" detail="Receives only the tenancy-facing projection for their own active relationship." quiet />

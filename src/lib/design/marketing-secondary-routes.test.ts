@@ -86,44 +86,56 @@ describe("secondary marketing route design contract", () => {
 /**
  * Responsive integrity of the marketing family.
  *
- * Both defects this guards against were live on the branch and invisible to every source-text
- * assertion above, because both are layout behaviour rather than markup vocabulary:
+ * Scope note, because the first version of this block overstated itself. The behavioural guard for
+ * horizontal overflow already exists and is stronger than anything source text can assert:
+ * `e2e/marketing.spec.ts` drives a real browser over every public route at 375px and 1440px and
+ * fails on `scrollWidth > clientWidth`. It is not part of `npm run check`, which is why two pages
+ * shipped at roughly twice the viewport width without the gate noticing.
  *
- *  - A horizontally scrollable element that is also a grid item defaults to `min-width: auto`, so it
- *    is sized by its widest table instead of scrolling it. /pilot rendered 780px wide on a 390px
- *    phone and /product 694px, in both cases doubling the page instead of scrolling one table.
- *  - A scroll container with no `tabIndex` cannot be reached by keyboard at all, so on a phone the
- *    table is simply unreadable without a pointer. `pricing-explorer` already solved this; the rest
- *    of the family had not followed it.
+ * What source text CAN usefully pin, and what is asserted below:
+ *
+ *  - Keyboard reachability of each scroll container. A container with no `tabIndex` cannot be
+ *    reached by keyboard at all, so on a phone the table inside it is unreadable without a pointer.
+ *    No other test covers this.
+ *  - A width floor on the two NON-scrolling wrappers that are grid items. This is the constraint
+ *    that actually mattered: per CSS Grid the automatic minimum size of a scroll container is
+ *    already 0, so `min-w-0` on the scrolling element changes nothing — it is the enclosing figure,
+ *    which does not scroll, that was being sized by the table it wraps.
  */
-describe("marketing scroll containers stay constrained and reachable", () => {
+describe("marketing scroll containers stay reachable and their wrappers can shrink", () => {
   const sources = [
     "components/marketing/security-architecture.tsx",
     "components/marketing/pilot-operating-story.tsx",
     "components/marketing/operating-story.tsx",
     "components/marketing/pricing-explorer.tsx",
-    "components/crecy/marketing-product-stage.tsx",
   ].map((rel) => [rel, readFileSync(resolve(__dirname, "../../", rel), "utf8")] as const);
 
-  it("gives every horizontal scroll container a width floor and a keyboard stop", () => {
+  it("gives every horizontal scroll container a keyboard stop and an accessible name", () => {
+    let checked = 0;
     for (const [name, source] of sources) {
       const tags = source.match(/<(?:div|figure)\b[^>]*overflow-x-auto[^>]*>/g) ?? [];
+      expect(tags.length, `${name}: expected to find scroll containers`).toBeGreaterThan(0);
       for (const tag of tags) {
-        expect(tag, `${name}: scroll container must carry min-w-0 so it shrinks instead of widening the page`).toContain("min-w-0");
         expect(tag, `${name}: scroll container must be keyboard reachable`).toContain("tabIndex={0}");
         expect(tag, `${name}: scroll container needs an accessible name`).toContain("aria-label");
+        checked += 1;
       }
     }
+    // Guards that match nothing pass vacuously; this one is worthless unless it saw every container.
+    expect(checked).toBe(8);
   });
 
-  it("keeps the shared product stage able to shrink inside a grid column", () => {
+  it("keeps the non-scrolling wrappers able to shrink inside a grid column", () => {
     const stage = readFileSync(resolve(__dirname, "../../components/crecy/marketing-product-stage.tsx"), "utf8");
     expect(stage).toContain('cn("relative min-w-0 max-w-full", className)');
+    const pilot = readFileSync(resolve(__dirname, "../../components/marketing/pilot-operating-story.tsx"), "utf8");
+    expect(pilot).toContain('<figure className="min-w-0 max-w-full border-y bg-card">');
   });
 
   it("does not put the security projections three-across while the figure is still narrow", () => {
     const architecture = readFileSync(resolve(__dirname, "../../components/marketing/security-architecture.tsx"), "utf8");
-    // At md and lg the figure shares the hero row, leaving ~134px of text per cell and a five-line wrap.
+    // Three columns left ~195px of text from 768px and ~134px from 1024px, where the figure also
+    // moves into the hero's narrower column.
     expect(architecture).not.toContain('className="grid border-b md:grid-cols-3"');
     expect(architecture).toContain('className="grid border-b xl:grid-cols-3"');
   });
