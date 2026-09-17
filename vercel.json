@@ -3,7 +3,8 @@
   "git": {
     "deploymentEnabled": {
       "codex/owner-secondary-premium-redesign": false,
-      "codex/security-hero-word-split": false
+      "codex/security-hero-word-split": false,
+      "codex/pilot-scanner-activation": false
     }
   },
   "crons": [
