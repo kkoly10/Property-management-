@@ -180,3 +180,41 @@ textarea {
     animation-iteration-count: 1 !important;
   }
 }
+
+/*
+ * Public marketing surface: survive "zoom text only".
+ *
+ * That browser setting scales font sizes and leaves the viewport alone, so a display headline set in
+ * rem can end up with a single word physically wider than the phone showing it — "relationship." at
+ * 108px is 521px on a 390px screen. Two things then go wrong at once: the word spills, and the grid
+ * track holding it is sized to min-content, so the whole section is dragged wider than the page.
+ *
+ * `overflow-wrap: anywhere` fixes both, and is the reason this is `anywhere` rather than the gentler
+ * `break-word`: only `anywhere` also reduces the intrinsic min-content contribution, which is what
+ * lets the track collapse back to the container instead of merely letting the glyphs escape it.
+ *
+ * It costs nothing at normal zoom. A break only ever happens when there is no other way to fit the
+ * word, and at normal sizes every headline on these pages already fits, so the rendered line breaks
+ * are unchanged — verified by comparing the rendered headings before and after.
+ */
+.marketing-surface :is(h1, h2, h3) {
+  overflow-wrap: anywhere;
+}
+
+/*
+ * ...and stop structural whitespace from doubling along with the text.
+ *
+ * Tailwind v4 derives every spacing utility from `calc(var(--spacing) * n)`, and `--spacing` is a rem
+ * value, so under text-only zoom a section's `px-5` grows from 20px to 40px a side and a `gap-12`
+ * from 48px to 96px. The content box shrinks exactly when the content needs more room: at 390px the
+ * page kept 310px for a 390px-wide device mock-up, and at 1024px a two-column section spent 160px of
+ * an 896px container on a single gutter.
+ *
+ * Pinning `--spacing` to its own computed value in px keeps every margin, padding and gap exactly
+ * where it is today — 0.25rem is 4px at the default root — while font sizes, which resolve through
+ * `--text-*`, go on scaling. That is what this browser setting is meant to do: enlarge the text, not
+ * the furniture. Page zoom is unaffected either way, since it scales px too.
+ */
+.marketing-surface {
+  --spacing: 4px;
+}

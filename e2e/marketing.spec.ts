@@ -251,10 +251,8 @@ test.describe("indexing policy", () => {
  * put, which is what a real text zoom also does to a logo. Chromium exposes no text-only zoom switch
  * to automation, so this is the closest faithful harness rather than a convenience.
  *
- * The assertion is scoped to the header on purpose. Page content in this family still overflows at
- * doubled text in places — oversized `clamp()` headlines whose longest word cannot fit a phone, and
- * rem-capped device mock-ups — and that is a separate, wider piece of work. Asserting the whole
- * document here would either fail for reasons this header cannot fix or quietly encode those bugs.
+ * These cases stay scoped to the header so a failure names the header rather than the page; the
+ * describe below holds the document-level guarantee for the whole family.
  */
 const TEXT_ZOOM_PX = 32; // 200% of the 16px root.
 
@@ -318,4 +316,38 @@ test.describe("shared header at 200% text-only enlargement", () => {
       expect(await headerOverflow(page), `${path}: header exceeds the viewport with doubled text`).toBeLessThanOrEqual(1);
     }
   });
+});
+
+/**
+ * The whole public family under the same enlargement.
+ *
+ * This is the guarantee the header cases cannot make on their own: with text at 200% and the viewport
+ * untouched, no public route may push the document sideways. Getting here needed three fixes — display
+ * headings allowed to break as a last resort, structural whitespace pinned so padding and gutters stop
+ * doubling along with the text, and two components (the price-book toggles, the pilot status register)
+ * whose rows could not shrink below their own content.
+ *
+ * Behavioural on purpose: it asserts that the page does not scroll horizontally and that the route's
+ * own content and the header's controls are still on screen — never what any of them say.
+ */
+test.describe("no public route overflows at 200% text-only enlargement", () => {
+  for (const width of [390, 1440]) {
+    test(`every public route fits the viewport at ${width}px with doubled text`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      for (const path of ROUTES) {
+        await page.goto(path);
+        await enlargeText(page);
+
+        const overflow = await page.evaluate(() => {
+          const doc = document.documentElement;
+          return doc.scrollWidth - doc.clientWidth;
+        });
+        expect(overflow, `${path} at ${width}px scrolls horizontally with doubled text`).toBeLessThanOrEqual(1);
+
+        // The page must still be a page: its own heading, and a way out of it, remain on screen.
+        await expect(page.getByRole("heading", { level: 1 }).first(), `${path}: no visible h1`).toBeVisible();
+        await expect(page.getByRole("banner").getByRole("link", { name: "Crecy home" }), `${path}: header lost`).toBeVisible();
+      }
+    });
+  }
 });

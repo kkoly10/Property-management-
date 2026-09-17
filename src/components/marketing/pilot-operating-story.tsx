@@ -136,7 +136,7 @@ export function PilotStatusRegister() {
           <h3 className="text-lg font-semibold tracking-[-0.025em]">{group.title}</h3>
           <ul className="grid gap-x-8 sm:grid-cols-2">
             {group.items.map((item) => (
-              <li key={item} className="border-t py-3 text-sm leading-6 text-muted-foreground first:border-t-0 sm:first:border-t">{item}</li>
+              <li key={item} className="min-w-0 border-t py-3 text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere] first:border-t-0 sm:first:border-t">{item}</li>
             ))}
           </ul>
         </section>
