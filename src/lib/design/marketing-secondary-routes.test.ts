@@ -6,23 +6,27 @@ const route = (name: string) => readFileSync(resolve(__dirname, `../../app/(mark
 const product = route("product");
 const living = route("crecy-living");
 const security = route("security");
+const pilot = route("pilot");
+const pricing = route("pricing");
 
 describe("secondary marketing route design contract", () => {
-  it("removes the generic feature-grid and miniature composition language from all three routes", () => {
-    for (const source of [product, living, security]) {
+  it("removes the generic feature-grid and miniature composition language from the completed family", () => {
+    for (const source of [product, living, security, pilot, pricing]) {
       expect(source).not.toContain("FeatureGrid");
       expect(source).not.toContain("FeatureItem");
       expect(source).not.toContain("ProductComposition");
     }
   });
 
-  it("makes Product an operating sequence backed by OS-specific registers", () => {
+  it("makes Product an operating sequence backed by OS-specific registers without chapter eyebrows", () => {
     expect(product).toContain("<OperatorCommandCenterProof");
     expect(product).toContain("<OperatingSequence");
     expect(product).toContain("<PortfolioRegisterProof");
     expect(product).toContain("<FinanceDeskProof");
     expect(product).toContain("<MaintenanceDeskProof");
     expect(product).toContain("<RecordContinuityProof");
+    expect(product).not.toContain("text-sm font-medium text-primary");
+    expect(product).not.toContain("The operating system");
   });
 
   it("makes Living place-led while keeping Maple Court explicitly fictional", () => {
@@ -49,6 +53,23 @@ describe("secondary marketing route design contract", () => {
     expect(security).not.toContain("<DocumentReleaseRail");
     expect(security).not.toContain("text-sm font-medium text-primary");
     expect(security).not.toContain("next/image");
+  });
+
+  it("makes Pilot an operating-readiness journey rather than a numbered early-access page", () => {
+    expect(pilot).toContain("<PilotReadinessBoard");
+    expect(pilot).toContain("<PilotActivationFlow");
+    expect(pilot).toContain("<ImportReadinessProof");
+    expect(pilot).toContain("<PilotStatusRegister");
+    expect(pilot).not.toContain("SectionHeading");
+    expect(pilot).not.toContain("text-sm font-medium text-primary");
+    expect(pilot).not.toContain("0{index + 1}");
+  });
+
+  it("keeps Pricing canonical while removing the old payment eyebrow", () => {
+    expect(pricing).toContain("<PricingExplorer");
+    expect(pricing).toContain("PAYMENT_DISCLOSURE");
+    expect(pricing).not.toContain('eyebrow="Payments"');
+    expect(pricing).not.toContain("SectionHeading");
   });
 
   it("keeps the Living anchor editorial, unnumbered and free of text overlays on Maple Court photography", () => {
