@@ -68,6 +68,8 @@ describe("secondary marketing route design contract", () => {
   it("keeps Pricing canonical while removing the old payment eyebrow", () => {
     expect(pricing).toContain("<PricingExplorer");
     expect(pricing).toContain("PAYMENT_DISCLOSURE");
+    expect(pricing).toContain("CUSTOM_AGREEMENT_UNITS");
+    expect(pricing).not.toContain("more than 500 units");
     expect(pricing).not.toContain('eyebrow="Payments"');
     expect(pricing).not.toContain("SectionHeading");
   });
