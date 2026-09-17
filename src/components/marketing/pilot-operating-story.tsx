@@ -7,14 +7,14 @@ const activationStages = [
 
 const importRows = [
   ["properties.csv", "3 properties", "Ready", "Country, currency and time zone recognized"],
-  ["units.csv", "46 units", "Ready", "All unit identifiers mapped"],
+  ["units.csv", "50 units", "Ready", "All unit identifiers mapped"],
   ["leases.xlsx", "41 tenancies", "Review", "2 household relationships need confirmation"],
   ["opening-balances.csv", "41 balances", "Review", "3 rows need operator classification"],
   ["lease-documents.zip", "38 files", "Staged", "Manifest matched; documents enter scan lifecycle"],
 ] as const;
 
 const readinessRows = [
-  ["Portfolio structure", "Ready", "3 properties · 46 active units"],
+  ["Portfolio structure", "Ready", "3 properties · 50 active units"],
   ["Resident relationships", "Review", "39 ready · 2 need confirmation"],
   ["Opening balances", "Review", "38 ready · 3 need classification"],
   ["Payment collection", "Configure", "Connected account required for online payments"],
@@ -29,7 +29,7 @@ export function PilotReadinessBoard() {
           <p className="text-xs text-muted-foreground">Pilot workspace · representative data</p>
           <h2 className="mt-1 text-xl font-semibold tracking-[-0.03em]">Maple Property Group</h2>
         </div>
-        <p className="text-sm font-medium">46 units · 3 properties</p>
+        <p className="text-sm font-medium">50 units · 3 properties</p>
       </div>
 
       <div className="grid md:grid-cols-[0.9fr_1.1fr]">
