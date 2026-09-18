@@ -25,6 +25,21 @@ export const createVendorSchema = z.object({
   phoneE164: z.string().regex(/^\+[1-9][0-9]{7,14}$/, "Use E.164 format, e.g. +14045551234.").optional(),
 });
 
+/**
+ * Vendor update.
+ *
+ * Every mutable field is required, including the ones that may be null. The command replaces the
+ * record rather than merging into it, so an omitted email would be ambiguous — "leave it" and "clear
+ * it" would look identical on the wire. Sending `null` explicitly says which one was meant.
+ */
+export const updateVendorSchema = z.object({
+  organizationId: z.uuid(),
+  displayName: z.string().trim().min(1).max(160),
+  email: z.email().nullable(),
+  phoneE164: z.string().regex(/^\+[1-9][0-9]{7,14}$/, "Use E.164 format, e.g. +14045551234.").nullable(),
+  status: z.enum(["active", "inactive", "archived"]),
+});
+
 export const createAndAssignWorkOrderSchema = z.object({
   organizationId: z.uuid(),
   maintenanceRequestId: z.uuid(),
@@ -87,6 +102,7 @@ export const recordWorkOrderCostSchema = z.object({
 });
 
 export type CreateVendorInput = z.infer<typeof createVendorSchema>;
+export type UpdateVendorInput = z.infer<typeof updateVendorSchema>;
 export type CreateAndAssignWorkOrderInput = z.infer<typeof createAndAssignWorkOrderSchema>;
 export type TransitionWorkOrderInput = z.infer<typeof transitionWorkOrderSchema>;
 export type OwnerApprovalDecisionInput = z.infer<typeof ownerApprovalDecisionSchema>;

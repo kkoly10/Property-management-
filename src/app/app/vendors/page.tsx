@@ -1,8 +1,9 @@
-import { CircleAlert, Mail, Phone, ShieldCheck, Wrench } from "lucide-react";
+import Link from "next/link";
+import { ChevronRight, CircleAlert, Mail, Phone, ShieldCheck, Wrench } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getOperatorVendorDirectory } from "@/lib/data/maintenance";
+import { getOperatorVendorManagement } from "@/lib/data/maintenance";
 import { getActiveOrganizationId } from "@/lib/organization/context";
 import { CreateVendorForm } from "./create-vendor-form";
 
@@ -16,10 +17,14 @@ export const dynamic = "force-dynamic";
  * so the first vendor of a new organization could only be created by someone with database access —
  * which is exactly the kind of gap that makes a journey look built from the inside and impossible
  * from the outside.
+ *
+ * This page reads the management workspace rather than the assignment directory. The difference is
+ * the point: the assignment directory filters to `active`, so reading it here would have hidden every
+ * vendor the moment they were made inactive — leaving no way to see, correct, or reactivate them.
  */
 export default async function OperatorVendorsPage() {
   const organizationId = await getActiveOrganizationId();
-  const directory = await getOperatorVendorDirectory(organizationId);
+  const directory = await getOperatorVendorManagement(organizationId);
   const disabled = directory.mode !== "ready" || !organizationId;
 
   return <div className="space-y-6">
@@ -37,23 +42,29 @@ export default async function OperatorVendorsPage() {
     <Card>
       <CardHeader>
         <CardTitle>Vendor directory</CardTitle>
-        <CardDescription>{directory.vendors.length} {directory.vendors.length === 1 ? "vendor" : "vendors"} available for assignment.</CardDescription>
+        <CardDescription>{directory.vendors.length} {directory.vendors.length === 1 ? "vendor" : "vendors"} on record. Only active vendors can be assigned to new work orders.</CardDescription>
       </CardHeader>
       <CardContent className="p-0">
         {directory.vendors.length
           ? <ul className="divide-y">
-              {directory.vendors.map((vendor) => <li key={vendor.vendorId} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="font-semibold">{vendor.displayName}</h2>
-                    <Badge variant={vendor.status === "active" ? "success" : "neutral"}>{vendor.status.replaceAll("_", " ")}</Badge>
+              {directory.vendors.map((vendor) => <li key={vendor.vendorId}>
+                <Link href={`/app/vendors/${vendor.vendorId}`} className="flex flex-col gap-3 p-5 transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="font-semibold">{vendor.displayName}</h2>
+                      <Badge variant={vendor.status === "active" ? "success" : "neutral"}>{vendor.status.replaceAll("_", " ")}</Badge>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
+                      {vendor.email ? <span className="flex items-center gap-1.5"><Mail aria-hidden="true" className="h-3.5 w-3.5" />{vendor.email}</span> : null}
+                      {vendor.phoneE164 ? <span className="flex items-center gap-1.5"><Phone aria-hidden="true" className="h-3.5 w-3.5" /><span className="font-mono">{vendor.phoneE164}</span></span> : null}
+                      {!vendor.email && !vendor.phoneE164 ? <span>No contact details recorded.</span> : null}
+                    </div>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
-                    {vendor.email ? <span className="flex items-center gap-1.5"><Mail aria-hidden="true" className="h-3.5 w-3.5" />{vendor.email}</span> : null}
-                    {vendor.phoneE164 ? <span className="flex items-center gap-1.5"><Phone aria-hidden="true" className="h-3.5 w-3.5" /><span className="font-mono">{vendor.phoneE164}</span></span> : null}
-                    {!vendor.email && !vendor.phoneE164 ? <span>No contact details recorded.</span> : null}
-                  </div>
-                </div>
+                  <span className="flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground">
+                    {vendor.workOrderCount} {vendor.workOrderCount === 1 ? "work order" : "work orders"}
+                    <ChevronRight aria-hidden="true" className="h-4 w-4" />
+                  </span>
+                </Link>
               </li>)}
             </ul>
           : <div className="px-5 py-12 text-center">

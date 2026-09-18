@@ -28,6 +28,19 @@ export type OperatorMaintenanceItem = {
   targetAt: string | null; evidenceCount: number; workOrder: OperatorWorkOrder | null;
 };
 export type Vendor = { vendorId: string; displayName: string; email: string | null; phoneE164: string | null; status: string };
+/**
+ * The management view of a vendor. It differs from `Vendor` in two ways that matter: it exists for
+ * every status rather than only the assignable ones, and it carries the usage context an operator
+ * needs before archiving someone — plus `canManage`, so a read-only role is told it cannot write
+ * instead of finding out from a rejected request.
+ */
+export type ManagedVendor = Vendor & {
+  createdAt: string;
+  workOrderCount: number;
+  openWorkOrderCount: number;
+  lastAssignedAt: string | null;
+  canManage: boolean;
+};
 
 const previewTenancy: MaintenanceTenancy = { tenancyId: "20000000-0000-4000-8000-000000000002", organizationId: "10000000-0000-4000-8000-000000000001", propertyName: "Maple Court", unitCode: "101" };
 const previewResidentItem: ResidentMaintenanceItem = {
@@ -126,6 +139,21 @@ export async function getOperatorWorkOrderDetail(organizationId: string | null, 
   return { mode: workspace.mode, item: workspace.items.find((item) => item.maintenanceRequestId === maintenanceRequestId), requestId: workspace.requestId };
 }
 
+function normalizeManagedVendors(data: unknown): ManagedVendor[] {
+  return Array.isArray(data) ? data.map((raw) => { const item = raw as Record<string, unknown>; return {
+    vendorId: String(item.vendorId), displayName: String(item.displayName), email: item.email ? String(item.email) : null,
+    phoneE164: item.phoneE164 ? String(item.phoneE164) : null, status: String(item.status), createdAt: String(item.createdAt),
+    workOrderCount: Number(item.workOrderCount ?? 0), openWorkOrderCount: Number(item.openWorkOrderCount ?? 0),
+    lastAssignedAt: item.lastAssignedAt ? String(item.lastAssignedAt) : null, canManage: Boolean(item.canManage),
+  }; }) : [];
+}
+
+const previewManagedVendor: ManagedVendor = {
+  vendorId: "b0000000-0000-4000-8000-000000000001", displayName: "Ready Fix Plumbing", email: "dispatch@readyfix.example",
+  phoneE164: "+14045551234", status: "active", createdAt: "2026-07-22T14:30:00Z",
+  workOrderCount: 1, openWorkOrderCount: 0, lastAssignedAt: "2026-07-23T09:00:00Z", canManage: true,
+};
+
 export async function getOperatorVendorDirectory(organizationId: string | null): Promise<{ mode: DataMode; vendors: Vendor[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", vendors: [{ vendorId: "b0000000-0000-4000-8000-000000000001", displayName: "Ready Fix Plumbing", email: "dispatch@readyfix.example", phoneE164: "+14045551234", status: "active" }] };
   try {
@@ -134,4 +162,34 @@ export async function getOperatorVendorDirectory(organizationId: string | null):
     if (error || !data) throw error ?? new Error("Vendors are unavailable.");
     return { mode: "ready", vendors: normalizeVendors(data) };
   } catch { return { mode: "error", vendors: [], requestId: crypto.randomUUID() }; }
+}
+
+/**
+ * Every vendor the caller may see, in every status.
+ *
+ * Deliberately a different function from `getOperatorVendorDirectory`, which filters to `active` and
+ * is what the work-order assignment screen reads. Keeping them apart is what lets a vendor disappear
+ * from new work orders the moment they go inactive while staying visible to the people who have to
+ * manage them.
+ */
+export async function getOperatorVendorManagement(organizationId: string | null): Promise<{ mode: DataMode; vendors: ManagedVendor[]; requestId?: string }> {
+  if (!getPublicSupabaseConfig()) return { mode: "setup", vendors: [previewManagedVendor] };
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("get_operator_vendor_management_workspace", { p_organization_id: organizationId });
+    if (error || !data) throw error ?? new Error("Vendors are unavailable.");
+    return { mode: "ready", vendors: normalizeManagedVendors(data) };
+  } catch { return { mode: "error", vendors: [], requestId: crypto.randomUUID() }; }
+}
+
+/**
+ * One vendor, found within the caller's own organization workspace rather than fetched by id.
+ *
+ * Reading through the workspace is what makes another organization's vendor unreachable here: the
+ * workspace is already narrowed to the active organization, so an id that is not in it simply has no
+ * record to return, and the page renders not-found rather than someone else's contractor.
+ */
+export async function getOperatorVendorDetail(organizationId: string | null, vendorId: string) {
+  const workspace = await getOperatorVendorManagement(organizationId);
+  return { mode: workspace.mode, vendor: workspace.vendors.find((vendor) => vendor.vendorId === vendorId), requestId: workspace.requestId };
 }
