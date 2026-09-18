@@ -1,32 +1,11 @@
 import { z } from "zod";
+import { normalizePhoneE164 } from "@/lib/phone";
 
 const optionalText = (max: number) => z.string().trim().max(max).optional().default("");
 const reserved = new Set([
   "www","app","owner","vendor","admin","api","platform","mail","auth",
   "static","assets","cdn","internal","maplecourt",
 ]);
-
-/**
- * Accept what a person naturally types into a phone field, but persist one canonical value.
- *
- * - +15405551234 stays +15405551234
- * - 5405551234 becomes +15405551234
- * - 1 (540) 555-1234 becomes +15405551234
- * - non-NANP international numbers still require an explicit +country code
- */
-export function normalizePhoneE164(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-
-  const compact = trimmed.replace(/[\s().-]/g, "");
-  if (/^\+[1-9][0-9]{7,14}$/.test(compact)) return compact;
-
-  const digits = trimmed.replace(/\D/g, "");
-  if (digits.length === 10) return `+1${digits}`;
-  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
-
-  return null;
-}
 
 const phoneE164 = z.string().trim().transform((value, ctx) => {
   const normalized = normalizePhoneE164(value);
