@@ -114,11 +114,40 @@ describe("signup activation", () => {
     expect(message.idempotencyKey).toBe("signup-user-123");
   });
 
-  it("gives an existing account the same neutral completion state without sending another signup email", async () => {
-    generateLink.mockResolvedValue({
-      data: null,
-      error: { code: "user_already_exists", message: "User already registered" },
-    });
+  it("gives an existing account the same neutral completion state and sends a one-time sign-in link", async () => {
+    generateLink
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: "user_already_exists", message: "User already registered" },
+      })
+      .mockResolvedValueOnce({
+        data: { user: { id: "existing-user" }, properties: { hashed_token: GOOD_HASH } },
+        error: null,
+      });
+
+    await expect(signupAction({ status: "idle" }, form("existing@example.com"))).rejects.toThrow(
+      "REDIRECT:/signup?check_email=1",
+    );
+
+    expect(generateLink).toHaveBeenNthCalledWith(2, { type: "magiclink", email: "existing@example.com" });
+    expect(sendViaResend).toHaveBeenCalledTimes(1);
+    const message = sendViaResend.mock.calls[0][0];
+    expect(String(message.text)).toContain("type=magiclink");
+    expect(String(message.text)).toContain("next=%2Fapp");
+    expect(message.idempotencyKey).toBe("signup-existing-existing-user");
+    expect(deleteUser).not.toHaveBeenCalled();
+  });
+
+  it("does not expose an existing account when its recovery link cannot be minted", async () => {
+    generateLink
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: "email_exists", message: "A user with this email already exists" },
+      })
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: "unexpected_failure", message: "provider unavailable" },
+      });
 
     await expect(signupAction({ status: "idle" }, form("existing@example.com"))).rejects.toThrow(
       "REDIRECT:/signup?check_email=1",
