@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 import { SignupForm } from "@/app/(auth)/signup/signup-form";
 import { Wordmark } from "@/components/brand/wordmark";
@@ -20,7 +21,11 @@ export default async function SignupPage({ searchParams }: { searchParams: Promi
             <Alert className="mb-5 border-[#abefc6] bg-[#ecfdf3] text-success">
               <CheckCircle2 aria-hidden="true" className="h-5 w-5" />
               <AlertTitle>Check your email</AlertTitle>
-              <AlertDescription>Use the secure link to confirm your account and continue setup.</AlertDescription>
+              <AlertDescription>
+                If this is a new Crecy account, use the confirmation link to continue setup. If you already have Crecy
+                access, use the one-time sign-in link instead. If nothing arrives,{" "}
+                <Link href="/login" className="font-semibold underline underline-offset-2">open Sign in</Link>.
+              </AlertDescription>
             </Alert>
           ) : null}
           {params.auth_error ? <Alert variant="destructive" className="mb-5"><CheckCircle2 aria-hidden="true" className="h-5 w-5" /><AlertTitle>That link could not be verified</AlertTitle><AlertDescription>Request a new sign-in link and try again.</AlertDescription></Alert> : null}
