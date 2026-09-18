@@ -23,6 +23,20 @@ export type OutboundMessage = {
   rendered: RenderedNotification;
   /** Resolved by the worker when the template alone cannot identify the recipient's brand. */
   audience?: "operator" | "resident" | "owner" | null;
+  /**
+   * Where this recipient manages their email preferences — a DIFFERENT question from which brand the
+   * message comes from, and the two had been conflated.
+   *
+   * A vendor contact's document mail is sent under the neutral Crecy identity, because Crecy Vendor is
+   * a reserved surface with nothing behind it (FD-037) and inventing a brand would advertise a product
+   * that does not exist. But `audience: "operator"` was then also used to pick the preference link, so
+   * the footer offered a vendor "Manage email preferences" pointing at the operator console they have
+   * no account on — the same defect as the portal button, one layer down.
+   *
+   * `"none"` means this recipient has no preference surface: withhold the List-Unsubscribe header and
+   * the footer link. Absent means "not resolved", and the relay falls back to its existing mapping.
+   */
+  preferenceAudience?: "operator" | "resident" | "owner" | "none" | null;
 };
 
 export type NotificationTransport = {
@@ -80,6 +94,7 @@ export function getNotificationTransport(): NotificationTransport | null {
             locale: message.locale,
             templateCode: message.templateCode,
             ...(message.audience ? { audience: message.audience } : {}),
+            ...(message.preferenceAudience ? { preferenceAudience: message.preferenceAudience } : {}),
             subject: message.rendered.subject,
             body: message.rendered.body,
             // The structured half of the message. `subject` + `body` remain the required wire fields,

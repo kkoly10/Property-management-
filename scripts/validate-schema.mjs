@@ -3745,6 +3745,101 @@ async function validateRecurringCharges() {
     await db.exec("reset role");
   }
 
+  // ── Recovery after an attachment failure ───────────────────────────────────────────────────────
+  // Failing closed is only half a design. The route answers 503 and tells the operator to invite the
+  // person again — but `invite_staff_member` has already committed an `invited` membership and rejects
+  // a second invitation for that user with MEMBERSHIP_ALREADY_EXISTS, and the form mints a fresh
+  // idempotency key every submit, so it is not an idempotent replay either. Without the unwind the
+  // instruction is impossible to follow, which is the failure this proves is gone.
+  const strandedUser = "ca000000-0000-4000-8000-0000000000f1";
+  // The suite has consumed this plan's staff seats by now, and the scenario needs two spare: one for
+  // the invitation that strands and one for the recovery. The seat accounting is not what is under
+  // test here — that it is RELEASED by the unwind is, and that is asserted below.
+  await db.exec(`reset role;
+    insert into auth.users(id,email) values ('${strandedUser}','stranded@finance-atlas.example');
+    update public.plan_entitlements set limit_value = limit_value + 2
+      where feature_code='core.staff' and limit_value is not null;
+    set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2';
+  `);
+  const strandedInvite = (await db.query(`select public.invite_staff_member(
+    '${organization.organizationId}','${strandedUser}','stranded@finance-atlas.example','leasing_agent',
+    array['${property.propertyId}'::uuid],'2026-07-24T12:00:00Z',null,false,'en-US','${"c1".repeat(32)}','c1c1c1c1c1',
+    null,'staff-invite-stranded-0001',null,true
+  ) as result`)).rows[0].result;
+
+  // The retry the 503 asks for, BEFORE the unwind: the schema rejects it. This is the assertion that
+  // would have caught the impossible instruction.
+  await expectDatabaseError(
+    () => db.query(`select public.invite_staff_member(
+      '${organization.organizationId}','${strandedUser}','stranded@finance-atlas.example','leasing_agent',
+      array['${property.propertyId}'::uuid],'2026-07-24T12:00:00Z',null,false,'en-US','${"d2".repeat(32)}','d2d2d2d2d2',
+      null,'staff-invite-stranded-0002',null,true
+    )`),
+    "MEMBERSHIP_ALREADY_EXISTS",
+  );
+
+  // The unwind is service-role only, and a browser caller may not withdraw a membership by naming an id.
+  await expectDatabaseError(
+    () => db.query(`select public.abandon_unsent_staff_invitation('${organization.organizationId}','${strandedInvite.invitationId}')`),
+    "permission denied",
+  );
+
+  await db.exec("reset role; set role service_role");
+  const abandoned = (await db.query(`select public.abandon_unsent_staff_invitation('${organization.organizationId}','${strandedInvite.invitationId}') as result`)).rows[0].result;
+  assert(abandoned.abandoned === true, "The stranded invitation could not be abandoned.");
+  // Idempotent: the route calls this on its own failure path and may be retried.
+  const abandonedAgain = (await db.query(`select public.abandon_unsent_staff_invitation('${organization.organizationId}','${strandedInvite.invitationId}') as result`)).rows[0].result;
+  assert(abandonedAgain.abandoned === false, "Abandoning an already-abandoned invitation was not a no-op.");
+
+  await db.exec("reset role");
+  const unwound = (await db.query(`select
+    (select status from public.invitations where id='${strandedInvite.invitationId}') as invitation_status,
+    (select status::text from public.organization_memberships where user_id='${strandedUser}' and organization_id='${organization.organizationId}') as membership_status,
+    (select status from private.notification_jobs where idempotency_key='staff-invitation:${strandedInvite.invitationId}') as job_status,
+    (select count(*)::integer from audit.audit_events where action_code='membership.invitationAbandoned') as audit_rows
+  `)).rows[0];
+  assert(unwound.invitation_status === 'revoked', `The stranded invitation was left ${unwound.invitation_status}.`);
+  assert(unwound.membership_status === 'revoked', `The stranded membership was left ${unwound.membership_status}.`);
+  // The job must never send: it is canceled, and cancellation is also a terminal state the scrub covers.
+  assert(unwound.job_status === 'canceled', `The stranded job was left ${unwound.job_status}.`);
+  assert(unwound.audit_rows >= 1, "Abandoning an invitation wrote no audit history.");
+
+  // The seat is genuinely released. `revoked` is the one terminal membership state the duplicate guard
+  // and the seat count both ignore, which is exactly why the unwind uses it.
+  const seatFreed = (await db.query(`select count(*)::integer as seats
+    from public.organization_memberships m
+    where m.organization_id='${organization.organizationId}'
+      and m.user_id='${strandedUser}'
+      and m.status in ('invited','active','suspended')
+      and (m.ends_at is null or m.ends_at>now())`)).rows[0];
+  assert(seatFreed.seats === 0, "Abandoning the invitation did not release the staff seat it had counted.");
+
+  // And now the recovery the operator is actually told to perform SUCCEEDS.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  const recovered = (await db.query(`select public.invite_staff_member(
+    '${organization.organizationId}','${strandedUser}','stranded@finance-atlas.example','leasing_agent',
+    array['${property.propertyId}'::uuid],'2026-07-24T12:00:00Z',null,false,'en-US','${"e3".repeat(32)}','e3e3e3e3e3',
+    null,'staff-invite-stranded-0003',null,true
+  ) as result`)).rows[0].result;
+  assert(
+    recovered.invitationId && recovered.invitationId !== strandedInvite.invitationId,
+    "The recovery invitation did not produce a new invitation record.",
+  );
+
+  // An invitation whose email ALREADY LEFT must not be abandonable: the recipient may hold a working
+  // link, and withdrawing the membership under them is a worse bug than the one this repairs.
+  await db.exec("reset role");
+  await db.query(`update private.notification_jobs set status='sent' where idempotency_key='staff-invitation:${recovered.invitationId}'`);
+  await db.exec("set role service_role");
+  await expectDatabaseError(
+    () => db.query(`select public.abandon_unsent_staff_invitation('${organization.organizationId}','${recovered.invitationId}')`),
+    "INVITATION_ALREADY_DELIVERING",
+  );
+  await db.exec(`reset role;
+    update public.plan_entitlements set limit_value = limit_value - 2
+      where feature_code='core.staff' and limit_value is not null;
+  `);
+
   // The relationship delivery projection the resident and owner directories read. It is a definer
   // function granted to `authenticated`, so it is an authorization boundary and has to be DRIVEN, not
   // merely defined — a hand-written permission gate that nothing ever executes is a gate nobody has

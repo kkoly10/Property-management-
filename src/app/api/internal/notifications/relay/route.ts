@@ -29,6 +29,8 @@ type Incoming = {
   subject: string;
   body: string;
   audience: MailAudience | null;
+  /** Where the recipient manages preferences. "none" means they have no such surface. */
+  preferenceAudience: MailAudience | "none" | null;
   // Structured presentation fields. All optional: `subject` + `body` alone still produce a complete
   // plain-text email, so a worker that predates them is not a broken deployment.
   preheader: string | null;
@@ -78,6 +80,7 @@ function readMessage(value: unknown): Incoming | null {
     // where the template code cannot express it; anything else falls through to the template mapping
     // rather than letting a caller name an arbitrary brand.
     audience: (["operator", "resident", "owner"] as const).find((a) => a === v.audience) ?? null,
+    preferenceAudience: (["operator", "resident", "owner", "none"] as const).find((a) => a === v.preferenceAudience) ?? null,
     preheader: optional("preheader"),
     paragraphs: readParagraphs(v.paragraphs),
     heading: optional("heading"),
@@ -129,16 +132,22 @@ export async function POST(request: Request) {
 
   const sender = senderFor(message.templateCode, message.audience);
 
-  // List-Unsubscribe is `unsubscribeUrlFor`'s decision entirely, and it is deliberately not this
-  // route's to second-guess: it withholds a URL both for access mail (unsubscribing from the message
-  // that grants you access would lock you out) and for category mail whose recipient portal is
-  // ambiguous (a link to a console the recipient has no account on fails one click later instead of
-  // zero, which is not an improvement).
+  // Keyed on the PREFERENCE SURFACE, not the brand — the two are different questions and were
+  // conflated. `unsubscribeUrlFor` already withholds a URL for access mail (unsubscribing from the
+  // message that grants you access would lock you out) and for a template whose recipient portal is
+  // ambiguous. What it could not know is that a vendor contact's document mail is sent under the
+  // neutral Crecy identity while the vendor has no console at all, so the brand said "operator" and the
+  // footer offered them a link to a product they cannot sign in to.
+  //
+  // "none" withholds both the header and the footer link. Anything else falls back to the previous
+  // mapping, so a worker that predates this field behaves exactly as it did.
   //
   // The header is the URL form only, not RFC 8058 one-click: that needs a POST endpoint that opts a
   // recipient out with no session, and inventing one would be a way around the sign-in these
   // preferences are scoped by. The link lands on the page and the user opts out there.
-  const unsubscribeUrl = unsubscribeUrlFor(message.templateCode, message.audience);
+  const unsubscribeUrl = message.preferenceAudience === "none"
+    ? null
+    : unsubscribeUrlFor(message.templateCode, message.preferenceAudience ?? message.audience);
   const headers: Record<string, string> = {};
   if (unsubscribeUrl) headers["List-Unsubscribe"] = `<${unsubscribeUrl}>`;
 

@@ -117,9 +117,14 @@ export async function POST(request: Request) {
   });
   const attached = (attach.data as { attached?: unknown } | null)?.attached === true;
   if (attach.error || !attached) {
+    // No compensating unwind here, and that is a difference in the schema rather than an oversight:
+    // `invite_relationship_user` SUPERSEDES an existing pending invitation for the same relationship
+    // instead of refusing it, and the relationship row itself is only minted on acceptance. So simply
+    // inviting again works, which is what this message asks for. The staff path needs an unwind
+    // because its command commits a membership that blocks the retry.
     return invitationErrorResponse(
       "INVITATION_CREDENTIAL_NOT_ATTACHED",
-      "The invitation was recorded but its activation credential could not be attached, so its email will not be sent. Send the invitation again.",
+      "The invitation could not be prepared for delivery, so no email will be sent. Send the invitation again.",
       503,
     );
   }

@@ -62,8 +62,10 @@ worst it can do is delay its own invitation.
 That boolean also closes a race the two-step version would otherwise have introduced. It defers the
 job's `available_at` by two minutes — the worker's claim gate is `status='queued' and available_at <=
 now()` — and the attach step sets it back to `now()` in the same statement that writes the credential.
-There is no ordering in which the worker sees one without the other, and if the attach never happens
-the invitation still goes out, carrying the bare acceptance link.
+There is no ordering in which the worker sees one without the other.
+
+The hold is a race buffer and nothing more: when the attach never lands, the invitation does **not**
+go out after it expires. See "The failure path that had to fail closed" below.
 
 Using the token hash also removed a configuration hazard the previous version had to document as a
 launch prerequisite: GoTrue's `redirect_to` allow-list no longer decides where an invited person
@@ -213,6 +215,33 @@ Three changes make it impossible rather than unlikely:
 
 Backward compatibility is keyed on the flag, never on the template code: a job queued before this
 shipped carries no flag, made no one-click promise, and still delivers.
+
+**Failing closed is only half a design, and review caught the other half.** `invite_staff_member` has
+already committed an `organization_memberships` row with status `invited` by the time the attach runs,
+and it rejects any second invitation for that user with `MEMBERSHIP_ALREADY_EXISTS`. The form mints a
+fresh idempotency key on every submit, so the retry is not an idempotent replay either — the 503's
+instruction to "send the invitation again" was impossible to follow.
+
+`public.abandon_unsent_staff_invitation` (service_role only) unwinds it: the unsent job is canceled,
+the invitation revoked, and the membership moved to `revoked` — the one terminal state the duplicate
+guard and the seat count both ignore, so the seat is released and the ordinary invite action works
+again. Nothing is deleted and an audit row records why, because "the invitation vanished" is a worse
+story for whoever reads the history later than "it was abandoned undelivered". It refuses outright for
+an invitation whose email already left, since the recipient may hold a working link and revoking the
+membership under them would be a worse bug than the one it repairs.
+
+The relationship path needs no unwind, and that is a difference in the schema rather than an
+oversight: `invite_relationship_user` supersedes an existing pending invitation instead of refusing
+it, and the relationship row itself is only minted on acceptance.
+
+**A vendor contact's document mail no longer advertises a portal it cannot reach.** The CTA was
+already withheld, but `audienceForRelationshipType("vendor_contact")` returns `operator` — correct for
+the From line, because Crecy Vendor is reserved and unbuilt — and that same value was picking the
+preference link, so the footer offered "Manage email preferences" on a console the vendor has no
+account on. The worker→relay contract now carries `preferenceAudience` separately from `audience`:
+`"none"` withholds both the List-Unsubscribe header and the footer link, while the From identity stays
+neutral Crecy. Resident and owner preference links are unchanged, and an absent field falls back to the
+old mapping so a worker predating it behaves as before.
 
 ## Not done, and deliberately so
 

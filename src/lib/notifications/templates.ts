@@ -165,10 +165,11 @@ function documentPortalUrl(audience: LinkAudience | null | undefined): string | 
  * `next` stays relative on purpose. `/auth/confirm` re-validates it with `safeRedirectPath` and builds
  * the final redirect from its own origin, so nothing here can steer a just-signed-in user off-site.
  *
- * When the hash is absent (a job queued before this shipped, or a credential already scrubbed) the
- * message falls back to the bare acceptance link with the Crecy token. That link still works for
- * somebody already signed in, and is a dead end for somebody who is not — strictly better than
- * rendering nothing, and exactly the state every invitation was in before.
+ * When the hash is absent the message falls back to the bare acceptance link with the Crecy token.
+ * That fallback exists for jobs queued BEFORE this shipped, which made no one-click promise and must
+ * still deliver. It is not a degradation path for a new invitation: a job the command marked
+ * `authTokenRequired` is refused by the worker rather than rendered this way, because this template's
+ * own copy says opening the link signs the recipient in, and without the credential that is false.
  */
 function invitationCta(p: Record<string, unknown>, path: string, audience: LinkAudience): string {
   const token = typeof p.invitationToken === "string" ? p.invitationToken.trim() : "";

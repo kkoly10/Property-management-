@@ -119,6 +119,12 @@ export async function runNotificationDispatch(
       // the template renders no portal button. A brand is worth a query; it is not worth
       // dead-lettering a document delivery.
       let audience = null as ReturnType<typeof audienceForRelationshipType>;
+      // Where the recipient manages preferences, which is NOT the same as whose brand sends the
+      // message. A vendor contact's document mail carries the neutral Crecy identity by design
+      // (FD-037: Crecy Vendor is reserved and unbuilt), and using that one value for both meant the
+      // footer offered a vendor "Manage email preferences" on the operator console they have no
+      // account on — the portal-link defect, one layer down.
+      let preferenceAudience = null as "operator" | "resident" | "owner" | "none" | null;
       const deliveryId = job.payload.documentDeliveryId;
       if (job.templateCode === "document_delivered" && typeof deliveryId === "string" && job.organizationId) {
         // Scoped by organization as well as id. This client is service_role and bypasses RLS, so the
@@ -131,6 +137,12 @@ export async function runNotificationDispatch(
           .eq("organization_id", job.organizationId)
           .maybeSingle();
         audience = audienceForRelationshipType(delivery?.recipient_relationship_type);
+        const relationshipType = delivery?.recipient_relationship_type;
+        if (relationshipType === "resident_person") preferenceAudience = "resident";
+        else if (relationshipType === "owner_entity") preferenceAudience = "owner";
+        // A vendor contact has no preference surface. Resolved-but-none, not unresolved: null would
+        // fall back to the brand mapping and reintroduce the link.
+        else if (relationshipType === "vendor_contact") preferenceAudience = "none";
       }
 
       const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload, audience });
@@ -143,6 +155,7 @@ export async function runNotificationDispatch(
             locale: job.locale,
             templateCode: job.templateCode,
             audience,
+            preferenceAudience,
             rendered,
           })
         : { ok: false, errorCode: "UNKNOWN_TEMPLATE_CODE", retryable: false };

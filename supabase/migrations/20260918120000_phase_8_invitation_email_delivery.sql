@@ -102,9 +102,10 @@ begin
   -- send an invitation with no credential in it — the dead-end link this whole slice exists to
   -- remove, reappearing rarely and unreproducibly.
   --
-  -- The attach step sets `available_at` back to now(), so the normal path is not delayed at all. If
-  -- the attach never happens, the invitation still goes out two minutes later carrying the bare
-  -- acceptance link, which is the previous behaviour rather than a lost message.
+  -- The attach step sets `available_at` back to now(), so the normal path is not delayed at all. When
+  -- the attach never lands the hold simply expires — and the job STILL does not send, because the
+  -- worker refuses any job carrying `authTokenRequired` without a usable hash. Time expiry is not
+  -- permission to degrade to the bare acceptance link.
   update private.notification_jobs j
   set payload = j.payload
     || jsonb_build_object('mfaRequired', coalesce(p_mfa_required, false))
@@ -289,6 +290,92 @@ $$;
 revoke all on function public.attach_invitation_auth_token(uuid,text,uuid,text,text) from public,anon,authenticated;
 grant execute on function public.attach_invitation_auth_token(uuid,text,uuid,text,text) to service_role;
 
+
+
+-- ── Undo an invitation whose credential never arrived ────────────────────────────────────────────
+-- Fail-closed is only half a design. The route now answers 503 when the credential cannot be attached
+-- and tells the operator to send the invitation again — but `invite_staff_member` has already
+-- committed an `organization_memberships` row with status `invited`, and it rejects any second
+-- invitation for that user with `MEMBERSHIP_ALREADY_EXISTS` while a membership is
+-- `invited|active|suspended`. The form mints a fresh idempotency key on every submit, so the retry is
+-- not an idempotent replay either. The instruction was impossible to follow.
+--
+-- This rolls the failed attempt back so the ordinary action works. `revoked` is the one terminal
+-- membership state the duplicate guard ignores, and it frees the staff seat the preflight counted.
+--
+-- `service_role` only: it withdraws a membership, which is not a thing a browser caller may do by
+-- naming an id. Nothing is deleted — the invitation, the membership and the job all remain, marked,
+-- and an audit row records why, because "the invitation vanished" is a worse story for whoever reads
+-- the history later than "it was abandoned undelivered".
+create or replace function public.abandon_unsent_staff_invitation(
+  p_organization_id uuid,
+  p_invitation_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_membership_id uuid;
+  v_correlation_id uuid := gen_random_uuid();
+  v_job_status text;
+begin
+  if p_organization_id is null or p_invitation_id is null then
+    raise exception using errcode='23514',message='INVALID_INVITATION_REFERENCE';
+  end if;
+
+  select i.membership_id into v_membership_id
+  from public.invitations i
+  where i.id = p_invitation_id
+    and i.organization_id = p_organization_id
+    and i.invitation_type = 'organization_member'
+    and i.status = 'pending';
+  -- Not found is not an error: the caller is unwinding its own failure and may be retrying that
+  -- unwind. An already-abandoned invitation is the state it was asking for.
+  if v_membership_id is null then
+    return jsonb_build_object('abandoned', false);
+  end if;
+
+  -- REFUSE to abandon an invitation whose email already left. Past that point the recipient may hold a
+  -- working link, and revoking the membership under them would be a different and worse bug than the
+  -- one this repairs.
+  select j.status into v_job_status
+  from private.notification_jobs j
+  where j.organization_id = p_organization_id
+    and j.idempotency_key = 'staff-invitation:' || p_invitation_id::text;
+  if v_job_status in ('sent','processing') then
+    raise exception using errcode='23514',message='INVITATION_ALREADY_DELIVERING';
+  end if;
+
+  update private.notification_jobs j
+  set status = 'canceled', last_error = 'INVITATION_CREDENTIAL_NOT_ATTACHED'
+  where j.organization_id = p_organization_id
+    and j.idempotency_key = 'staff-invitation:' || p_invitation_id::text
+    and j.status in ('queued','failed');
+
+  update public.invitations i
+  set status = 'revoked', revoked_at = now()
+  where i.id = p_invitation_id and i.organization_id = p_organization_id;
+
+  update public.organization_memberships m
+  set status = 'revoked', ends_at = now(), updated_at = now(), version = m.version + 1
+  where m.id = v_membership_id and m.organization_id = p_organization_id;
+
+  insert into audit.audit_events(
+    organization_id,actor_user_id,actor_type,action_code,resource_type,
+    resource_id,correlation_id,reason,after_data
+  ) values (
+    p_organization_id,null,'system','membership.invitationAbandoned','organization_membership',
+    v_membership_id,v_correlation_id,'Activation credential could not be attached; invitation withdrawn undelivered.',
+    jsonb_build_object('invitationId',p_invitation_id,'reason','INVITATION_CREDENTIAL_NOT_ATTACHED')
+  );
+
+  return jsonb_build_object('abandoned', true);
+end;
+$$;
+revoke all on function public.abandon_unsent_staff_invitation(uuid,uuid) from public,anon,authenticated;
+grant execute on function public.abandon_unsent_staff_invitation(uuid,uuid) to service_role;
 
 -- ── The operator can see whether the invitation actually left ────────────────────────────────────
 -- "Queued" is honest but it is not the end of the story, and an operator who cannot see the rest has

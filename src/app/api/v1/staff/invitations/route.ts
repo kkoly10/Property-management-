@@ -138,9 +138,22 @@ export async function POST(request: Request) {
   });
   const attached = (attach.data as { attached?: unknown } | null)?.attached === true;
   if (attach.error || !attached) {
+    // Roll the failed attempt back before telling the operator to retry, because otherwise the retry
+    // is impossible: `invite_staff_member` has already committed an `invited` membership, and it
+    // rejects a second invitation for that user with MEMBERSHIP_ALREADY_EXISTS. The compensating
+    // command cancels the unsent job, revokes the invitation and withdraws the membership — which also
+    // returns the staff seat the preflight counted — so the ordinary "invite" action works again.
+    //
+    // Deliberately not conditional on it succeeding: if the unwind itself fails there is nothing
+    // further this request can do, and the message below is still the honest one. The invitation
+    // cannot send either way, because the worker refuses a job with no credential.
+    await admin.rpc("abandon_unsent_staff_invitation", {
+      p_organization_id: input.organizationId,
+      p_invitation_id: String(result.invitationId),
+    });
     return staffErrorResponse(
       "INVITATION_CREDENTIAL_NOT_ATTACHED",
-      "The invitation was recorded but its activation credential could not be attached, so its email will not be sent. Send the invitation again.",
+      "The invitation could not be prepared for delivery and has been withdrawn, so no email will be sent. Invite this person again.",
       503,
     );
   }
