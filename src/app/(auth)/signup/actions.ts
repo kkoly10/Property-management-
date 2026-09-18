@@ -1,5 +1,7 @@
 "use server";
 
+import { createHash } from "node:crypto";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { signupSchema } from "@/lib/validation/auth";
 import type { ActionState } from "@/lib/actions/state";
@@ -44,6 +46,26 @@ function signupFailure(message: string): ActionState {
   return { status: "error", message, requestId: crypto.randomUUID() };
 }
 
+function rateKey(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function claimSignupAttempt(
+  admin: ReturnType<typeof createAdminClient>,
+  email: string,
+): Promise<"allowed" | "limited" | "unavailable"> {
+  const requestHeaders = await headers();
+  const forwarded = requestHeaders.get("x-forwarded-for")?.split(",")[0]?.trim()
+    || requestHeaders.get("x-real-ip")?.trim()
+    || "";
+  const { data, error } = await admin.rpc("claim_public_signup_attempt", {
+    p_email_hash: rateKey(`email:${email.trim().toLowerCase()}`),
+    p_ip_hash: forwarded ? rateKey(`ip:${forwarded}`) : null,
+  });
+  if (error) return "unavailable";
+  return (data as { allowed?: unknown } | null)?.allowed === true ? "allowed" : "limited";
+}
+
 export async function signupAction(_previousState: ActionState, formData: FormData): Promise<ActionState> {
   const result = signupSchema.safeParse({ email: formData.get("email"), password: formData.get("password") });
 
@@ -53,6 +75,13 @@ export async function signupAction(_previousState: ActionState, formData: FormDa
 
   try {
     const admin = createAdminClient();
+    const throttle = await claimSignupAttempt(admin, result.data.email);
+    if (throttle === "unavailable") {
+      return signupFailure("Unable to start account setup right now. Please try again.");
+    }
+    if (throttle === "limited") {
+      return signupFailure("Too many signup attempts. Wait a few minutes and try again.");
+    }
 
     // generateLink(type="signup") is Supabase's documented custom-email flow: it creates the
     // unconfirmed password account and returns the credential WITHOUT invoking Supabase's mailer.
