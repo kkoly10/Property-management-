@@ -1,10 +1,23 @@
 import { z } from "zod";
+import { normalizePhoneE164 } from "@/lib/phone";
 
 const optionalText = (max: number) => z.string().trim().max(max).optional().default("");
 const reserved = new Set([
   "www","app","owner","vendor","admin","api","platform","mail","auth",
   "static","assets","cdn","internal","maplecourt",
 ]);
+
+const phoneE164 = z.string().trim().transform((value, ctx) => {
+  const normalized = normalizePhoneE164(value);
+  if (normalized == null) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Enter a 10-digit US/Canada number or an international number with +country code.",
+    });
+    return z.NEVER;
+  }
+  return normalized;
+});
 
 export const livingCommunityProfileSchema = z.object({
   propertyId: z.string().uuid(),
@@ -17,10 +30,7 @@ export const livingCommunityProfileSchema = z.object({
   publicAddressText: optionalText(300),
   headline: optionalText(160),
   leasingEmail: z.union([z.literal(""), z.string().trim().email().max(254)]).default(""),
-  leasingPhoneE164: z.union([
-    z.literal(""),
-    z.string().trim().regex(/^\+[1-9][0-9]{7,14}$/, "Use E.164 format, e.g. +15405551234."),
-  ]).default(""),
+  leasingPhoneE164: phoneE164.default(""),
   officeHours: z.array(z.string().trim().min(1).max(160)).max(14).default([]),
   amenities: z.array(z.string().trim().min(1).max(120)).max(24).default([]),
   publicNoticeTitle: optionalText(160),

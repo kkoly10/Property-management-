@@ -81,8 +81,8 @@ export function AppShell({
 
       <div className="min-w-0">
         <header className="sticky top-0 z-30 border-b bg-card/96 backdrop-blur supports-[backdrop-filter]:bg-card/90">
-          <div className="flex min-h-[4.5rem] items-center gap-4 px-4 lg:px-7 xl:px-8">
-            <div className="shrink-0 lg:hidden">
+          <div className="flex min-h-[4.5rem] flex-col items-stretch gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4 sm:py-0 lg:px-7 xl:px-8">
+            <div className="shrink-0 self-start sm:self-auto lg:hidden">
               <Wordmark className="max-w-[7.5rem]" />
             </div>
 
@@ -119,7 +119,7 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="px-4 py-6 sm:px-6 lg:px-7 lg:py-7 xl:px-8">{children}</main>
+        <main className="min-w-0 max-w-full px-4 py-6 sm:px-6 lg:px-7 lg:py-7 xl:px-8">{children}</main>
       </div>
     </div>
   );

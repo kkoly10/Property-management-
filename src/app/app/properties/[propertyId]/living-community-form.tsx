@@ -12,6 +12,7 @@ import {
   Send,
 } from "lucide-react";
 import type { OperatorLivingCommunityProfile } from "@/lib/data/living-community";
+import { normalizePhoneE164 } from "@/lib/phone";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,14 @@ export function LivingCommunityForm({
 
   async function save(nextStatus: "draft" | "published") {
     if (disabled || pending) return;
+    const normalizedPhone = normalizePhoneE164(leasingPhoneE164);
+    if (normalizedPhone == null) {
+      setError("Enter a 10-digit US/Canada phone number or include +country code for an international number.");
+      setSaved(null);
+      return;
+    }
+    if (normalizedPhone !== leasingPhoneE164) setLeasingPhoneE164(normalizedPhone);
+
     setPending(nextStatus);
     setError(null);
     setSaved(null);
@@ -76,7 +85,7 @@ export function LivingCommunityForm({
           publicAddressText,
           headline,
           leasingEmail,
-          leasingPhoneE164,
+          leasingPhoneE164: normalizedPhone,
           officeHours: lines(officeHours),
           amenities: lines(amenities),
           publicNoticeTitle: noticeTitle,
@@ -138,7 +147,7 @@ export function LivingCommunityForm({
                 maxLength={63}
                 disabled={disabled}
                 placeholder="oak-residences"
-                className="border-0 shadow-none focus-visible:ring-0"
+                className="min-w-0 flex-1 border-0 shadow-none focus-visible:ring-0"
               />
               <span className="flex items-center border-l px-3 text-xs text-muted-foreground">.crecyliving.com</span>
             </div>
@@ -187,12 +196,22 @@ export function LivingCommunityForm({
             <Label htmlFor="living-phone">Leasing phone</Label>
             <Input
               id="living-phone"
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
               value={leasingPhoneE164}
               onChange={(event) => setLeasingPhoneE164(event.target.value)}
+              onBlur={() => {
+                const normalized = normalizePhoneE164(leasingPhoneE164);
+                if (normalized != null && normalized !== leasingPhoneE164) setLeasingPhoneE164(normalized);
+              }}
               disabled={disabled}
-              placeholder="+15405551234"
+              placeholder="(540) 555-1234"
               className="mt-2"
             />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              US/Canada: enter 10 digits. Crecy stores +1 automatically. Other countries: include +country code.
+            </p>
           </div>
         </div>
 

@@ -8,6 +8,11 @@ const propertyPage = readFileSync(resolve(__dirname, "../../app/app/properties/[
 const form = readFileSync(resolve(__dirname, "../../app/app/properties/[propertyId]/living-community-form.tsx"), "utf8");
 const api = readFileSync(resolve(__dirname, "../../app/api/v1/living-community-profile/route.ts"), "utf8");
 const migration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260905170000_phase_8_living_community_controls.sql"), "utf8");
+const saveRepair = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260918221500_fix_living_community_save_citext.sql"), "utf8");
+const appShell = readFileSync(resolve(__dirname, "../../components/app/app-shell.tsx"), "utf8");
+const input = readFileSync(resolve(__dirname, "../../components/ui/input.tsx"), "utf8");
+const textarea = readFileSync(resolve(__dirname, "../../components/ui/textarea.tsx"), "utf8");
+const nativeSelect = readFileSync(resolve(__dirname, "../../components/ui/native-select.tsx"), "utf8");
 
 describe("Crecy Living mobile login and operator controls", () => {
   it("does not vertically center the mobile auth form below a large blank viewport", () => {
@@ -43,6 +48,27 @@ describe("Crecy Living mobile login and operator controls", () => {
     expect(migration).toContain("VERSION_CONFLICT");
     expect(migration).toContain("SaveLivingCommunityProfile");
     expect(migration).toContain("living.community_profile.saved");
+  });
+
+  it("schema-qualifies citext inside the empty-search-path save RPC", () => {
+    expect(saveRepair).toContain("set search_path = ''");
+    expect(saveRepair).toContain("::public.citext");
+    expect(saveRepair).not.toMatch(/::citext\b/);
+  });
+
+  it("keeps phone controls usable on iPhone and normalizes before submission", () => {
+    expect(form).toContain('type="tel"');
+    expect(form).toContain('inputMode="tel"');
+    expect(form).toContain("normalizePhoneE164");
+    for (const control of [input, textarea, nativeSelect]) {
+      expect(control).toContain("text-base sm:text-sm");
+    }
+  });
+
+  it("gives the mobile operator header a full-width search row", () => {
+    expect(appShell).toContain("flex-col items-stretch");
+    expect(appShell).toContain("sm:flex-row");
+    expect(appShell).toContain("min-w-0 max-w-full");
   });
 
   it("preserves media columns when public metadata is saved", () => {
