@@ -11,7 +11,7 @@ const phoneE164 = z.string().trim().transform((value, ctx) => {
   const normalized = normalizePhoneE164(value);
   if (normalized == null) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       message: "Enter a 10-digit US/Canada number or an international number with +country code.",
     });
     return z.NEVER;
