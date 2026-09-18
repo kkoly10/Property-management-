@@ -41,6 +41,7 @@ export default async function TeamSettingsPage() {
           staffSeatCount={workspace.staffSeatCount}
           staffSeatLimit={workspace.staffSeatLimit}
           members={workspace.members}
+          invitations={workspace.invitations}
           roles={workspace.roles}
           properties={workspace.properties}
           disabled={workspace.mode !== "ready"}

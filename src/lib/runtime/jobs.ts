@@ -21,6 +21,26 @@ export type JobOutcome =
 type Client = SupabaseClient;
 
 // ── Transactional notifications ───────────────────────────────────────────────────────────────────
+/**
+ * Whether this job was queued under the architecture that promises a one-click sign-in.
+ *
+ * Keyed on a flag the command writes, NOT on the template code, so a job queued before this shipped
+ * keeps the legacy behaviour and still delivers. New jobs opt in; old ones are untouched.
+ */
+function requiresAuthCredential(payload: Record<string, unknown>): boolean {
+  return payload.authTokenRequired === true;
+}
+
+/**
+ * The same shape `/auth/confirm` will accept and `attach_invitation_auth_token` enforces. Checking it
+ * here too means a truncated or malformed value is treated as absent rather than mailed as a link that
+ * cannot redeem.
+ */
+function hasUsableAuthCredential(payload: Record<string, unknown>): boolean {
+  const hash = payload.authTokenHash;
+  return typeof hash === "string" && hash.length >= 16 && hash.length <= 512 && /^[A-Za-z0-9_-]+$/.test(hash);
+}
+
 export async function runNotificationDispatch(
   supabase: Client,
   input: { channel: string; limit: number; workerRunId: string; stallMinutes: number },
@@ -63,24 +83,48 @@ export async function runNotificationDispatch(
       outcome = { ok: false, errorCode: "MISSING_RECIPIENT_ADDRESS", retryable: false };
     } else if (!hasTemplate(job.templateCode)) {
       outcome = { ok: false, errorCode: "UNKNOWN_TEMPLATE_CODE", retryable: false };
+    } else if (requiresAuthCredential(job.payload) && !hasUsableAuthCredential(job.payload)) {
+      // FAIL CLOSED. An invitation queued under this architecture says, in its own copy, that opening
+      // the link signs the recipient in. Without the credential that sentence is false: the bare
+      // acceptance link dead-ends for anyone not already signed in, and the worker would still mark the
+      // message `sent`, so the delivery state would report a usable invitation that is not one.
+      //
+      // Retryable, because the honest case is a race — the job became claimable in the window between
+      // the command committing and the route's service-role attach landing, and the next attempt will
+      // find the credential there. When it never arrives the backoff exhausts and the job
+      // dead-letters, which surfaces to the operator as "Email delivery failed". That is the truth,
+      // and it is the outcome the two-minute hold exists to make rare rather than to paper over: time
+      // expiry is not permission to send the broken link.
+      outcome = { ok: false, errorCode: "INVITATION_CREDENTIAL_MISSING", retryable: true };
     } else {
       // A secure-link delivery ships the token to the worker so the URL can be built here; the queue
       // row is scrubbed of it as soon as this job reaches a terminal state.
       const token = typeof job.payload.secureLinkToken === "string" ? job.payload.secureLinkToken : null;
       const link = token ? secureLinkUrl(token) : null;
       const payload = link ? { ...job.payload, secureLinkUrl: link } : job.payload;
-      const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload });
 
       // `document_delivered` is the one template that reaches more than one audience, so its template
-      // code cannot say which brand should appear in the From line. The delivery row already records
-      // the recipient's relationship, so resolve it from there rather than guessing — and rather than
-      // widening the queue payload, which would mean replacing a security-definer function and
-      // applying a migration out of band to fix a From address.
+      // code cannot say which brand should appear in the From line — NOR which portal the recipient
+      // can actually open. The delivery row already records the recipient's relationship, so resolve
+      // it from there rather than guessing, and rather than widening the queue payload, which would
+      // mean replacing a security-definer function and applying a migration out of band.
       //
-      // Failing to resolve is not an error: the sender falls back to the neutral operator identity,
-      // which is exactly the behavior before this lookup existed. A brand is worth a query; it is not
-      // worth dead-lettering a document delivery.
+      // This runs BEFORE rendering, which it did not use to. The audience decided only the From line,
+      // so resolving it afterwards was harmless; it now also decides the link in the body, and a
+      // template cannot be handed a fact after it has already used it. That ordering bug shipped as
+      // `link("/documents", "operator")` — the resident path on the operator origin, a page that
+      // exists for nobody who receives this message.
+      //
+      // Failing to resolve is not an error: the sender falls back to the neutral operator identity and
+      // the template renders no portal button. A brand is worth a query; it is not worth
+      // dead-lettering a document delivery.
       let audience = null as ReturnType<typeof audienceForRelationshipType>;
+      // Where the recipient manages preferences, which is NOT the same as whose brand sends the
+      // message. A vendor contact's document mail carries the neutral Crecy identity by design
+      // (FD-037: Crecy Vendor is reserved and unbuilt), and using that one value for both meant the
+      // footer offered a vendor "Manage email preferences" on the operator console they have no
+      // account on — the portal-link defect, one layer down.
+      let preferenceAudience = null as "operator" | "resident" | "owner" | "none" | null;
       const deliveryId = job.payload.documentDeliveryId;
       if (job.templateCode === "document_delivered" && typeof deliveryId === "string" && job.organizationId) {
         // Scoped by organization as well as id. This client is service_role and bypasses RLS, so the
@@ -93,7 +137,15 @@ export async function runNotificationDispatch(
           .eq("organization_id", job.organizationId)
           .maybeSingle();
         audience = audienceForRelationshipType(delivery?.recipient_relationship_type);
+        const relationshipType = delivery?.recipient_relationship_type;
+        if (relationshipType === "resident_person") preferenceAudience = "resident";
+        else if (relationshipType === "owner_entity") preferenceAudience = "owner";
+        // A vendor contact has no preference surface. Resolved-but-none, not unresolved: null would
+        // fall back to the brand mapping and reintroduce the link.
+        else if (relationshipType === "vendor_contact") preferenceAudience = "none";
       }
+
+      const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload, audience });
 
       outcome = rendered
         ? await transport.send({
@@ -103,6 +155,7 @@ export async function runNotificationDispatch(
             locale: job.locale,
             templateCode: job.templateCode,
             audience,
+            preferenceAudience,
             rendered,
           })
         : { ok: false, errorCode: "UNKNOWN_TEMPLATE_CODE", retryable: false };

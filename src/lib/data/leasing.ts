@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
+import { getRelationshipInvitationDelivery, type InvitationDeliveryState } from "@/lib/data/invitation-delivery";
 import { createClient } from "@/lib/supabase/server";
 
 export type LeasePropertyOption = {
@@ -79,12 +80,14 @@ export type ResidentDirectoryRow = {
   rentAmountMinor: number;
   currencyCode: string;
   invitationState: "active" | "invited" | "not_invited";
+  /** Whether the invitation email left. Null unless this resident has a pending invitation. */
+  invitationDelivery: InvitationDeliveryState | null;
 };
 
 export async function getResidentDirectory(organizationId: string | null): Promise<{ mode: "setup" | "ready" | "error"; residents: ResidentDirectoryRow[]; requestId?: string }> {
   if (!getPublicSupabaseConfig()) return {
     mode: "setup",
-    residents: [{ personId: "preview-resident", organizationId: "20000000-0000-4000-8000-000000000002", name: "Jordan Rivera", email: "jordan@example.com", phoneE164: "+1 202 555 0110", householdName: "Rivera household", propertyName: "Maple Court", unitCode: "101", tenancyStatus: "active", leaseStart: "2026-01-01", leaseEnd: "2026-12-31", rentAmountMinor: 185000, currencyCode: "USD", invitationState: "not_invited" }],
+    residents: [{ personId: "preview-resident", organizationId: "20000000-0000-4000-8000-000000000002", name: "Jordan Rivera", email: "jordan@example.com", phoneE164: "+1 202 555 0110", householdName: "Rivera household", propertyName: "Maple Court", unitCode: "101", tenancyStatus: "active", leaseStart: "2026-01-01", leaseEnd: "2026-12-31", rentAmountMinor: 185000, currencyCode: "USD", invitationState: "not_invited", invitationDelivery: null }],
   };
   try {
     const supabase = await createClient();
@@ -98,6 +101,11 @@ export async function getResidentDirectory(organizationId: string | null): Promi
       supabase.from("units").select("id,unit_code").eq("organization_id", organizationId),
       supabase.from("user_relationships").select("relationship_id,status").eq("organization_id", organizationId).eq("relationship_type", "resident_person").in("status", ["active", "invited"]),
     ]);
+    // Whether each pending invitation's EMAIL left. Separate from `invitationState`, which only says a
+    // record exists. Resolved through a definer RPC because the queue is not readable from the browser.
+    const invitationDelivery = organizationId
+      ? await getRelationshipInvitationDelivery(supabase, organizationId)
+      : new Map<string, InvitationDeliveryState>();
     if (peopleError) throw peopleError;
     const householdById = new Map((households ?? []).map((household) => [household.id, household]));
     const tenancyByHousehold = new Map((tenancies ?? []).map((tenancy) => [tenancy.household_id, tenancy]));
@@ -133,6 +141,7 @@ export async function getResidentDirectory(organizationId: string | null): Promi
         rentAmountMinor: Number(lease.rent_amount_minor),
         currencyCode: lease.currency_code,
         invitationState: relationship === "active" ? "active" : relationship === "invited" ? "invited" : "not_invited",
+        invitationDelivery: relationship === "invited" ? invitationDelivery.get(person.id) ?? "unknown" : null,
       });
     }
     residents.sort((a, b) => a.name.localeCompare(b.name));

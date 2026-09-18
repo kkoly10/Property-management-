@@ -186,3 +186,53 @@ describe("relay audience handling", () => {
     expect(payload().headers).toBeUndefined();
   });
 });
+
+describe("the preference surface, which is not the brand", () => {
+  // `audienceForRelationshipType("vendor_contact")` returns "operator" on purpose: Crecy Vendor is a
+  // reserved, unbuilt surface (FD-037), so vendor mail carries the neutral Crecy identity rather than
+  // advertising a product that does not exist. Using that one value for the preference link as well
+  // offered a vendor "Manage email preferences" on a console they have no account on.
+  function documentMessage(overrides: Record<string, unknown>) {
+    return message({
+      templateCode: "document_delivered",
+      subject: "A document is available",
+      body: "Northstar shared a document with you.",
+      ...overrides,
+    });
+  }
+
+  it("sends a resident to the Living preferences page", async () => {
+    await POST(documentMessage({ audience: "resident", preferenceAudience: "resident" }));
+    expect(String(payload().html)).toContain("crecyliving.com/more/preferences");
+    expect(payload().headers).toHaveProperty("List-Unsubscribe");
+  });
+
+  it("sends an owner to the Owner preferences page", async () => {
+    vi.stubEnv("NEXT_PUBLIC_OWNER_ORIGIN", "https://owner.crecyos.com");
+    await POST(documentMessage({ audience: "owner", preferenceAudience: "owner" }));
+    expect(String(payload().html)).toContain("owner.crecyos.com");
+    expect(String(payload().html)).toContain("Manage email preferences");
+  });
+
+  it("offers a vendor no preferences link and no List-Unsubscribe", async () => {
+    await POST(documentMessage({ audience: "operator", preferenceAudience: "none" }));
+    const html = String(payload().html);
+    expect(html, "a vendor was offered a preferences page").not.toContain("Manage email preferences");
+    expect(html).not.toContain("/settings/notifications");
+    expect(payload().headers ?? {}, "a vendor got a List-Unsubscribe header").not.toHaveProperty("List-Unsubscribe");
+  });
+
+  it("still sends vendor mail from the neutral Crecy identity", async () => {
+    // Withholding the preference surface must not change whose name is on the message. The brand and
+    // the portal are separate decisions, which is the entire point of the split.
+    await POST(documentMessage({ audience: "operator", preferenceAudience: "none" }));
+    expect(payload().from).toContain("@mail.crecyos.com");
+    expect(payload().from, "a vendor brand was invented").not.toContain("Vendor");
+  });
+
+  it("falls back to the brand mapping when the field is absent", async () => {
+    // A worker that predates this field must behave exactly as it did before.
+    await POST(documentMessage({ audience: "resident" }));
+    expect(String(payload().html)).toContain("crecyliving.com/more/preferences");
+  });
+});

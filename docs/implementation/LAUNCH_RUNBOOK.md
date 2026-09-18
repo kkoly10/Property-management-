@@ -16,8 +16,8 @@ so and names what is missing rather than describing a workaround.
 | Gate | `npm run check` green |
 | Deployed | **Yes, and it is live.** Vercel `property-management`, deployment `dpl_EvDTZdhG6yjq3yDGRi6X4gLZFEoa`, commit `89493ce`, target production, `READY`. Reachable at `property-management-six-plum.vercel.app`. |
 | Deployed build state | **Setup mode.** No Supabase environment variables are set on the Vercel project, so every product screen renders preview data instead of the database. See §2 step 4. |
-| Supabase | **`Property` / `alrirkvfcmhqumqaidxj`** — restored and `ACTIVE_HEALTHY`. Schema present, **no data**: 0 auth users, 0 organizations, 0 journal entries. |
-| Migrations | **All 60 applied.** The 26-file expand step ran on 2026-08-28 and was verified against a local replay — see §2. |
+| Supabase | **`Property-management` / `tbivpbbejttacfcqeqia`** — `ACTIVE_HEALTHY`, verified through the connected Supabase API on 2026-09-18. Holds `public.invitations` and `private.notification_jobs`. At that check: 3 organizations, 3 notification jobs. The former `Property` / `alrirkvfcmhqumqaidxj` is **`INACTIVE`** and is not the production database; the "restored, no data" observation this line used to carry was made against it and no longer applies. |
+| Migrations | **The Phase 8 invitation-email migration is NOT in the production ledger** as of 2026-09-18. Verify the ledger against the active project before applying anything — see the contract-release README for the required order. |
 | Providers | Scan relay, mail relay and Stripe Connect are all unconfigured. |
 
 ---
@@ -28,14 +28,19 @@ Set these on the Vercel project before the first production deploy. `NEXT_PUBLIC
 into the client bundle at **build** time, so a value added after a build does not take effect until the
 next one.
 
-The Supabase project is **`alrirkvfcmhqumqaidxj`** ("Property"). Dashboard paths below are relative to
-`supabase.com/dashboard/project/alrirkvfcmhqumqaidxj`.
+The Supabase project is **`tbivpbbejttacfcqeqia`** ("Property-management"). Dashboard paths below are
+relative to `supabase.com/dashboard/project/tbivpbbejttacfcqeqia`.
+
+> This document previously named `alrirkvfcmhqumqaidxj` ("Property"). **Verified through the connected
+> Supabase API on 2026-09-18:** `tbivpbbejttacfcqeqia` / `Property-management` is `ACTIVE_HEALTHY` and
+> holds Crecy's `public.invitations` and `private.notification_jobs`; `alrirkvfcmhqumqaidxj` /
+> `Property` is `INACTIVE`. Use the active project for every instruction in this runbook.
 
 ### Required for the app to work at all
 
 | Variable | Where to get it | If unset |
 | --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | `https://alrirkvfcmhqumqaidxj.supabase.co` — Settings → API → Project URL | The whole app runs in demo/preview mode with hardcoded sample data |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://tbivpbbejttacfcqeqia.supabase.co` — Settings → API → Project URL | The whole app runs in demo/preview mode with hardcoded sample data |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Settings → API Keys → the `sb_publishable_…` key (not the legacy `anon` JWT, and never the secret key) | Same |
 | `SUPABASE_SECRET_KEY` **or** `SUPABASE_SERVICE_ROLE_KEY` | Either works — the first *usable* one wins, and a `replace_me` placeholder counts as unset. `SUPABASE_SECRET_KEY` is Settings → API Keys → **Secret key** (`sb_secret_…`). `SUPABASE_SERVICE_ROLE_KEY` is the legacy JWT the Supabase↔Vercel integration provisions automatically, so a linked Vercel project already has it | Invitation delivery and every worker route fail |
 | `NEXT_PUBLIC_SITE_URL` | The **operator application** origin — production `https://app.crecyos.com`, no trailing slash. Also add it to Supabase → Authentication → URL Configuration → Redirect URLs, or email confirmation links break. This is NOT the marketing origin | Auth callbacks, secure document links, transactional mail links and Stripe return URLs are built from `http://localhost:3000` |
@@ -59,6 +64,8 @@ data, that is the first thing to check.
 | --- | --- | --- |
 | `CRECY_DOCUMENT_SCAN_RELAY_URL` + `_SECRET` | Your scanning service's endpoint; the secret is yours to generate and share with it | The scan route reports **503** and every uploaded document stays `quarantined` — unusable, which is the safe direction |
 | `CRECY_NOTIFICATION_RELAY_URL` + `_SECRET` | Your mail relay's endpoint; the secret is yours to generate and share with it | The notification route reports **503**; jobs queue and are never sent |
+| `RESEND_API_KEY` | Resend → API Keys. Also verify both sending domains — see *Transactional email* below | The bundled relay reports **503**; no invitation or notification is delivered |
+| `SUPABASE_AUTH_HOOK_SECRET` | **Copy it from Supabase → Authentication → Hooks**, which generates it. Do NOT invent one — see *Transactional email* below for the format, which is not a plain random string | The Send Email Auth Hook answers **500**. Harmless while the hook is disabled; stops all authentication mail once it is enabled |
 | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | Stripe dashboard → API keys (`sk_test_…`), and Developers → Webhooks → your endpoint → signing secret (`whsec_…`) | Payment routes report 503; manual payment recording still works |
 
 ### Optional
@@ -104,6 +111,87 @@ Supabase → Authentication → URL Configuration:
   `https://*.crecyliving.com/**`, which would accept any path on any community host. The wildcard covers
   ONE label only, which is the same shape the host classifier enforces (`a.b.crecyliving.com` is not a
   community). Do not widen the operator/owner callbacks to accommodate residents.
+
+### Transactional email — required before any invitation is sent
+
+Nothing in this section is performed by the code. Each item is a console change a human makes, and
+until then invitations queue and are never delivered.
+
+**1. Resend.** `RESEND_API_KEY` (Resend → API Keys). Verify the two sending domains and add their DNS
+records:
+
+| Sending domain | Sends as | Used for |
+| --- | --- | --- |
+| `mail.crecyos.com` | `Crecy <notifications@mail.crecyos.com>` / `Crecy Owner <notifications@mail.crecyos.com>` | operator and owner mail |
+| `mail.crecyliving.com` | `Crecy Living <notifications@mail.crecyliving.com>` | resident mail |
+
+Two domains rather than one is deliberate: resident mail links to `crecyliving.com`, and a From domain
+that disagrees with the link domain reads as phishing to both the recipient and the receiving filter.
+Override either identity with `CRECY_MAIL_FROM_OPERATOR` / `_RESIDENT` / `_OWNER` if the addresses
+change; the defaults above apply when they are unset.
+
+**2. Turn OFF Resend click and open tracking** for both domains. Tracking rewrites every href through a
+tracking domain, and an authentication link that arrives pointing at a redirector is both less likely to
+survive a mail filter and impossible for a recipient to check before clicking. This is the single
+setting most likely to break sign-in while appearing to work.
+
+**3. Reply-To.** Defaults to `support@crecyos.com` (operator, owner) and `support@crecyliving.com`
+(resident), overridable per audience with `CRECY_MAIL_REPLY_TO_OPERATOR` / `_RESIDENT` / `_OWNER`.
+**Neither inbox is known to be monitored — this is an external check for the founder, not a code
+change.** Confirm each address receives mail and is read, or set the overrides to an address that is,
+before the first invitation goes out. A Reply-To that bounces is worse than none: it tells a recipient
+their reply was received when it was not.
+
+**4. The relay.** `CRECY_NOTIFICATION_RELAY_URL` = `https://app.crecyos.com/api/internal/notifications/relay`
+and `CRECY_NOTIFICATION_RELAY_SECRET` = `openssl rand -hex 32`. The worker embeds no mail vendor; it
+POSTs rendered messages to this URL, which is why the vendor stays swappable.
+
+**5. Supabase Site URL and Redirect URLs — still required, but NOT by the invitation flow.** Configure
+them as §1b describes: the ordinary Supabase auth callback (PKCE `?code=` through `/auth/callback`)
+depends on them, and a wrong Site URL still breaks sign-in.
+
+What they no longer govern is invitation delivery. `generateInvitationAuthToken()` calls
+`auth.admin.generateLink({ type: "magiclink", email })` with **no `redirectTo`**, discards
+`action_link`, and keeps only `properties.hashed_token`; the worker then builds Crecy's own
+`/auth/confirm?token_hash=…&next=…`. So GoTrue is never asked to choose a destination for an
+invitation, and no invitation acceptance path needs to be on the Redirect URLs list.
+
+An earlier version of this runbook said the opposite, and called it a hard prerequisite. It described a
+real hazard of the design that PR #60 replaced — GoTrue validates `redirect_to` against that list and
+**silently substitutes the Site URL** on a miss, which presents as "the link works but lands on the
+wrong page" with nothing in any log. Discarding `redirect_to` is what removed it. The invitation
+destination boundary is now Crecy's own `safeRedirectPath`, applied at `/auth/confirm`.
+
+**6. The Send Email Auth Hook — built, deliberately NOT enabled.** `/api/internal/auth/send-email`
+renders Supabase's own authentication mail (sign-in links, password resets, email change, the security
+notifications) in Crecy's design instead of Supabase's defaults. Enabling it is a production step to
+take **after** the deployed URL has been verified, in this order:
+
+  1. In Supabase → Authentication → Hooks, generate the Send Email Hook secret and copy it **verbatim**
+     into `SUPABASE_AUTH_HOOK_SECRET` on Vercel, then deploy. The route answers **500** until it is set
+     — an unconfigured secret is our fault, not a forged request, so it fails loudly rather than
+     looking like a rejection.
+
+     **Do not generate this one yourself.** It is a Standard Webhooks symmetric key and looks like
+     `v1,whsec_<base64>`; the verifier base64-decodes the part after `whsec_` to get the signing bytes.
+     An earlier version of this runbook said `openssl rand -hex 32`, which is the wrong shape: hex text
+     is not the base64 the two sides must agree on, so the signature would never match and every
+     authentication email would fail with a 401 that looks exactly like an attack. The verifier accepts
+     the value with or without the `v1,` prefix, so pasting what the dashboard shows is safe.
+  2. Confirm `https://app.crecyos.com/api/internal/auth/send-email` responds (a 401 to an unsigned POST
+     is the correct answer and proves the route is live).
+  3. Supabase → Authentication → Hooks → Send Email Hook → HTTPS endpoint, same URL, same secret.
+  4. Send yourself one password reset and read it before enabling anything else.
+
+  Until step 3, Supabase keeps sending its own default templates and nothing in this route runs.
+  Turning the hook on with a wrong or missing secret does not degrade to the defaults — it stops
+  authentication mail entirely, because Supabase reads the non-2xx as "not sent".
+
+**Reviewing the templates without sending mail:** `/dev/email-preview/<fixture>` renders 13 fixtures —
+nine representative messages plus four layout stress cases (a long organization name, Spanish, French,
+and a document for a recipient with no portal). It 404s in production and on any unlabeled deployment; see
+`src/lib/notifications/email-fixtures.ts` for the fixture ids and for why the category messages need
+the origin variables set to render their button.
 
 ### Stripe — required after the domains resolve
 
@@ -269,7 +357,14 @@ recorded here so the next person who diffs the schema against the repo is not su
 2. **`CRON_SECRET` is unset.** No rent generates, no mail sends, no document is ever scanned. The
    endpoints correctly return `401` rather than running unauthenticated — verified live.
 3. **Scan relay unconfigured.** Every uploaded document stays quarantined and unusable.
-4. **Mail relay unconfigured.** Invitations never arrive, so no resident or owner can be onboarded.
+4. **Mail unconfigured.** `RESEND_API_KEY` plus the two verified sending domains plus
+   `CRECY_NOTIFICATION_RELAY_URL`/`_SECRET`. Invitations never arrive, so no resident or owner can be
+   onboarded. Two things travel with this one and are easy to forget because neither produces an error:
+   Resend **click tracking must be off**, or every authentication link arrives rewritten through a
+   redirector. (The Supabase redirect allow-list is **not** among them: the invitation flow sends no
+   `redirect_to` — see *Transactional email* step 5.) Reply-To defaults to
+   `support@crecyos.com` / `support@crecyliving.com`, **neither of which is known to be a monitored
+   inbox** — confirm or override before the first invitation.
 5. **Stripe unconfigured.** Online payments unavailable; manual recording still works, so this is the
    only one of the five a pilot could survive without.
 

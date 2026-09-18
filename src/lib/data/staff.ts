@@ -21,11 +21,26 @@ export type StaffMember = {
   isCurrentUser: boolean;
   version: number;
 };
+/**
+ * Whether the invitation EMAIL left, which is a different question from whether the invitation is
+ * still pending. A pending invitation whose mail dead-lettered will never be accepted, and without
+ * this the operator has no way to tell that apart from one sitting in an inbox.
+ *
+ * Coarse on purpose: the relay's own error text answers a question the operator did not ask and
+ * cannot act on.
+ */
+export type StaffInvitationDelivery =
+  | "queued" | "sending" | "sent" | "retrying" | "undeliverable" | "canceled" | "unknown";
+
+const DELIVERY_STATES: StaffInvitationDelivery[] =
+  ["queued", "sending", "sent", "retrying", "undeliverable", "canceled", "unknown"];
+
 export type StaffInvitation = {
   invitationId: string;
   membershipId: string;
   email: string;
   status: "pending" | "accepted" | "expired" | "revoked" | "superseded";
+  deliveryState: StaffInvitationDelivery;
   expiresAt: string;
   createdAt: string;
 };
@@ -159,6 +174,9 @@ export async function getStaffWorkspace(organizationId: string | null): Promise<
           membershipId: String(item.membershipId),
           email: String(item.email),
           status: String(item.status) as StaffInvitation["status"],
+          // Coerced against the known set rather than cast: an unrecognized value means the worker
+          // grew a state this build does not know, and "unknown" is the honest rendering of that.
+          deliveryState: DELIVERY_STATES.find((state) => state === item.deliveryState) ?? "unknown",
           expiresAt: String(item.expiresAt),
           createdAt: String(item.createdAt),
         };

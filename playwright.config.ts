@@ -33,7 +33,15 @@ export default defineConfig({
   webServer: {
     // The demo harness is not a production deployment. Saying so keeps the legal fail-closed gate
     // honest: it stays strict everywhere that has not explicitly declared otherwise.
-    env: { CRECY_DEPLOYMENT_ENV: "test" },
+    //
+    // NEXT_PUBLIC_SITE_URL points at the harness itself. Transactional email builds its links from a
+    // configured origin — an invitation's sign-in link is assembled from one rather than carried in
+    // the payload — so with nothing configured the templates emit relative paths, the renderer drops
+    // them because only http(s) reaches an href, and every message renders with no button. Pointing it
+    // at 127.0.0.1 is the LOCAL configuration, not a production one: `originsAreLocal()` still reports
+    // true for a loopback host, so every audience collapses to this one origin exactly as it does in
+    // `npm run dev`, and no audience-splitting behaviour is changed by its presence.
+    env: { CRECY_DEPLOYMENT_ENV: "test", NEXT_PUBLIC_SITE_URL: "http://127.0.0.1:3100" },
     command: "npx next start -p 3100 -H 127.0.0.1",
     url: "http://127.0.0.1:3100/login",
     timeout: 120_000,

@@ -1,9 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { originForAudience } from "@/lib/runtime/host";
-import { requirePublicSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
+import { generateInvitationAuthToken } from "@/lib/auth/invitation-link";
 import { staffDatabaseError, staffErrorResponse } from "@/lib/api/staff";
 import { inviteStaffSchema } from "@/lib/validation/staff";
 
@@ -48,14 +46,6 @@ export async function POST(request: Request) {
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
   const tokenPrefix = tokenHash.slice(0, 10);
   const activationPath = `/settings/team/accept?token=${encodeURIComponent(rawToken)}`;
-  // Staff activate in Crecy OS by definition, so the operator origin is correct here — but it is
-  // stated explicitly rather than inherited from the request host.
-  // Falls back to the request origin when no app origin is configured: originForAudience
-  // returns "" there, and new URL(path, "") throws — which would turn an unconfigured preview
-  // or a bare local checkout into a 500 on every invitation.
-  const callbackUrl = new URL("/auth/callback", originForAudience("operator") || request.url);
-  callbackUrl.searchParams.set("next", activationPath);
-
   let admin;
   try {
     admin = createAdminClient();
@@ -84,6 +74,25 @@ export async function POST(request: Request) {
     createdAuthUser = true;
   }
 
+  // The ONE email's credential, minted here and sent by nobody but the Crecy worker.
+  //
+  // `generateLink` sends no mail, which is why it replaced `signInWithOtp` — that call made Supabase
+  // send a second, competing invitation email and left this route marking the Crecy job "sent" for a
+  // message no transport had ever accepted.
+  //
+  // What comes back is the TOKEN HASH, not the action link. The action link is an implicit-flow
+  // redirect that delivers the session in a URL fragment, which no server route can read; see
+  // `invitation-link.ts`. The worker builds Crecy's own `/auth/confirm` URL around this hash.
+  const authToken = await generateInvitationAuthToken(admin, { email: input.email });
+  if (!authToken.ok) {
+    if (createdAuthUser) await admin.auth.admin.deleteUser(invitedUserId).catch(() => undefined);
+    return staffErrorResponse(
+      "INVITATION_LINK_UNAVAILABLE",
+      "The invitation could not be prepared because Supabase Auth did not return an activation link. Retry this request.",
+      503,
+    );
+  }
+
   const { data, error } = await supabase.rpc("invite_staff_member", {
     p_organization_id: input.organizationId,
     p_invited_user_id: invitedUserId,
@@ -98,6 +107,10 @@ export async function POST(request: Request) {
     p_token_prefix: tokenPrefix,
     p_audit_reason: input.auditReason,
     p_activation_token: rawToken,
+    // Not the credential — a flag saying one is coming, so the queued job is held back until the
+    // service-role attach below lands. This command runs as the OPERATOR, and nothing an operator
+    // can call is allowed to decide what an invitation email contains.
+    p_defer_for_auth_token: true,
     p_idempotency_key: idempotencyKey,
   });
   if (error || !data) {
@@ -105,30 +118,58 @@ export async function POST(request: Request) {
     return staffDatabaseError(error?.message ?? "");
   }
   const result = data as Record<string, unknown>;
-  const invitationId = String(result.invitationId);
-  const { data: deliveryStatus } = await admin.rpc("get_staff_invitation_delivery_status", {
-    p_invitation_id: invitationId,
+
+  // The credential goes onto the queued job through a `service_role`-only command, which also releases
+  // the job the command deferred.
+  //
+  // This result is CHECKED. An earlier version ignored both the error and `attached: false` and let the
+  // job send anyway after its hold expired — which mailed an invitation whose own copy promises a
+  // one-click sign-in the link could not perform, and then let the worker mark it `sent`. The worker
+  // now refuses such a job outright; this is the other half, so the caller is told the invitation is
+  // not ready for delivery rather than being handed a cheerful "queued".
+  const attach = await admin.rpc("attach_invitation_auth_token", {
+    p_organization_id: input.organizationId,
+    p_invitation_kind: "staff",
+    p_invitation_id: String(result.invitationId),
+    // The address the credential was minted FOR. The command binds on it, so a hash can never be
+    // attached to a job addressed to somebody else.
+    p_recipient_address: input.email,
+    p_auth_token_hash: authToken.tokenHash,
   });
-  let activationEmailSent = deliveryStatus === "sent";
-  if (!activationEmailSent) {
-    const { url, publishableKey } = requirePublicSupabaseConfig();
-    const deliveryClient = createSupabaseClient(url, publishableKey, {
-      auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+  const attached = (attach.data as { attached?: unknown } | null)?.attached === true;
+  if (attach.error || !attached) {
+    // Roll the failed attempt back before telling the operator to retry, because otherwise the retry
+    // is impossible: `invite_staff_member` has already committed an `invited` membership, and it
+    // rejects a second invitation for that user with MEMBERSHIP_ALREADY_EXISTS. The compensating
+    // command cancels the unsent job, revokes the invitation and withdraws the membership — which also
+    // returns the staff seat the preflight counted — so the ordinary "invite" action works again.
+    //
+    // Deliberately not conditional on it succeeding: if the unwind itself fails there is nothing
+    // further this request can do, and the message below is still the honest one. The invitation
+    // cannot send either way, because the worker refuses a job with no credential.
+    await admin.rpc("abandon_unsent_staff_invitation", {
+      p_organization_id: input.organizationId,
+      p_invitation_id: String(result.invitationId),
     });
-    const { error: deliveryError } = await deliveryClient.auth.signInWithOtp({
-      email: input.email,
-      options: { shouldCreateUser: false, emailRedirectTo: callbackUrl.toString() },
-    });
-    if (deliveryError) {
-      return staffErrorResponse("INVITATION_DELIVERY_FAILED", "The staff invitation exists, but its activation email could not be sent. Retry this request.", 502);
-    }
-    await admin.rpc("mark_staff_invitation_email_sent", { p_invitation_id: invitationId });
-    activationEmailSent = true;
+    return staffErrorResponse(
+      "INVITATION_CREDENTIAL_NOT_ATTACHED",
+      "The invitation could not be prepared for delivery and has been withdrawn, so no email will be sent. Invite this person again.",
+      503,
+    );
   }
 
+  // `queued` is the truth and the only thing this route may claim. The invitation email is now queued
+  // for the Crecy notification worker; only `complete_notification_job`, which runs after a transport
+  // has accepted the message, can move it to `sent`. The previous response said
+  // `activationEmailSent: true` because an unrelated Supabase call had returned success, which told
+  // the operator a message had arrived when nothing had been sent at all.
+  //
+  // The auth action link is deliberately NOT returned. It is a credential that signs the recipient in,
+  // and the browser has no use for it; the copyable fallback stays the invitation activation path,
+  // which is useless without the recipient's own authentication.
   return Response.json({
     ...result,
     activationUrl: new URL(activationPath, request.url).toString(),
-    activationEmailSent,
+    deliveryState: "queued",
   }, { status: 201 });
 }

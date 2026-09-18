@@ -1,11 +1,9 @@
 import { createHash, createHmac } from "node:crypto";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requirePublicSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
+import { generateInvitationAuthToken } from "@/lib/auth/invitation-link";
 import { invitationDatabaseError, invitationErrorResponse } from "@/lib/api/invitations";
-import { audienceForSurface, inviteRelationshipSchema } from "@/lib/validation/invitations";
-import { originForAudience } from "@/lib/runtime/host";
+import { inviteRelationshipSchema } from "@/lib/validation/invitations";
 
 export async function POST(request: Request) {
   const parsed = inviteRelationshipSchema.safeParse(await request.json().catch(() => null));
@@ -34,15 +32,6 @@ export async function POST(request: Request) {
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
   const tokenPrefix = tokenHash.slice(0, 10);
   const activationPath = `/invitations/accept?token=${encodeURIComponent(rawToken)}`;
-  // The recipient activates on their own portal origin, derived from the relationship, never from
-  // the inviting operator's host. originForAudience collapses to the app origin in local development,
-  // so this does not break the dev loop or Playwright.
-  // Falls back to the request origin when no app origin is configured: originForAudience
-  // returns "" there, and new URL(path, "") throws — which would turn an unconfigured preview
-  // or a bare local checkout into a 500 on every invitation.
-  const callbackUrl = new URL("/auth/callback", originForAudience(audienceForSurface[input.redirectSurface]) || request.url);
-  callbackUrl.searchParams.set("next", activationPath);
-
   let admin;
   try {
     admin = createAdminClient();
@@ -71,6 +60,21 @@ export async function POST(request: Request) {
     createdAuthUser = true;
   }
 
+  // The ONE email's credential. See `invitation-link.ts` for why this is a `magiclink` and not an
+  // `invite`, and why it is the TOKEN HASH rather than the action link — the action link is an
+  // implicit-flow redirect whose session arrives in a URL fragment no server route can read. It
+  // replaces a `signInWithOtp()` call that made Supabase send a second, competing email, after which
+  // this route marked the Crecy job "sent" for a message no transport had accepted.
+  const authToken = await generateInvitationAuthToken(admin, { email: input.email });
+  if (!authToken.ok) {
+    if (createdAuthUser) await admin.auth.admin.deleteUser(invitedUserId).catch(() => undefined);
+    return invitationErrorResponse(
+      "INVITATION_LINK_UNAVAILABLE",
+      "The invitation could not be prepared because Supabase Auth did not return an activation link. Retry this request.",
+      503,
+    );
+  }
+
   const { data, error } = await supabase.rpc("invite_relationship_user", {
     p_organization_id: input.organizationId,
     p_invited_user_id: invitedUserId,
@@ -82,6 +86,10 @@ export async function POST(request: Request) {
     p_token_hash: tokenHash,
     p_token_prefix: tokenPrefix,
     p_activation_token: rawToken,
+    // Not the credential — a flag saying one is coming, so the queued job is held back until the
+    // service-role attach below lands. This command runs as the OPERATOR, and nothing an operator can
+    // call is allowed to decide what an invitation email contains.
+    p_defer_for_auth_token: true,
     p_idempotency_key: idempotencyKey,
   });
   if (error || !data) {
@@ -89,30 +97,44 @@ export async function POST(request: Request) {
     return invitationDatabaseError(error?.message ?? "");
   }
   const result = data as Record<string, unknown>;
-  const invitationId = String(result.invitationId);
-  const { data: deliveryStatus } = await admin.rpc("get_relationship_invitation_delivery_status", {
-    p_invitation_id: invitationId,
+
+  // The credential goes onto the queued job through a `service_role`-only command, which also releases
+  // the job the command deferred.
+  //
+  // This result is CHECKED. An earlier version ignored both the error and `attached: false` and let the
+  // job send anyway after its hold expired — which mailed an invitation whose own copy promises a
+  // one-click sign-in the link could not perform, and then let the worker mark it `sent`. The worker
+  // now refuses such a job outright; this is the other half, so the caller is told the invitation is
+  // not ready for delivery rather than being handed a cheerful "queued".
+  const attach = await admin.rpc("attach_invitation_auth_token", {
+    p_organization_id: input.organizationId,
+    p_invitation_kind: "relationship",
+    p_invitation_id: String(result.invitationId),
+    // The address the credential was minted FOR. The command binds on it, so a hash can never be
+    // attached to a job addressed to somebody else.
+    p_recipient_address: input.email,
+    p_auth_token_hash: authToken.tokenHash,
   });
-  let activationEmailSent = deliveryStatus === "sent";
-  if (!activationEmailSent) {
-    const { url, publishableKey } = requirePublicSupabaseConfig();
-    const deliveryClient = createSupabaseClient(url, publishableKey, {
-      auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
-    });
-    const { error: deliveryError } = await deliveryClient.auth.signInWithOtp({
-      email: input.email,
-      options: { shouldCreateUser: false, emailRedirectTo: callbackUrl.toString() },
-    });
-    if (deliveryError) {
-      return invitationErrorResponse("INVITATION_DELIVERY_FAILED", "The invitation exists, but its activation email could not be sent. Retry this request.", 502);
-    }
-    await admin.rpc("mark_relationship_invitation_email_sent", { p_invitation_id: invitationId });
-    activationEmailSent = true;
+  const attached = (attach.data as { attached?: unknown } | null)?.attached === true;
+  if (attach.error || !attached) {
+    // No compensating unwind here, and that is a difference in the schema rather than an oversight:
+    // `invite_relationship_user` SUPERSEDES an existing pending invitation for the same relationship
+    // instead of refusing it, and the relationship row itself is only minted on acceptance. So simply
+    // inviting again works, which is what this message asks for. The staff path needs an unwind
+    // because its command commits a membership that blocks the retry.
+    return invitationErrorResponse(
+      "INVITATION_CREDENTIAL_NOT_ATTACHED",
+      "The invitation could not be prepared for delivery, so no email will be sent. Send the invitation again.",
+      503,
+    );
   }
 
+  // `queued` is the truth: the invitation email is queued for the Crecy notification worker, and only
+  // `complete_notification_job` — which runs after a transport accepted the message — can write `sent`.
+  // The auth action link is never returned; it is a credential that signs the recipient in.
   return Response.json({
     ...result,
     activationUrl: new URL(activationPath, request.url).toString(),
-    activationEmailSent,
+    deliveryState: "queued",
   }, { status: 201 });
 }

@@ -65,10 +65,12 @@ const platformBusinessOverviewSql = await readFile(resolve(root, "supabase/migra
 const livingCommunityPresentationSql = await readFile(resolve(root, "supabase/migrations/20260905040000_phase_8_living_community_presentation.sql"), "utf8");
 const livingCommunityControlsSql = await readFile(resolve(root, "supabase/migrations/20260905170000_phase_8_living_community_controls.sql"), "utf8");
 const vendorManagementSql = await readFile(resolve(root, "supabase/migrations/20260918090000_phase_6_vendor_management.sql"), "utf8");
+const invitationEmailDeliverySql = await readFile(resolve(root, "supabase/migrations/20260918120000_phase_8_invitation_email_delivery.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
 const closeUnscopedOperatorSurfacesSql = await readFile(resolve(root, "supabase/migrations-contract/20260828130000_phase_8_close_unscoped_operator_surfaces.sql"), "utf8");
+const retireInvitationEmailMarksSql = await readFile(resolve(root, "supabase/migrations-contract/20260918130000_phase_8_retire_invitation_email_marks.sql"), "utf8");
 const batchAReviewCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260828140000_phase_8_batch_a_review_corrections.sql"), "utf8");
 const organizationCreationBoundarySql = await readFile(resolve(root, "supabase/migrations/20260829100000_phase_1_organization_creation_boundary.sql"), "utf8");
 const scanRecoveryTracingSql = await readFile(resolve(root, "supabase/migrations/20260829110000_phase_2_scan_recovery_and_tracing.sql"), "utf8");
@@ -866,10 +868,12 @@ async function validateRecurringCharges() {
   await db.exec(livingCommunityPresentationSql);
   await db.exec(livingCommunityControlsSql);
   await db.exec(vendorManagementSql);
+  await db.exec(invitationEmailDeliverySql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
   await db.exec(closeUnscopedOperatorSurfacesSql);
+  await db.exec(retireInvitationEmailMarksSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1809,18 +1813,21 @@ async function validateRecurringCharges() {
   const queuedStaffInvitation = (await db.query(`select public.get_staff_invitation_delivery_status(
     '${leasingInvite.invitationId}'
   ) as status`)).rows[0].status;
-  const markedStaffInvitation = (await db.query(`select public.mark_staff_invitation_email_sent(
-    '${leasingInvite.invitationId}'
-  ) as marked`)).rows[0].marked;
+  // `mark_staff_invitation_email_sent` used to be driven here. It is retired by the contract release
+  // (20260918130000) because its only function was to write `sent` on a job no transport had touched.
+  // The status now changes the one legitimate way — the job itself moves — and the read reports it.
+  await db.exec("reset role");
+  await db.query(`update private.notification_jobs set status='sent'
+    where idempotency_key='staff-invitation:${leasingInvite.invitationId}'`);
+  await db.exec("set role service_role");
   const sentStaffInvitation = (await db.query(`select public.get_staff_invitation_delivery_status(
     '${leasingInvite.invitationId}'
   ) as status`)).rows[0].status;
   assert(
     resolvedStaffUser === invitedAdmin
       && queuedStaffInvitation === "queued"
-      && markedStaffInvitation
       && sentStaffInvitation === "sent",
-    "The service-only staff identity or invitation-delivery helpers are incomplete.",
+    "The service-only staff identity or invitation-delivery read is incomplete.",
   );
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
   await expectDatabaseError(() => db.query(`select public.resolve_auth_user_by_email(
@@ -3595,6 +3602,319 @@ async function validateRecurringCharges() {
   const scrubbedJob = (await db.query(`select (payload->'invitationToken') is null as scrubbed from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
   assert(scrubbedJob.scrubbed === true, "A terminal notification job kept the plaintext activation token.");
 
+  // ── One email, one credential, one honest terminal state (phase_8_invitation_email_delivery) ────
+  // The invitation used to queue a Crecy job AND have Supabase Auth send its own magic link, then mark
+  // the queued job `sent` because signInWithOtp returned success. The auth credential now rides inside
+  // the Crecy job instead, so there is exactly one email — and exactly one more credential that must
+  // never outlive the send.
+  const authTokenHash = "hashedtokenabc0123456789abcdef";
+  await db.exec("reset role");
+  await db.query(`update private.notification_jobs set status='queued' where id='${tokenJob.id}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  // The operator-callable overload takes a BOOLEAN, never a credential. It says "one is coming", which
+  // holds the job back so the service-role attach below cannot lose a race with the worker.
+  const enrichedInvite = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-resident-0002','${activationRaw}',true) as result`)).rows[0].result;
+  assert(enrichedInvite.invitationId === tokenInvite.invitationId, "The enriched overload did not replay the existing invitation idempotently.");
+
+  // Deferred means genuinely unclaimable: `claim_notification_jobs` gates on `available_at <= now()`.
+  await db.exec("reset role");
+  const deferred = (await db.query(`select available_at > now() as held from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  assert(deferred.held === true, "A deferred invitation job was claimable before its credential was attached.");
+
+  // The flag the worker fails closed on. Without it the two-minute hold is merely a delay before the
+  // dead-end email goes out anyway, which is the defect this whole slice exists to remove.
+  const requiresCredential = (await db.query(`select payload->>'authTokenRequired' as required from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  assert(
+    requiresCredential.required === 'true',
+    "A deferred invitation job was not marked as requiring an auth credential, so the worker could send it without one.",
+  );
+
+  // An operator must NOT be able to attach the credential. This is the whole boundary: the invite
+  // commands run as the operator because they check that operator's permissions, and this one runs only
+  // as the deployment, because what it writes signs somebody in.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${residentEmail}','${authTokenHash}')`),
+    "permission denied",
+  );
+
+  await db.exec("reset role; set role service_role");
+  const attached = (await db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${residentEmail}','${authTokenHash}') as result`)).rows[0].result;
+  assert(attached.attached === true, "The service-role attach did not reach the queued invitation job.");
+
+  // A hash that could not possibly be redeemed is refused rather than stored and mailed.
+  for (const hostileHash of ["short", "a".repeat(513), "has spaces in it 012345", "with.a.dot0123456789"]) {
+    await expectDatabaseError(
+      () => db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${residentEmail}','${hostileHash}')`),
+      "INVALID_AUTH_TOKEN_HASH",
+    );
+  }
+
+  // Every dimension the attach is bound on, driven one at a time. A credential that can be written
+  // across a tenant, onto a different template, or into a job addressed to somebody else is a working
+  // session delivered to the wrong inbox — the recipient binding is the one that matters most.
+  await db.exec("reset role; set role service_role");
+  const substitutions = {
+    "another organization": ["00000000-0000-4000-8000-0000000000ff", "relationship", tokenInvite.invitationId, residentEmail],
+    "the wrong invitation kind (and so the wrong template)": [organization.organizationId, "staff", tokenInvite.invitationId, residentEmail],
+    "a different recipient address": [organization.organizationId, "relationship", tokenInvite.invitationId, "someone.else@example.com"],
+  };
+  for (const [label, args] of Object.entries(substitutions)) {
+    const argsSql = [...args, authTokenHash].map((value) => `'${value}'`).join(",");
+    const outcome = (await db.query(`select public.attach_invitation_auth_token(${argsSql}) as result`)).rows[0].result;
+    assert(outcome.attached === false, `The credential was attachable using ${label}.`);
+  }
+
+  // Case-insensitively bound, because an address is. A correct recipient in different case must still
+  // match, or a legitimate invitation silently loses its credential.
+  await db.exec("reset role");
+  await db.query(`update private.notification_jobs set payload = payload - 'authTokenHash' where id='${tokenJob.id}'`);
+  await db.exec("set role service_role");
+  const mixedCase = (await db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${residentEmail.toUpperCase()}','${authTokenHash}') as result`)).rows[0].result;
+  assert(mixedCase.attached === true, "A correct recipient address in a different case was rejected.");
+
+  await db.exec("reset role");
+  const enrichedJob = (await db.query(`select
+    payload->>'organizationName' as organization_name,
+    payload->>'authTokenHash' as auth_hash,
+    payload->>'invitationToken' as token,
+    available_at <= now() as released
+    from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  assert(enrichedJob.released === true, "Attaching the credential did not release the deferred job.");
+  // The literal fixture name, not a field off the command response: this asserts the real
+  // organizations row reached the payload, which is the whole point. Before this migration the key was
+  // absent and every invitation read "your home" instead of naming who was inviting.
+  assert(
+    enrichedJob.organization_name === "Finance Atlas",
+    `The invitation payload did not name the organization (got ${enrichedJob.organization_name}).`,
+  );
+  assert(enrichedJob.auth_hash === authTokenHash, "The auth token hash did not reach the invitation notification payload.");
+
+  // `failed` is RETRYABLE, so the credential must survive it — the worker rebuilds the same message on
+  // the next attempt. Scrubbing here would turn one transient relay error into an invitation that can
+  // never be delivered.
+  await db.query(`update private.notification_jobs set status='failed' where id='${tokenJob.id}'`);
+  const retryableJob = (await db.query(`select payload->>'authTokenHash' as auth_hash, payload->>'invitationToken' as token from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  assert(
+    retryableJob.auth_hash === authTokenHash && retryableJob.token === activationRaw,
+    "A retryable failure scrubbed the credential the retry still needs.",
+  );
+
+  // Every terminal state, not just the happy one. A dead letter and a cancellation are exactly the rows
+  // most likely to sit in the table forever, which is precisely why a live credential must not be in
+  // them.
+  for (const terminalState of ["sent", "dead_letter", "canceled"]) {
+    await db.query(`update private.notification_jobs set status='queued' where id='${tokenJob.id}'`);
+    await db.query(`update private.notification_jobs set payload = payload || jsonb_build_object('invitationToken','${activationRaw}','authTokenHash','${authTokenHash}') where id='${tokenJob.id}'`);
+    await db.query(`update private.notification_jobs set status='${terminalState}' where id='${tokenJob.id}'`);
+    const scrubbed = (await db.query(`select
+      (payload->'authTokenHash') is null as auth_scrubbed,
+      (payload->'invitationToken') is null as token_scrubbed
+      from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+    assert(
+      scrubbed.auth_scrubbed === true && scrubbed.token_scrubbed === true,
+      `A '${terminalState}' notification job kept a live authentication credential.`,
+    );
+  }
+
+  // The operator can see whether the invitation EMAIL left, not merely that an invitation exists. A
+  // pending invitation whose mail dead-lettered will never be accepted and is otherwise
+  // indistinguishable from one sitting unread in an inbox.
+  await db.exec("reset role");
+  for (const [jobStatus, expectedState] of [
+    ["queued", "queued"],
+    ["processing", "sending"],
+    ["sent", "sent"],
+    ["failed", "retrying"],
+    ["dead_letter", "undeliverable"],
+    ["canceled", "canceled"],
+  ]) {
+    await db.query(`update private.notification_jobs set status='${jobStatus}' where idempotency_key='staff-invitation:${leasingInvite.invitationId}'`);
+    await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+    const workspace = (await db.query(`select public.get_staff_management_workspace('${organization.organizationId}') as result`)).rows[0].result;
+    const projected = workspace.invitations.find((row) => row.invitationId === leasingInvite.invitationId);
+    assert(
+      projected && projected.deliveryState === expectedState,
+      `A '${jobStatus}' invitation job reported delivery state '${projected && projected.deliveryState}' instead of '${expectedState}'.`,
+    );
+    // The relay's own diagnostics must not ride along into a browser projection.
+    assert(
+      !JSON.stringify(projected).includes("last_error") && !JSON.stringify(projected).includes("lastError"),
+      "The invitation projection leaked the relay's error detail to the operator surface.",
+    );
+    await db.exec("reset role");
+  }
+
+  // ── Recovery after an attachment failure ───────────────────────────────────────────────────────
+  // Failing closed is only half a design. The route answers 503 and tells the operator to invite the
+  // person again — but `invite_staff_member` has already committed an `invited` membership and rejects
+  // a second invitation for that user with MEMBERSHIP_ALREADY_EXISTS, and the form mints a fresh
+  // idempotency key every submit, so it is not an idempotent replay either. Without the unwind the
+  // instruction is impossible to follow, which is the failure this proves is gone.
+  const strandedUser = "ca000000-0000-4000-8000-0000000000f1";
+  // The suite has consumed this plan's staff seats by now, and the scenario needs two spare: one for
+  // the invitation that strands and one for the recovery. The seat accounting is not what is under
+  // test here — that it is RELEASED by the unwind is, and that is asserted below.
+  await db.exec(`reset role;
+    insert into auth.users(id,email) values ('${strandedUser}','stranded@finance-atlas.example');
+    update public.plan_entitlements set limit_value = limit_value + 2
+      where feature_code='core.staff' and limit_value is not null;
+    set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2';
+  `);
+  const strandedInvite = (await db.query(`select public.invite_staff_member(
+    '${organization.organizationId}','${strandedUser}','stranded@finance-atlas.example','leasing_agent',
+    array['${property.propertyId}'::uuid],'2026-07-24T12:00:00Z',null,false,'en-US','${"c1".repeat(32)}','c1c1c1c1c1',
+    null,'staff-invite-stranded-0001',null,true
+  ) as result`)).rows[0].result;
+
+  // The retry the 503 asks for, BEFORE the unwind: the schema rejects it. This is the assertion that
+  // would have caught the impossible instruction.
+  await expectDatabaseError(
+    () => db.query(`select public.invite_staff_member(
+      '${organization.organizationId}','${strandedUser}','stranded@finance-atlas.example','leasing_agent',
+      array['${property.propertyId}'::uuid],'2026-07-24T12:00:00Z',null,false,'en-US','${"d2".repeat(32)}','d2d2d2d2d2',
+      null,'staff-invite-stranded-0002',null,true
+    )`),
+    "MEMBERSHIP_ALREADY_EXISTS",
+  );
+
+  // The unwind is service-role only, and a browser caller may not withdraw a membership by naming an id.
+  await expectDatabaseError(
+    () => db.query(`select public.abandon_unsent_staff_invitation('${organization.organizationId}','${strandedInvite.invitationId}')`),
+    "permission denied",
+  );
+
+  await db.exec("reset role; set role service_role");
+  const abandoned = (await db.query(`select public.abandon_unsent_staff_invitation('${organization.organizationId}','${strandedInvite.invitationId}') as result`)).rows[0].result;
+  assert(abandoned.abandoned === true, "The stranded invitation could not be abandoned.");
+  // Idempotent: the route calls this on its own failure path and may be retried.
+  const abandonedAgain = (await db.query(`select public.abandon_unsent_staff_invitation('${organization.organizationId}','${strandedInvite.invitationId}') as result`)).rows[0].result;
+  assert(abandonedAgain.abandoned === false, "Abandoning an already-abandoned invitation was not a no-op.");
+
+  await db.exec("reset role");
+  const unwound = (await db.query(`select
+    (select status from public.invitations where id='${strandedInvite.invitationId}') as invitation_status,
+    (select status::text from public.organization_memberships where user_id='${strandedUser}' and organization_id='${organization.organizationId}') as membership_status,
+    (select status from private.notification_jobs where idempotency_key='staff-invitation:${strandedInvite.invitationId}') as job_status,
+    (select count(*)::integer from audit.audit_events where action_code='membership.invitationAbandoned') as audit_rows
+  `)).rows[0];
+  assert(unwound.invitation_status === 'revoked', `The stranded invitation was left ${unwound.invitation_status}.`);
+  assert(unwound.membership_status === 'revoked', `The stranded membership was left ${unwound.membership_status}.`);
+  // The job must never send: it is canceled, and cancellation is also a terminal state the scrub covers.
+  assert(unwound.job_status === 'canceled', `The stranded job was left ${unwound.job_status}.`);
+  assert(unwound.audit_rows >= 1, "Abandoning an invitation wrote no audit history.");
+
+  // The seat is genuinely released. `revoked` is the one terminal membership state the duplicate guard
+  // and the seat count both ignore, which is exactly why the unwind uses it.
+  const seatFreed = (await db.query(`select count(*)::integer as seats
+    from public.organization_memberships m
+    where m.organization_id='${organization.organizationId}'
+      and m.user_id='${strandedUser}'
+      and m.status in ('invited','active','suspended')
+      and (m.ends_at is null or m.ends_at>now())`)).rows[0];
+  assert(seatFreed.seats === 0, "Abandoning the invitation did not release the staff seat it had counted.");
+
+  // And now the recovery the operator is actually told to perform SUCCEEDS.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  const recovered = (await db.query(`select public.invite_staff_member(
+    '${organization.organizationId}','${strandedUser}','stranded@finance-atlas.example','leasing_agent',
+    array['${property.propertyId}'::uuid],'2026-07-24T12:00:00Z',null,false,'en-US','${"e3".repeat(32)}','e3e3e3e3e3',
+    null,'staff-invite-stranded-0003',null,true
+  ) as result`)).rows[0].result;
+  assert(
+    recovered.invitationId && recovered.invitationId !== strandedInvite.invitationId,
+    "The recovery invitation did not produce a new invitation record.",
+  );
+
+  // An invitation whose email ALREADY LEFT must not be abandonable: the recipient may hold a working
+  // link, and withdrawing the membership under them is a worse bug than the one this repairs.
+  await db.exec("reset role");
+  await db.query(`update private.notification_jobs set status='sent' where idempotency_key='staff-invitation:${recovered.invitationId}'`);
+  await db.exec("set role service_role");
+  await expectDatabaseError(
+    () => db.query(`select public.abandon_unsent_staff_invitation('${organization.organizationId}','${recovered.invitationId}')`),
+    "INVITATION_ALREADY_DELIVERING",
+  );
+  await db.exec(`reset role;
+    update public.plan_entitlements set limit_value = limit_value - 2
+      where feature_code='core.staff' and limit_value is not null;
+  `);
+
+  // The relationship delivery projection the resident and owner directories read. It is a definer
+  // function granted to `authenticated`, so it is an authorization boundary and has to be DRIVEN, not
+  // merely defined — a hand-written permission gate that nothing ever executes is a gate nobody has
+  // ever seen work. This one was shipped untested and its first execution found the projection empty.
+  //
+  // The invitation is put back to `pending` first: by this point the suite has accepted it, and only a
+  // pending invitation is a question the directory is still asking.
+  await db.exec("reset role");
+  await db.query(`update public.invitations set status='pending', accepted_at=null where id='${tokenInvite.invitationId}'`);
+  await db.query(`update private.notification_jobs set status='dead_letter' where id='${tokenJob.id}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  const relationshipDelivery = (await db.query(`select public.list_relationship_invitation_delivery('${organization.organizationId}') as result`)).rows[0].result;
+  const residentRow = relationshipDelivery.find((row) => row.relationshipId === invitedResidentPerson);
+  assert(
+    residentRow && residentRow.deliveryState === 'undeliverable',
+    `The relationship delivery projection did not report the dead-lettered invitation (got ${JSON.stringify(relationshipDelivery)}).`,
+  );
+  // Sanitized: the relay's own error text must not ride along to a browser projection.
+  assert(
+    !JSON.stringify(relationshipDelivery).includes("last_error") && !JSON.stringify(relationshipDelivery).includes("lastError"),
+    "The relationship delivery projection leaked the relay's error detail.",
+  );
+
+  // A caller outside the organization gets nothing, even though the function is definer and the row
+  // exists. This is the predicate that stops one tenant reading another's invitation pipeline.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.list_relationship_invitation_delivery('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+
+  // And neither does a PROPERTY-SCOPED member, even though their role carries `resident.manage`.
+  // `scopedMessenger` is an active leasing agent confined to one property. `has_org_permission` would
+  // have said yes and handed them relationship ids for residents at every other property in the
+  // organization — the directory this feeds is property-scoped by RLS, and this projection must not be
+  // the one surface that is not. `has_unscoped_org_permission` is what makes it fail closed.
+  //
+  // They get an EMPTY projection rather than an error: they are entitled to the directory, so raising
+  // would put a permission failure in the log on every page load of a screen they may legitimately
+  // use. A non-member is refused; a scoped member is told there is nothing.
+  //
+  // A fresh actor rather than one from earlier coverage: the suite ends several memberships as it goes,
+  // and an expired member is refused for the wrong reason, which would make this assertion pass while
+  // proving nothing about scoping.
+  const scopedInviteReader = "d7000000-0000-4000-8000-0000000000a1";
+  const scopedInviteMembership = "d7000000-0000-4000-8000-0000000000a2";
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('${scopedInviteReader}');
+    insert into public.organization_memberships(id,organization_id,user_id,role_code,status,starts_at)
+    values ('${scopedInviteMembership}','${organization.organizationId}','${scopedInviteReader}','leasing_agent','active',now()-interval '1 day');
+    insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    values ('${organization.organizationId}','${scopedInviteMembership}','${property.propertyId}');
+  `);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${scopedInviteReader}'`);
+  const scopedProjection = (await db.query(`select public.list_relationship_invitation_delivery('${organization.organizationId}') as result`)).rows[0].result;
+  assert(
+    Array.isArray(scopedProjection) && scopedProjection.length === 0,
+    `A property-scoped member received an organization-wide invitation projection (got ${JSON.stringify(scopedProjection)}).`,
+  );
+
+  await db.exec("reset role");
+  await db.query(`update public.invitations set status='accepted', accepted_at=now() where id='${tokenInvite.invitationId}'`);
+  await db.query(`update private.notification_jobs set status='queued' where id='${tokenJob.id}'`);
+
+  // The credential never reaches the trace tables. An audit row and an outbox row outlive the queue on
+  // purpose, so a copy there would be the durable leak the scrub exists to prevent.
+  const credentialLeak = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where after_data::text like '%${activationRaw}%' or before_data::text like '%${activationRaw}%' or after_data::text like '%' || '${authTokenHash}' || '%') as audit_rows,
+    (select count(*)::integer from private.outbox_events where payload::text like '%${activationRaw}%' or payload::text like '%' || '${authTokenHash}' || '%') as outbox_rows
+  `)).rows[0];
+  assert(
+    credentialLeak.audit_rows === 0 && credentialLeak.outbox_rows === 0,
+    "An invitation credential was written to the audit or outbox trace.",
+  );
+
   // The token overload is granted to `authenticated`, so PostgREST hands any signed-in caller straight
   // to it. A real token is a base64url HMAC digest — 43 characters of [A-Za-z0-9_-] — so anything
   // outside those bounds is either a bug or someone stuffing private.notification_jobs by hand.
@@ -5243,6 +5563,28 @@ async function validateRecurringCharges() {
     await expectDatabaseError(() => db.query(`select public.${unscoped}()`), `permission denied for function ${unscoped}`);
   }
   await expectDatabaseError(() => db.query("select public.get_operator_global_search('Map',24)"), "permission denied for function get_operator_global_search");
+
+  // (2b) The two invitation "mark as sent" writers are gone. Driven as `service_role` because that is
+  // the grant they actually held — they were never browser-callable, the invitation routes reached
+  // them through the admin client. Asserting this as `authenticated` would have passed without the
+  // contraction existing at all.
+  //
+  // Their only job was to flip a queued notification job to `sent` after an unrelated provider call
+  // returned success — a forged delivery record. `complete_notification_job` owns that transition and
+  // only runs after a transport has actually accepted the message.
+  await db.exec("reset role; set role service_role");
+  for (const retired of ["mark_staff_invitation_email_sent", "mark_relationship_invitation_email_sent"]) {
+    await expectDatabaseError(
+      () => db.query(`select public.${retired}('00000000-0000-4000-8000-000000000001')`),
+      `permission denied for function ${retired}`,
+    );
+  }
+  // The READ side deliberately survives: an operator still needs an honest answer to "did it arrive?",
+  // and these now report the job's real status rather than a status something else wrote.
+  const deliveryReadable = (await db.query("select public.get_staff_invitation_delivery_status('00000000-0000-4000-8000-000000000001') as status")).rows[0];
+  assert(deliveryReadable.status === null, "The staff invitation delivery-status read was revoked along with the writers.");
+  // Back to the operator this block runs as, with the MFA claim the scoped surfaces below require.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${secondOperator}'; set request.jwt.claim.aal='aal2'`);
 
   // (3) DECISIVE: every audited surface follows the organization it is given, with no mixed rows.
   const ctxSurfaces = [

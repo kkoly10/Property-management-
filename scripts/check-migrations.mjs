@@ -12,8 +12,10 @@
  *
  * What counts as taking a capability away, and what deliberately does not:
  *
- *   * `revoke execute ... from authenticated|anon|public` on a function this migration did NOT create
- *     — CONTRACTION. Some deployed caller may hold that grant today.
+ *   * `revoke execute ... from authenticated|anon|public|service_role` on a function this migration did
+ *     NOT create — CONTRACTION. Some deployed caller may hold that grant today. `service_role` belongs
+ *     in that list and was missing from it: it is the identity the deployed SERVER calls with, so
+ *     revoking it mid-deploy breaks the running build exactly as revoking `authenticated` would.
  *   * `revoke ... from public,anon` immediately after `create or replace function` — NOT a contraction.
  *     It is this codebase's standard way of locking a NEW function down before granting it, and it
  *     removes nothing anyone was using.
@@ -29,7 +31,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const expandDir = resolve(root, "supabase/migrations");
 const contractDir = resolve(root, "supabase/migrations-contract");
 
-const BROWSER_ROLES = /\b(authenticated|anon|public)\b/i;
+/** Roles a deployed caller may already hold a grant as. Revoking one of these needs release ordering. */
+const LIVE_CALLER_ROLES = /\b(authenticated|anon|public|service_role)\b/i;
 
 function objectsCreatedIn(sql) {
   const functions = new Set(
@@ -51,7 +54,7 @@ export function contractingStatements(sql) {
     if (!statement) continue;
 
     const revoke = /^revoke\s+(?:execute|all)\b.*?\bon\s+function\s+([a-z_]+\.[a-z_0-9]+)/i.exec(statement);
-    if (revoke && BROWSER_ROLES.test(statement.slice(revoke[0].length))) {
+    if (revoke && LIVE_CALLER_ROLES.test(statement.slice(revoke[0].length))) {
       if (!created.functions.has(revoke[1].toLowerCase())) {
         findings.push(statement.slice(0, 140));
       }
