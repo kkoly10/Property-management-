@@ -20,11 +20,11 @@ export default async function SignupPage({ searchParams }: { searchParams: Promi
           {params.check_email ? (
             <Alert className="mb-5 border-[#abefc6] bg-[#ecfdf3] text-success">
               <CheckCircle2 aria-hidden="true" className="h-5 w-5" />
-              <AlertTitle>Check your email or sign in</AlertTitle>
+              <AlertTitle>Check your email</AlertTitle>
               <AlertDescription>
-                If this is a new Crecy account, use the confirmation link we sent to continue setup. If you already have
-                Crecy access, no new account is created—{" "}
-                <Link href="/login" className="font-semibold underline underline-offset-2">sign in instead</Link>.
+                If this is a new Crecy account, use the confirmation link to continue setup. If you already have Crecy
+                access, use the one-time sign-in link instead. If nothing arrives,{" "}
+                <Link href="/login" className="font-semibold underline underline-offset-2">open Sign in</Link>.
               </AlertDescription>
             </Alert>
           ) : null}
