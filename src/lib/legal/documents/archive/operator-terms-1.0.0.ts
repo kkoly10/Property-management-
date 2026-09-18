@@ -1,42 +1,33 @@
 import type { LegalDocument } from "@/lib/legal/types";
 
 /**
- * PILOT RELEASE — published for the Crecy controlled pilot on founder approval.
+ * HISTORICAL ARTIFACT — DO NOT EDIT.
  *
- * This is version 1.0.1, effective 2026-09-18. It corrects 1.0.0 (2026-09-04) in two respects, both of
- * them statements of fact rather than terms:
+ * The Crecy Operator Terms of Service, version 1.0.0, published 2026-09-04 and superseded by 1.0.1 on
+ * 2026-09-18. It is kept here verbatim because it is the exact text some people were shown, and a
+ * consent record that names it must remain checkable against the bytes that were actually accepted.
  *
- *   * the contact address, which was the placeholder `legal@crecy.example` and is now the real
- *     `legal@crecyos.com`;
- *   * section 2, which described portals for "residents, owners and vendors". There is no vendor
- *     portal in the launch product — `vendor.crecyos.com` is a future surface — so the sentence named a
- *     capability an operator could not actually give anyone.
+ * It is deliberately NOT in the active registry: it is unreachable by code, by canonical route and by
+ * consent resolution, and is served only to the internal history lookup in `@/lib/legal/registry`. Its
+ * content hash is pinned in `registry.test.ts`, so an edit to a single character here fails the suite
+ * rather than silently rewriting what a past acceptance means.
  *
- * No obligation changed in either direction, and nothing was added. Removing the claim is not a removal
- * of functionality; the functionality was never there to describe.
- *
- * A new version is a new artifact, never an edit of a published one. 1.0.0 was NOT rewritten in place —
- * it is preserved verbatim at `@/lib/legal/documents/archive/operator-terms-1.0.0.ts` so that a
- * consent record naming it can still be checked against the bytes that were actually accepted. A later
- * revision must bump the version again and archive this one the same way.
- *
- * The `**Effective … · Version …**` line inside the body must agree with the metadata above it; a test
- * asserts it, because a body that states a different version than the artifact it lives in would put
- * one version in the page badge and another in the text a person actually reads.
+ * The `legal@crecy.example` address below is a placeholder, and that is precisely why 1.0.1 exists. It
+ * stays here: rewriting it would falsify what this version said.
  */
-export const operatorTerms: LegalDocument = {
+export const operatorTermsV1_0_0: LegalDocument = {
   code: "operator_terms",
   title: "Crecy Operator Terms of Service",
   audience: "operator",
   locale: "en-US",
   jurisdictions: ["*"],
-  version: "1.0.1",
-  effectiveDate: "2026-09-18",
+  version: "1.0.0",
+  effectiveDate: "2026-09-04",
   state: "published",
   route: "/legal/operator-terms",
   body: `# Crecy Operator Terms of Service
 
-**Effective 2026-09-18 · Version 1.0.1 · Published for the Crecy controlled pilot.**
+**Effective 2026-09-04 · Version 1.0.0 · Published for the Crecy controlled pilot.**
 
 ## 1. Who these terms are between
 
@@ -47,8 +38,8 @@ on the organization's behalf.
 ## 2. What Crecy provides
 
 Crecy is a rental operating system. We provide the software that records your properties, leases,
-residents, owners, maintenance work and financial ledger, and that presents portals to the residents
-and owners you invite.
+residents, owners, maintenance work and financial ledger, and that presents portals to the residents,
+owners and vendors you invite.
 
 We are a software provider. We are not your agent, not a party to your leases, not a property manager,
 not a broker, not a lender, and not an escrow agent. Nothing in the product is legal, tax, accounting or
@@ -91,6 +82,6 @@ cannot lawfully be limited.
 
 ## 8. Contact
 
-Questions about these terms: legal@crecyos.com.
+Questions about these terms: legal@crecy.example.
 `,
 };

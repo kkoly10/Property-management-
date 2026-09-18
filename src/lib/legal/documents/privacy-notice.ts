@@ -1,10 +1,39 @@
 import type { LegalDocument } from "@/lib/legal/types";
 
 /**
- * PILOT RELEASE — published for the Crecy controlled pilot on founder approval (2026-09-04).
+ * PILOT RELEASE — published for the Crecy controlled pilot on founder approval.
  *
- * A new version is a new artifact, never an edit of a published one: this is version 1.0.0, distinct
- * from the 0.1.0-draft placeholder it supersedes. A later revision must bump the version again.
+ * This is version 1.0.1, effective 2026-09-18. It corrects 1.0.0 (2026-09-04) in four respects, all of
+ * them statements of fact rather than commitments:
+ *
+ *   * the contact address, which was the placeholder `privacy@crecy.example` and is now the real
+ *     `privacy@crecyos.com`;
+ *   * section 4 listed "scan uploaded files" among the things service providers do. Malware scanning is
+ *     deliberately not active for the controlled pilot, so the notice was describing an inspection that
+ *     does not happen. The claim is removed rather than reversed: the notice now simply does not say
+ *     anything about scanning, because promising that files are NOT inspected would be a new statement
+ *     rather than the withdrawal of an inaccurate one.
+ *   * section 4 also named the "vendor" among the people who can see a record. There is no vendor
+ *     portal in the launch product, so a vendor cannot see anything. Section 1 still names vendors,
+ *     correctly: an operator does enter records ABOUT vendors, which is a different claim from a vendor
+ *     having access.
+ *   * section 4 stated flatly that service providers "deliver messages and process payments". Hosting
+ *     is active; the transactional mail relay and Stripe are built but not configured, so those flows
+ *     are not happening yet. They are now described as conditional rather than dropped — dropping them
+ *     would under-disclose real processing the moment either feature is switched on, which is the
+ *     opposite failure and the worse one for a privacy notice.
+ *
+ * Nothing was added and no commitment changed. Removing a claim about a capability that is not active
+ * is not a removal of functionality.
+ *
+ * A new version is a new artifact, never an edit of a published one. 1.0.0 was NOT rewritten in place —
+ * it is preserved verbatim at `@/lib/legal/documents/archive/privacy-notice-1.0.0.ts` so that a
+ * consent record naming it can still be checked against the bytes that were actually accepted. A later
+ * revision must bump the version again and archive this one the same way.
+ *
+ * The `**Effective … · Version …**` line inside the body must agree with the metadata above it; a test
+ * asserts it, because a body that states a different version than the artifact it lives in would put
+ * one version in the page badge and another in the text a person actually reads.
  */
 export const privacyNotice: LegalDocument = {
   code: "privacy_notice",
@@ -12,13 +41,13 @@ export const privacyNotice: LegalDocument = {
   audience: "public",
   locale: "en-US",
   jurisdictions: ["*"],
-  version: "1.0.0",
-  effectiveDate: "2026-09-04",
+  version: "1.0.1",
+  effectiveDate: "2026-09-18",
   state: "published",
   route: "/legal/privacy-notice",
   body: `# Crecy Privacy Notice
 
-**Effective 2026-09-04 · Version 1.0.0 · Published for the Crecy controlled pilot.**
+**Effective 2026-09-18 · Version 1.0.1 · Published for the Crecy controlled pilot.**
 
 ## 1. Two different roles
 
@@ -50,9 +79,10 @@ because losing one would lock a person out of their own records. Category notifi
 
 ## 4. Who else sees it
 
-Only the people in your organization whose role and property scope permit it, and the resident, owner or
-vendor the record is about. We use service providers to host the product, deliver messages, scan
-uploaded files and process payments; each is bound to handle data only as instructed.
+Only the people in your organization whose role and property scope permit it, and the resident or owner
+the record is about. We use service providers to host the product. When messaging or payment features
+are enabled, service providers may also deliver messages and process payments; each is bound to handle
+data only as instructed.
 
 ## 5. How long we keep it
 
@@ -68,6 +98,6 @@ that operator and support them in answering it.
 
 ## 7. Contact
 
-Privacy questions: privacy@crecy.example.
+Privacy questions: privacy@crecyos.com.
 `,
 };
