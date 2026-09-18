@@ -5,6 +5,8 @@ import {
   contentHash,
   findLegalDocument,
   findLegalDocumentByRoute,
+  findLegalDocumentVersion,
+  listArchivedLegalDocuments,
   listLegalDocuments,
   resolveDocument,
   DeploymentEnvironmentError,
@@ -230,5 +232,166 @@ describe("requiresPublishedLegalDocuments", () => {
     clearEnvironment();
     setNodeEnv("development");
     expect(requiresPublishedLegalDocuments()).toBe(false);
+  });
+});
+
+/**
+ * The published pilot artifacts, and the line between the current ones and their history.
+ *
+ * 1.0.0 of the Terms and the Privacy Notice went out carrying placeholder `@crecy.example` contact
+ * addresses. Correcting them is a publication, not an edit: 1.0.1 carries the founder-approved
+ * addresses and 1.0.0 is kept verbatim, because a consent record naming it has to stay checkable
+ * against the bytes that were actually shown.
+ *
+ * These assertions are what stop the two halves from blurring — an archive that quietly becomes the
+ * active document, or a current document that quietly stops being current.
+ */
+describe("the published pilot artifacts", () => {
+  const CURRENT_VERSIONS: Record<string, string> = {
+    operator_terms: "1.0.1",
+    privacy_notice: "1.0.1",
+    // Untouched by this release. ESIGN's contact instruction points at the sender of the document, not
+    // at Crecy, so it never carried a placeholder address to correct.
+    esign_consent: "1.0.0",
+  };
+  const APPROVED_CONTACTS: Record<string, string> = {
+    operator_terms: "legal@crecyos.com",
+    privacy_notice: "privacy@crecyos.com",
+  };
+
+  /**
+   * Pinned so an accidental edit to a historical artifact fails loudly.
+   *
+   * These are the content hashes the 1.0.0 documents had while they were the live, published
+   * artifacts — captured before 1.0.1 was written. If one of these fails, someone has changed the text
+   * of a version that was already shown to people. That is not a test to update: it is a decision
+   * about what past acceptances mean, and the fix is to restore the bytes.
+   */
+  const PINNED_HASHES: Record<string, string> = {
+    "operator_terms@1.0.0": "be0bf7fff53879921ddfb81110a8057d565e87c5e9a1b399ed68a675d17269f3",
+    "privacy_notice@1.0.0": "e3b45572ec322c6e2323c2b99166a2b4354f1df0975b494b01495bb9eb091e81",
+    "esign_consent@1.0.0": "a1f507cd714448e745d13d1b2e2614549fd7ab44560d5d2f3cef28034f8f2dc7",
+  };
+
+  const current = (code: string) => {
+    const document = findLegalDocument(code);
+    expect(document, `${code} is missing from the active registry`).not.toBeNull();
+    return document!;
+  };
+
+  it("resolves the corrected Terms and Privacy Notice as the current published artifacts", () => {
+    for (const code of ORGANIZATION_CONSENT_CODES) {
+      const document = current(code);
+      expect(document.version, `${code} is not the corrected version`).toBe(CURRENT_VERSIONS[code]);
+      expect(document.state, `${code} is not published`).toBe("published");
+      expect(document.effectiveDate).toBe("2026-09-18");
+    }
+  });
+
+  it("carries the founder-approved contact address in each current document", () => {
+    for (const [code, contact] of Object.entries(APPROVED_CONTACTS)) {
+      expect(current(code).body, `${code} does not name ${contact}`).toContain(contact);
+    }
+  });
+
+  it("has no placeholder contact left anywhere in the current documents", () => {
+    // Scoped to the ACTIVE registry on purpose: the archived 1.0.0 artifacts still contain the
+    // placeholder, and must, because that is what they said.
+    for (const document of listLegalDocuments()) {
+      expect(document.body, `${document.code}@${document.version} still carries a placeholder address`)
+        .not.toMatch(/crecy\.example/);
+    }
+  });
+
+  it("states its own version and effective date in the text a person reads", () => {
+    // The badge on /legal/<slug> comes from the metadata; the "Effective … · Version …" line comes from
+    // the body. If they disagree the page shows one version and the document claims another, which is
+    // the same class of lie as an unversioned edit.
+    for (const document of [...listLegalDocuments(), ...listArchivedLegalDocuments()]) {
+      expect(document.body, `${document.code}@${document.version} does not state its own identity`)
+        .toContain(`Effective ${document.effectiveDate} \u00b7 Version ${document.version}`);
+    }
+  });
+
+  it("preserves the superseded 1.0.0 artifacts byte for byte, placeholders and all", () => {
+    const archived = listArchivedLegalDocuments();
+    expect(archived.map((d) => `${d.code}@${d.version}`).sort()).toEqual(["operator_terms@1.0.0", "privacy_notice@1.0.0"]);
+    for (const document of archived) {
+      const key = `${document.code}@${document.version}`;
+      expect(document.contentHash, `${key} has been edited since it was published`).toBe(PINNED_HASHES[key]);
+      expect(document.effectiveDate).toBe("2026-09-04");
+      expect(document.state).toBe("published");
+      // The placeholder is the reason 1.0.1 exists. Cleaning it up here would rewrite history.
+      expect(document.body).toMatch(/crecy\.example/);
+    }
+  });
+
+  it("leaves the ESIGN consent disclosure at 1.0.0, unchanged", () => {
+    // It is not part of organization consent and was not part of this release. `sign_document` records
+    // the exact version a signer was shown, so an unnoticed bump here would rewrite the disclosure
+    // behind every past signature.
+    const esign = current("esign_consent");
+    expect(esign.version).toBe("1.0.0");
+    expect(esign.effectiveDate).toBe("2026-09-04");
+    expect(esign.state).toBe("published");
+    expect(esign.contentHash).toBe(PINNED_HASHES["esign_consent@1.0.0"]);
+  });
+
+  it("binds organization consent to the corrected artifacts", () => {
+    const resolution = resolveOrganizationConsent({ requirePublished: true });
+    expect(resolution.ok).toBe(true);
+    if (!resolution.ok) return;
+    expect(resolution.binding.version).toMatch(/^operator_terms@1\.0\.1\+privacy_notice@1\.0\.1#[0-9a-f]{16}$/);
+    expect(resolution.unpublished).toEqual([]);
+  });
+
+  it("produces a different binding than the superseded artifacts did", () => {
+    // The decisive property of the correction. If these matched, a record written against 1.0.0 and one
+    // written against 1.0.1 would be indistinguishable, and the placeholder addresses would be
+    // retroactively laundered into the corrected text.
+    const superseded = buildConsentBinding(listArchivedLegalDocuments());
+    const resolution = resolveOrganizationConsent({ requirePublished: true });
+    expect(resolution.ok).toBe(true);
+    if (!resolution.ok) return;
+    expect(superseded.version).toMatch(/^operator_terms@1\.0\.0\+privacy_notice@1\.0\.0#[0-9a-f]{16}$/);
+    expect(resolution.binding.version).not.toBe(superseded.version);
+  });
+
+  it("resolves every canonical public route to the current artifact, never an archived one", () => {
+    const archivedHashes = new Set(listArchivedLegalDocuments().map((d) => d.contentHash));
+    for (const document of listLegalDocuments()) {
+      const routed = findLegalDocumentByRoute(document.route);
+      expect(routed?.contentHash, `${document.route} did not resolve to the current artifact`).toBe(document.contentHash);
+      expect(archivedHashes.has(routed!.contentHash), `${document.route} resolved to an archived artifact`).toBe(false);
+      expect(routed!.version).toBe(CURRENT_VERSIONS[document.code]);
+    }
+  });
+
+  it("never lets a second artifact compete for a code or a canonical route", () => {
+    // findLegalDocumentByRoute resolves by array order, so a duplicate route would make the public page
+    // resolve to whichever copy was listed first. This is the guard against someone adding an archived
+    // version straight into the active registry.
+    const codes = listLegalDocuments().map((d) => d.code);
+    const routes = listLegalDocuments().map((d) => d.route);
+    expect(new Set(codes).size, "two active artifacts share a code").toBe(codes.length);
+    expect(new Set(routes).size, "two active artifacts share a canonical route").toBe(routes.length);
+    for (const archived of listArchivedLegalDocuments()) {
+      const key = `${archived.code}@${archived.version}`;
+      expect(codes.includes(archived.code), `${key} is archived but its code is unknown to the registry`).toBe(true);
+      expect(
+        listLegalDocuments().some((d) => d.code === archived.code && d.version === archived.version),
+        `${key} exists in BOTH the active registry and the archive`,
+      ).toBe(false);
+    }
+  });
+
+  it("looks up an exact historical version, and refuses to answer with a newer one", () => {
+    const historical = findLegalDocumentVersion("operator_terms", "1.0.0");
+    expect(historical?.contentHash).toBe(PINNED_HASHES["operator_terms@1.0.0"]);
+    // The current artifact is reachable through the same lookup...
+    expect(findLegalDocumentVersion("operator_terms", "1.0.1")?.version).toBe("1.0.1");
+    // ...but a version that was never published resolves to nothing rather than to the closest match.
+    expect(findLegalDocumentVersion("operator_terms", "0.9.0")).toBeNull();
+    expect(findLegalDocumentVersion("nonexistent_document", "1.0.0")).toBeNull();
   });
 });

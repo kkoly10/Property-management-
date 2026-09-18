@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { operatorTerms } from "@/lib/legal/documents/operator-terms";
 import { privacyNotice } from "@/lib/legal/documents/privacy-notice";
 import { esignConsent } from "@/lib/legal/documents/esign-consent";
+import { operatorTermsV1_0_0 } from "@/lib/legal/documents/archive/operator-terms-1.0.0";
+import { privacyNoticeV1_0_0 } from "@/lib/legal/documents/archive/privacy-notice-1.0.0";
 import type { LegalDocument, LegalJurisdiction, ResolvedLegalDocument } from "@/lib/legal/types";
 
 /**
@@ -13,7 +15,27 @@ import type { LegalDocument, LegalJurisdiction, ResolvedLegalDocument } from "@/
  */
 // esignConsent is registered so its exact bytes resolve to a content hash and a readable route, but it is
 // deliberately NOT in ORGANIZATION_CONSENT_CODES: it gates document signing, not workspace creation.
+//
+// REGISTRY holds the CURRENT artifact for each code — exactly one per code and one per canonical route.
+// That is not a style preference: `findLegalDocumentByRoute` resolves by array order, so a second entry
+// sharing a route would make /legal/operator-terms resolve to whichever copy happened to be listed
+// first. Every resolver below reads REGISTRY and only REGISTRY.
 const REGISTRY: LegalDocument[] = [operatorTerms, privacyNotice, esignConsent];
+
+/**
+ * Superseded published artifacts, preserved verbatim.
+ *
+ * A published document is never edited in place, so replacing one leaves the old bytes somewhere. They
+ * live here rather than in REGISTRY, and the separation is the whole safety property: an archived
+ * version cannot become the active document, cannot be reached by canonical route, cannot appear on
+ * /legal or in the sitemap, and cannot be picked up by consent resolution — not by convention, but
+ * because no resolver looks at this array. It is read only by the history lookup below, which exists so
+ * that a consent record naming an old version can still be checked against what was actually accepted.
+ *
+ * Adding a version here is the second half of publishing a new one. `registry.test.ts` pins each
+ * archived artifact's content hash and asserts this collection never collides with REGISTRY.
+ */
+const ARCHIVE: LegalDocument[] = [operatorTermsV1_0_0, privacyNoticeV1_0_0];
 
 /** The documents a person must accept to create an organization. */
 export const ORGANIZATION_CONSENT_CODES = ["operator_terms", "privacy_notice"] as const;
@@ -44,6 +66,24 @@ export function listLegalDocuments(): ResolvedLegalDocument[] {
 
 export function findLegalDocumentByRoute(route: string): ResolvedLegalDocument | null {
   const match = REGISTRY.find((document) => document.route === route);
+  return match ? resolveDocument(match) : null;
+}
+
+/** Every superseded artifact, for evidence verification. Never a source of active documents. */
+export function listArchivedLegalDocuments(): ResolvedLegalDocument[] {
+  return ARCHIVE.map(resolveDocument);
+}
+
+/**
+ * Look up one exact artifact by code and version, current or superseded.
+ *
+ * This is the evidence-verification primitive: given `operator_terms@1.0.0` off a stored consent
+ * record, it returns the bytes that version actually carried, so the record can be checked rather than
+ * taken on trust. It asks for an exact version on purpose — there is no "latest" fallback, because a
+ * lookup that quietly answered with a newer document would defeat the point.
+ */
+export function findLegalDocumentVersion(code: string, version: string): ResolvedLegalDocument | null {
+  const match = [...REGISTRY, ...ARCHIVE].find((document) => document.code === code && document.version === version);
   return match ? resolveDocument(match) : null;
 }
 

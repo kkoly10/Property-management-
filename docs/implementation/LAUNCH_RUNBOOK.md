@@ -186,17 +186,25 @@ See `supabase/migrations-contract/README.md` for why the file lives outside the 
 
 ## 3. Publishing the legal documents
 
-Both `operator_terms` and `privacy_notice` ship as `state: "draft"` at `0.1.0-draft`, and organization
-creation **fails closed in production** while they are drafts. This is intended: consent recorded
-against an unpublished document is not evidence of anything.
+`operator_terms` and `privacy_notice` are **published** at `1.0.1`, effective 2026-09-18, and
+`esign_consent` at `1.0.0`, effective 2026-09-04. Organization creation is no longer blocked by the
+publication gate. That gate remains live: creation **fails closed in production** whenever a required
+document is not published, because consent recorded against an unpublished document is not evidence of
+anything.
 
 Publishing is a professional human decision, not a code change to work around. When counsel approves
-wording, add a new version to `src/lib/legal/documents/` with `state: "published"`. The content hash
-covers the text as well as the identity, so an amended document can never masquerade as the version an
-earlier operator accepted.
+new wording, add a **new version** to `src/lib/legal/documents/` with `state: "published"` and move the
+version it replaces into `src/lib/legal/documents/archive/`. Never edit a published artifact in place:
+the content hash covers the text as well as the identity, so an amended document can never masquerade
+as the version an earlier operator accepted, and the archived copy is what lets a stored consent record
+still be checked against the bytes that were actually shown. `registry.test.ts` pins each archived
+artifact's hash, so an accidental edit fails the suite.
 
-**Until this is done, no operator can create an organization on production.** It is the first hard
-launch blocker.
+Versions 1.0.0 of the Terms and the Privacy Notice went out with placeholder `@crecy.example` contact
+addresses; 1.0.1 carries `legal@crecyos.com` and `privacy@crecyos.com`. Nothing else in either document
+changed. The three legacy `consent_records` rows carrying `legal_document_version = "2026-07-20"`
+predate the registry entirely and are deliberately left alone — they are an honest record of what was
+stored at the time, and rewriting them would invent evidence rather than correct it.
 
 ---
 

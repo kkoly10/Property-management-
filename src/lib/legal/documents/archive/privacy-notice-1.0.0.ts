@@ -1,34 +1,33 @@
 import type { LegalDocument } from "@/lib/legal/types";
 
 /**
- * PILOT RELEASE — published for the Crecy controlled pilot on founder approval.
+ * HISTORICAL ARTIFACT — DO NOT EDIT.
  *
- * This is version 1.0.1, effective 2026-09-18. It supersedes 1.0.0 (2026-09-04) in one respect only:
- * the contact address, which was the placeholder `privacy@crecy.example` and is now the real
- * `privacy@crecyos.com`. No substantive term changed, and no term was added.
+ * The Crecy Privacy Notice, version 1.0.0, published 2026-09-04 and superseded by 1.0.1 on
+ * 2026-09-18. It is kept here verbatim because it is the exact text some people were shown, and a
+ * consent record that names it must remain checkable against the bytes that were actually accepted.
  *
- * A new version is a new artifact, never an edit of a published one. 1.0.0 was NOT rewritten in place —
- * it is preserved verbatim at `@/lib/legal/documents/archive/privacy-notice-1.0.0.ts` so that a
- * consent record naming it can still be checked against the bytes that were actually accepted. A later
- * revision must bump the version again and archive this one the same way.
+ * It is deliberately NOT in the active registry: it is unreachable by code, by canonical route and by
+ * consent resolution, and is served only to the internal history lookup in `@/lib/legal/registry`. Its
+ * content hash is pinned in `registry.test.ts`, so an edit to a single character here fails the suite
+ * rather than silently rewriting what a past acceptance means.
  *
- * The `**Effective … · Version …**` line inside the body must agree with the metadata above it; a test
- * asserts it, because a body that states a different version than the artifact it lives in would put
- * one version in the page badge and another in the text a person actually reads.
+ * The `privacy@crecy.example` address below is a placeholder, and that is precisely why 1.0.1 exists. It
+ * stays here: rewriting it would falsify what this version said.
  */
-export const privacyNotice: LegalDocument = {
+export const privacyNoticeV1_0_0: LegalDocument = {
   code: "privacy_notice",
   title: "Crecy Privacy Notice",
   audience: "public",
   locale: "en-US",
   jurisdictions: ["*"],
-  version: "1.0.1",
-  effectiveDate: "2026-09-18",
+  version: "1.0.0",
+  effectiveDate: "2026-09-04",
   state: "published",
   route: "/legal/privacy-notice",
   body: `# Crecy Privacy Notice
 
-**Effective 2026-09-18 · Version 1.0.1 · Published for the Crecy controlled pilot.**
+**Effective 2026-09-04 · Version 1.0.0 · Published for the Crecy controlled pilot.**
 
 ## 1. Two different roles
 
@@ -78,6 +77,6 @@ that operator and support them in answering it.
 
 ## 7. Contact
 
-Privacy questions: privacy@crecyos.com.
+Privacy questions: privacy@crecy.example.
 `,
 };

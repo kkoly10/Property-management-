@@ -10,7 +10,7 @@ export const dynamic = "force-static";
 export const metadata: Metadata = marketingMetadata({
   title: "Legal documents",
   description:
-    "Every legal document Crecy has published, its version, its effective date and whether it is published or still a draft.",
+    "The current version of every Crecy legal document, with its version, effective date and whether it is published or still a draft.",
   path: "/legal",
 });
 
@@ -22,9 +22,14 @@ export default function LegalIndexPage() {
     // nested <main> inside the layout's would be invalid, and a second wordmark would be a duplicate.
     <div className="mx-auto max-w-3xl px-5 py-12 lg:py-16">
       <h1 className="text-3xl font-semibold tracking-[-0.035em]">Legal documents</h1>
+      {/* "Every version" was true when each document had exactly one. Superseded versions are now kept
+          as archived artifacts and are deliberately not listed or routed here, so the page has to say
+          what it actually shows: the current one. Claiming otherwise would let a reader conclude an old
+          version no longer exists. */}
       <p className="mt-2 text-sm text-muted-foreground">
-        Every version Crecy has published, and the state it is in. A document is only binding once it is
-        published.
+        The current version of each document, and the state it is in. A document is only binding once it
+        is published; a superseded version stays on record as the text the people who accepted it were
+        shown.
       </p>
       <div className="mt-8 space-y-3">
         {documents.map((document) => (

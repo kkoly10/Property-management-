@@ -86,3 +86,50 @@ test("the consent version travels with the submission so it cannot drift from wh
   expect(version).toMatch(/^operator_terms@[^+]+\+privacy_notice@[^#]+#[0-9a-f]{16}$/);
   expect(version).not.toBe("2026-07-20");
 });
+
+/**
+ * The contact-address correction, as a reader of the public pages actually experiences it.
+ *
+ * 1.0.0 of both documents went out carrying placeholder `@crecy.example` addresses — a published legal
+ * document telling people to write to an address that does not exist. 1.0.1 carries the real ones. The
+ * assertions below are deliberately specific about the version: a generic "some version is shown" check
+ * would pass just as happily if the canonical route had started resolving the archived artifact.
+ */
+const CORRECTED = [
+  { slug: "operator-terms", contact: "legal@crecyos.com" },
+  { slug: "privacy-notice", contact: "privacy@crecyos.com" },
+];
+
+for (const document of CORRECTED) {
+  test(`/legal/${document.slug} publishes 1.0.1 with the real contact address`, async ({ page }) => {
+    await page.goto(`/legal/${document.slug}`);
+    await expect(page.locator('[data-slot="badge"]').first()).toHaveText("published");
+    await expect(page.getByText("Version 1.0.1 \u00b7 effective 2026-09-18")).toBeVisible();
+
+    const body = page.getByTestId("legal-document-body");
+    await expect(body).toContainText(document.contact);
+    // The placeholder is gone from the page a person reads, not merely from the metadata.
+    await expect(body).not.toContainText("crecy.example");
+    await expect(page.getByTestId("legal-content-hash")).toContainText(/[0-9a-f]{64}/);
+  });
+}
+
+test("the ESIGN disclosure is untouched by the contact correction", async ({ page }) => {
+  // It never carried a Crecy contact address — it points signers at whoever sent them the document —
+  // so a version bump here would be an accident, and `sign_document` stores the version a signer saw.
+  await page.goto("/legal/esign-consent");
+  await expect(page.getByText("Version 1.0.0 \u00b7 effective 2026-09-04")).toBeVisible();
+});
+
+test("onboarding offers the corrected versions and binds the submission to them", async ({ page }) => {
+  await page.goto("/onboarding/organization");
+  const statement = page.getByTestId("consent-statement");
+  await expect(statement).toContainText("Crecy Operator Terms of Service");
+  await expect(statement).toContainText("Crecy Privacy Notice");
+  // Both documents, both at the corrected version, stated rather than implied.
+  await expect(statement.getByText("(v1.0.1, effective 2026-09-18)")).toHaveCount(2);
+
+  // The hidden field the server compares against is the same binding, not a stale one left in a cache.
+  const version = await page.locator('input[name="consentVersion"]').inputValue();
+  expect(version).toMatch(/^operator_terms@1\.0\.1\+privacy_notice@1\.0\.1#[0-9a-f]{16}$/);
+});
