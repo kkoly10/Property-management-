@@ -482,17 +482,50 @@ set search_path = ''
 as $$
 declare
   v_rows jsonb;
+  v_types text[];
 begin
   if (select auth.uid()) is null then
     raise exception using errcode='28000',message='AUTHENTICATION_REQUIRED';
   end if;
-  if not (private.has_org_permission(p_organization_id, 'resident.read')
-          or private.has_org_permission(p_organization_id, 'resident.manage')
-          or private.has_org_permission(p_organization_id, 'owner.read')
-          or private.has_org_permission(p_organization_id, 'owner.manage')) then
-    raise exception using errcode='42501',message='ORGANIZATION_SCOPE_DENIED';
+  -- Each domain answers for its OWN rows. An earlier draft ORed the four permissions into one gate and
+  -- then returned both kinds regardless, so a caller holding only `resident.read` could enumerate which
+  -- owner entities had invitations outstanding and how their delivery was going. The permissions are
+  -- separate because the domains are; the projection has to respect that rather than widen it.
+  -- `has_unscoped_org_permission`, NOT `has_org_permission`. The latter checks membership and role
+  -- permission and ignores property scoping entirely, so a leasing agent scoped to one property would
+  -- have received relationship ids for residents at every other property in the organization. The rows
+  -- here are opaque uuids and a coarse state rather than names, but the directory this feeds is
+  -- property-scoped by RLS, and a projection beside it that is not is precisely the "rule applied to
+  -- one surface but not its sibling" defect.
+  --
+  -- This is an ORGANIZATION-WIDE summary, so it is offered only to roles that are organization-wide by
+  -- definition. A property-scoped role gets no rows rather than a filtered subset: the honest failure
+  -- is no badge, and building a scoped variant would mean re-deriving the directory's own joins here.
+  v_types := array[]::text[];
+  if private.has_unscoped_org_permission(p_organization_id, 'resident.read')
+     or private.has_unscoped_org_permission(p_organization_id, 'resident.manage') then
+    v_types := v_types || 'resident_relationship'::text;
+  end if;
+  if private.has_unscoped_org_permission(p_organization_id, 'owner.read')
+     or private.has_unscoped_org_permission(p_organization_id, 'owner.manage') then
+    v_types := v_types || 'owner_relationship'::text;
+  end if;
+  if array_length(v_types, 1) is null then
+    -- Two different answers, deliberately. A caller who is not a member of this organization at all is
+    -- REFUSED: that is a cross-tenant question and it should be loud. A caller who IS a member but
+    -- holds only property-scoped permission is told there is nothing, because their directory renders
+    -- perfectly well without badges and they have done nothing wrong. Raising for them would mean a
+    -- permission error on every single page load of a screen they are entitled to use, which pollutes
+    -- the logs a real intrusion would have to be spotted in.
+    if not private.is_active_org_member(p_organization_id) then
+      raise exception using errcode='42501',message='ORGANIZATION_SCOPE_DENIED';
+    end if;
+    return '[]'::jsonb;
   end if;
 
+  -- One pending invitation per (organization, relationship_type, relationship_id) is guaranteed by
+  -- `invitations_pending_relationship_unique`, so a relationship id appears at most once here and the
+  -- caller can key a map on it without a stale row winning.
   select coalesce(jsonb_agg(jsonb_build_object(
     'relationshipId', i.relationship_id,
     'deliveryState', coalesce(private.notification_delivery_state('relationship-invitation:'||i.id::text),'unknown')
@@ -500,7 +533,7 @@ begin
   into v_rows
   from public.invitations i
   where i.organization_id = p_organization_id
-    and i.invitation_type in ('resident_relationship','owner_relationship')
+    and i.invitation_type = any(v_types)
     and i.status = 'pending'
     and i.relationship_id is not null;
 

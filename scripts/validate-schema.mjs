@@ -3737,6 +3737,70 @@ async function validateRecurringCharges() {
     await db.exec("reset role");
   }
 
+  // The relationship delivery projection the resident and owner directories read. It is a definer
+  // function granted to `authenticated`, so it is an authorization boundary and has to be DRIVEN, not
+  // merely defined — a hand-written permission gate that nothing ever executes is a gate nobody has
+  // ever seen work. This one was shipped untested and its first execution found the projection empty.
+  //
+  // The invitation is put back to `pending` first: by this point the suite has accepted it, and only a
+  // pending invitation is a question the directory is still asking.
+  await db.exec("reset role");
+  await db.query(`update public.invitations set status='pending', accepted_at=null where id='${tokenInvite.invitationId}'`);
+  await db.query(`update private.notification_jobs set status='dead_letter' where id='${tokenJob.id}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+  const relationshipDelivery = (await db.query(`select public.list_relationship_invitation_delivery('${organization.organizationId}') as result`)).rows[0].result;
+  const residentRow = relationshipDelivery.find((row) => row.relationshipId === invitedResidentPerson);
+  assert(
+    residentRow && residentRow.deliveryState === 'undeliverable',
+    `The relationship delivery projection did not report the dead-lettered invitation (got ${JSON.stringify(relationshipDelivery)}).`,
+  );
+  // Sanitized: the relay's own error text must not ride along to a browser projection.
+  assert(
+    !JSON.stringify(relationshipDelivery).includes("last_error") && !JSON.stringify(relationshipDelivery).includes("lastError"),
+    "The relationship delivery projection leaked the relay's error detail.",
+  );
+
+  // A caller outside the organization gets nothing, even though the function is definer and the row
+  // exists. This is the predicate that stops one tenant reading another's invitation pipeline.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${outsider}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.list_relationship_invitation_delivery('${organization.organizationId}')`),
+    "ORGANIZATION_SCOPE_DENIED",
+  );
+
+  // And neither does a PROPERTY-SCOPED member, even though their role carries `resident.manage`.
+  // `scopedMessenger` is an active leasing agent confined to one property. `has_org_permission` would
+  // have said yes and handed them relationship ids for residents at every other property in the
+  // organization — the directory this feeds is property-scoped by RLS, and this projection must not be
+  // the one surface that is not. `has_unscoped_org_permission` is what makes it fail closed.
+  //
+  // They get an EMPTY projection rather than an error: they are entitled to the directory, so raising
+  // would put a permission failure in the log on every page load of a screen they may legitimately
+  // use. A non-member is refused; a scoped member is told there is nothing.
+  //
+  // A fresh actor rather than one from earlier coverage: the suite ends several memberships as it goes,
+  // and an expired member is refused for the wrong reason, which would make this assertion pass while
+  // proving nothing about scoping.
+  const scopedInviteReader = "d7000000-0000-4000-8000-0000000000a1";
+  const scopedInviteMembership = "d7000000-0000-4000-8000-0000000000a2";
+  await db.exec(`reset role;
+    insert into auth.users(id) values ('${scopedInviteReader}');
+    insert into public.organization_memberships(id,organization_id,user_id,role_code,status,starts_at)
+    values ('${scopedInviteMembership}','${organization.organizationId}','${scopedInviteReader}','leasing_agent','active',now()-interval '1 day');
+    insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    values ('${organization.organizationId}','${scopedInviteMembership}','${property.propertyId}');
+  `);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${scopedInviteReader}'`);
+  const scopedProjection = (await db.query(`select public.list_relationship_invitation_delivery('${organization.organizationId}') as result`)).rows[0].result;
+  assert(
+    Array.isArray(scopedProjection) && scopedProjection.length === 0,
+    `A property-scoped member received an organization-wide invitation projection (got ${JSON.stringify(scopedProjection)}).`,
+  );
+
+  await db.exec("reset role");
+  await db.query(`update public.invitations set status='accepted', accepted_at=now() where id='${tokenInvite.invitationId}'`);
+  await db.query(`update private.notification_jobs set status='queued' where id='${tokenJob.id}'`);
+
   // The credential never reaches the trace tables. An audit row and an outbox row outlive the queue on
   // purpose, so a copy there would be the durable leak the scrub exists to prevent.
   const credentialLeak = (await db.query(`select
