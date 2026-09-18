@@ -184,6 +184,36 @@ at all before, so the loop was wider open than the review said. The relay's own 
 does not travel: it answers a question the operator did not ask and cannot act on. All six states are
 asserted end to end through the real projection in `test:db`.
 
+## The failure path that had to fail closed
+
+Review found one more, and it was the same defect wearing a different hat.
+
+Both routes called `attach_invitation_auth_token` and ignored the result. The migration then made the
+job claimable two minutes later regardless, and `invitationCta()` fell back to the bare acceptance
+link when no hash was present. I had reasoned about that path and called it "degraded, not broken".
+
+It is broken. An invitation queued under this architecture says, in its own copy, that opening the
+link signs the recipient in and accepts the invitation. Without the credential that sentence is false:
+a recipient who is not already signed in dead-ends on the acceptance route — and the worker would
+still mark the message `sent`, so the delivery state reported a usable invitation that was not one.
+That is precisely the defect this slice was written to remove, reintroduced through its own error
+path.
+
+Three changes make it impossible rather than unlikely:
+
+* The command stamps `authTokenRequired: true` on any job it defers, so the requirement is a property
+  of the job rather than an inference from the template code.
+* The worker refuses to send such a job when the hash is absent or malformed, as a **retryable**
+  failure. Retryable because the honest case is a race with the attach; when the credential never
+  arrives the backoff exhausts and the job dead-letters, which the operator sees as "Email delivery
+  failed". Time expiry is not permission to send the broken link.
+* The routes check both the RPC error and `attached: false`, and answer 503 —
+  `INVITATION_CREDENTIAL_NOT_ATTACHED` — rather than reporting a cheerful `queued` for a message that
+  will never go.
+
+Backward compatibility is keyed on the flag, never on the template code: a job queued before this
+shipped carries no flag, made no one-click promise, and still delivers.
+
 ## Not done, and deliberately so
 
 * The hook is **not enabled** and production Supabase is untouched — no migration applied, no
@@ -192,9 +222,9 @@ asserted end to end through the real projection in `test:db`.
 * `support@crecyos.com` and `support@crecyliving.com` are the default Reply-To addresses and are **not
   known to be monitored inboxes**. Both are overridable per audience. Confirming them is an external
   founder check, recorded in the runbook, not something code can settle.
-* The production Supabase project ref could not be confirmed from here. The runbook named
-  `alrirkvfcmhqumqaidxj`; the owner states production is `tbivpbbejttacfcqeqia`. The runbook now says
-  the latter, but the Supabase credentials available to this environment belong to a different account
-  and list neither ref, so it is recorded as owner-stated. The contradicting status line is flagged for
-  re-verification rather than silently rewritten: it records an observation, and which database it was
-  observed against is exactly what is unresolved.
+* The production Supabase project is `tbivpbbejttacfcqeqia` / `Property-management`, **verified
+  through the connected Supabase API on 2026-09-18** — `ACTIVE_HEALTHY`, holding `public.invitations`
+  and `private.notification_jobs`, while the previously-named `alrirkvfcmhqumqaidxj` / `Property` is
+  `INACTIVE`. This report earlier recorded the ref as owner-stated because the credentials available to
+  the development environment belong to a different account; that uncertainty is now closed. The Phase
+  8 invitation-email migration is **not** in that project's ledger.

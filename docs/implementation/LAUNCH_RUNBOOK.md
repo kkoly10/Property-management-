@@ -16,8 +16,8 @@ so and names what is missing rather than describing a workaround.
 | Gate | `npm run check` green |
 | Deployed | **Yes, and it is live.** Vercel `property-management`, deployment `dpl_EvDTZdhG6yjq3yDGRi6X4gLZFEoa`, commit `89493ce`, target production, `READY`. Reachable at `property-management-six-plum.vercel.app`. |
 | Deployed build state | **Setup mode.** No Supabase environment variables are set on the Vercel project, so every product screen renders preview data instead of the database. See §2 step 4. |
-| Supabase | ⚠️ **Contradiction — re-verify before acting.** This line records an observation made against `Property` / `alrirkvfcmhqumqaidxj`: restored, `ACTIVE_HEALTHY`, schema present, **no data** (0 auth users, 0 organizations, 0 journal entries). §1 now names `tbivpbbejttacfcqeqia` / `Property-management` as production on the owner's statement. One of the two is stale and it cannot be settled from this repository. Confirm in the dashboard which project holds the schema before applying anything. |
-| Migrations | **All 60 applied** — *to the project observed above*, which is the same unresolved question. The 26-file expand step ran on 2026-08-28 and was verified against a local replay (see §2); what is unverified is which database it ran against. |
+| Supabase | **`Property-management` / `tbivpbbejttacfcqeqia`** — `ACTIVE_HEALTHY`, verified through the connected Supabase API on 2026-09-18. Holds `public.invitations` and `private.notification_jobs`. At that check: 3 organizations, 3 notification jobs. The former `Property` / `alrirkvfcmhqumqaidxj` is **`INACTIVE`** and is not the production database; the "restored, no data" observation this line used to carry was made against it and no longer applies. |
+| Migrations | **The Phase 8 invitation-email migration is NOT in the production ledger** as of 2026-09-18. Verify the ledger against the active project before applying anything — see the contract-release README for the required order. |
 | Providers | Scan relay, mail relay and Stripe Connect are all unconfigured. |
 
 ---
@@ -31,12 +31,10 @@ next one.
 The Supabase project is **`tbivpbbejttacfcqeqia`** ("Property-management"). Dashboard paths below are
 relative to `supabase.com/dashboard/project/tbivpbbejttacfcqeqia`.
 
-> This document previously named `alrirkvfcmhqumqaidxj` ("Property"). That is the wrong database for
-> this product, and a runbook that directs a migration or an auth-hook secret at the wrong project is
-> worse than one that says nothing. The ref above is the one the project owner states is production.
-> It could not be confirmed from this repository's tooling — the Supabase credentials available to the
-> development environment belong to a different account and list neither ref — so treat it as owner-
-> stated, and check it in the dashboard before the first migration is applied.
+> This document previously named `alrirkvfcmhqumqaidxj` ("Property"). **Verified through the connected
+> Supabase API on 2026-09-18:** `tbivpbbejttacfcqeqia` / `Property-management` is `ACTIVE_HEALTHY` and
+> holds Crecy's `public.invitations` and `private.notification_jobs`; `alrirkvfcmhqumqaidxj` /
+> `Property` is `INACTIVE`. Use the active project for every instruction in this runbook.
 
 ### Required for the app to work at all
 

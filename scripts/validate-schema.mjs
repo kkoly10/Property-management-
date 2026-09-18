@@ -3621,6 +3621,14 @@ async function validateRecurringCharges() {
   const deferred = (await db.query(`select available_at > now() as held from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
   assert(deferred.held === true, "A deferred invitation job was claimable before its credential was attached.");
 
+  // The flag the worker fails closed on. Without it the two-minute hold is merely a delay before the
+  // dead-end email goes out anyway, which is the defect this whole slice exists to remove.
+  const requiresCredential = (await db.query(`select payload->>'authTokenRequired' as required from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  assert(
+    requiresCredential.required === 'true',
+    "A deferred invitation job was not marked as requiring an auth credential, so the worker could send it without one.",
+  );
+
   // An operator must NOT be able to attach the credential. This is the whole boundary: the invite
   // commands run as the operator because they check that operator's permissions, and this one runs only
   // as the deployment, because what it writes signs somebody in.

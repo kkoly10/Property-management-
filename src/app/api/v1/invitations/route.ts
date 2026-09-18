@@ -99,9 +99,14 @@ export async function POST(request: Request) {
   const result = data as Record<string, unknown>;
 
   // The credential goes onto the queued job through a `service_role`-only command, which also releases
-  // the job the command deferred. A failure here is not worth failing the invitation: the job becomes
-  // available on its own two minutes later and sends the bare acceptance link.
-  await admin.rpc("attach_invitation_auth_token", {
+  // the job the command deferred.
+  //
+  // This result is CHECKED. An earlier version ignored both the error and `attached: false` and let the
+  // job send anyway after its hold expired — which mailed an invitation whose own copy promises a
+  // one-click sign-in the link could not perform, and then let the worker mark it `sent`. The worker
+  // now refuses such a job outright; this is the other half, so the caller is told the invitation is
+  // not ready for delivery rather than being handed a cheerful "queued".
+  const attach = await admin.rpc("attach_invitation_auth_token", {
     p_organization_id: input.organizationId,
     p_invitation_kind: "relationship",
     p_invitation_id: String(result.invitationId),
@@ -110,6 +115,14 @@ export async function POST(request: Request) {
     p_recipient_address: input.email,
     p_auth_token_hash: authToken.tokenHash,
   });
+  const attached = (attach.data as { attached?: unknown } | null)?.attached === true;
+  if (attach.error || !attached) {
+    return invitationErrorResponse(
+      "INVITATION_CREDENTIAL_NOT_ATTACHED",
+      "The invitation was recorded but its activation credential could not be attached, so its email will not be sent. Send the invitation again.",
+      503,
+    );
+  }
 
   // `queued` is the truth: the invitation email is queued for the Crecy notification worker, and only
   // `complete_notification_job` — which runs after a transport accepted the message — can write `sent`.

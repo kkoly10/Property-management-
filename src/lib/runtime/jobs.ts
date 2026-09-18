@@ -21,6 +21,26 @@ export type JobOutcome =
 type Client = SupabaseClient;
 
 // ── Transactional notifications ───────────────────────────────────────────────────────────────────
+/**
+ * Whether this job was queued under the architecture that promises a one-click sign-in.
+ *
+ * Keyed on a flag the command writes, NOT on the template code, so a job queued before this shipped
+ * keeps the legacy behaviour and still delivers. New jobs opt in; old ones are untouched.
+ */
+function requiresAuthCredential(payload: Record<string, unknown>): boolean {
+  return payload.authTokenRequired === true;
+}
+
+/**
+ * The same shape `/auth/confirm` will accept and `attach_invitation_auth_token` enforces. Checking it
+ * here too means a truncated or malformed value is treated as absent rather than mailed as a link that
+ * cannot redeem.
+ */
+function hasUsableAuthCredential(payload: Record<string, unknown>): boolean {
+  const hash = payload.authTokenHash;
+  return typeof hash === "string" && hash.length >= 16 && hash.length <= 512 && /^[A-Za-z0-9_-]+$/.test(hash);
+}
+
 export async function runNotificationDispatch(
   supabase: Client,
   input: { channel: string; limit: number; workerRunId: string; stallMinutes: number },
@@ -63,6 +83,19 @@ export async function runNotificationDispatch(
       outcome = { ok: false, errorCode: "MISSING_RECIPIENT_ADDRESS", retryable: false };
     } else if (!hasTemplate(job.templateCode)) {
       outcome = { ok: false, errorCode: "UNKNOWN_TEMPLATE_CODE", retryable: false };
+    } else if (requiresAuthCredential(job.payload) && !hasUsableAuthCredential(job.payload)) {
+      // FAIL CLOSED. An invitation queued under this architecture says, in its own copy, that opening
+      // the link signs the recipient in. Without the credential that sentence is false: the bare
+      // acceptance link dead-ends for anyone not already signed in, and the worker would still mark the
+      // message `sent`, so the delivery state would report a usable invitation that is not one.
+      //
+      // Retryable, because the honest case is a race — the job became claimable in the window between
+      // the command committing and the route's service-role attach landing, and the next attempt will
+      // find the credential there. When it never arrives the backoff exhausts and the job
+      // dead-letters, which surfaces to the operator as "Email delivery failed". That is the truth,
+      // and it is the outcome the two-minute hold exists to make rare rather than to paper over: time
+      // expiry is not permission to send the broken link.
+      outcome = { ok: false, errorCode: "INVITATION_CREDENTIAL_MISSING", retryable: true };
     } else {
       // A secure-link delivery ships the token to the worker so the URL can be built here; the queue
       // row is scrubbed of it as soon as this job reaches a terminal state.

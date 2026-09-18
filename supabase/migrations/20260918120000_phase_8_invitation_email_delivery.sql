@@ -108,6 +108,14 @@ begin
   update private.notification_jobs j
   set payload = j.payload
     || jsonb_build_object('mfaRequired', coalesce(p_mfa_required, false))
+    -- The flag the worker fails closed on. An invitation queued under this architecture PROMISES, in
+    -- its own copy, that opening the link signs the recipient in. If the credential never arrives, that
+    -- sentence is false and the bare acceptance link dead-ends for anyone not already signed in — the
+    -- exact defect this slice exists to remove. Marking the job means the worker refuses to send it
+    -- rather than degrading to the old broken link, and the absence of this key is what keeps genuinely
+    -- pre-migration jobs on the legacy path.
+    || case when coalesce(p_defer_for_auth_token, false)
+            then jsonb_build_object('authTokenRequired', true) else '{}'::jsonb end
     || case when v_organization_name is null then '{}'::jsonb
             else jsonb_build_object('organizationName', v_organization_name) end,
     available_at = case when coalesce(p_defer_for_auth_token, false)
@@ -164,6 +172,10 @@ begin
   -- against a cron tick, and the attach step clears it immediately.
   update private.notification_jobs j
   set payload = j.payload
+    -- See the staff overload: this is what makes the worker fail closed rather than send an invitation
+    -- whose copy promises a sign-in the link cannot perform.
+    || case when coalesce(p_defer_for_auth_token, false)
+            then jsonb_build_object('authTokenRequired', true) else '{}'::jsonb end
     || case when v_organization_name is null then '{}'::jsonb
             else jsonb_build_object('organizationName', v_organization_name) end,
     available_at = case when coalesce(p_defer_for_auth_token, false)
