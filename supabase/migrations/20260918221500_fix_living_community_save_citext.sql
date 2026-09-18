@@ -1,5 +1,5 @@
 -- Repair the Living community save boundary for an empty SECURITY DEFINER search_path.
--- The original function cast to unqualified ::citext; with search_path='' Postgres cannot resolve it.
+-- The original function used unqualified citext casts; with search_path='' Postgres cannot resolve it.
 -- Keep the same signature and behavior, but schema-qualify the extension type.
 begin;
 
