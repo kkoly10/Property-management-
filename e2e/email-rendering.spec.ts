@@ -66,7 +66,11 @@ test.describe("transactional email rendering", () => {
 
     const cta = page.getByRole("link", { name: "Accept the invitation" });
     await expect(cta).toBeVisible();
-    await expect(cta).toHaveAttribute("href", /^https:\/\//);
+    // Absolute, not relative — a relative href in an email is a dead link. The SCHEME follows the
+    // configured origin, which is loopback http on this harness and https on any real deployment, so
+    // this asserts "absolute" and `templates.test.ts` pins the https destinations with production
+    // origins stubbed.
+    await expect(cta).toHaveAttribute("href", /^https?:\/\/[^/]+\/auth\/confirm\?token_hash=/);
 
     const box = await cta.boundingBox();
     // 44px is the minimum comfortable touch target; a button below it is a mis-tap on a phone.

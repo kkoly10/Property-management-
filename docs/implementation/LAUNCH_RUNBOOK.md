@@ -16,8 +16,8 @@ so and names what is missing rather than describing a workaround.
 | Gate | `npm run check` green |
 | Deployed | **Yes, and it is live.** Vercel `property-management`, deployment `dpl_EvDTZdhG6yjq3yDGRi6X4gLZFEoa`, commit `89493ce`, target production, `READY`. Reachable at `property-management-six-plum.vercel.app`. |
 | Deployed build state | **Setup mode.** No Supabase environment variables are set on the Vercel project, so every product screen renders preview data instead of the database. See §2 step 4. |
-| Supabase | **`Property` / `alrirkvfcmhqumqaidxj`** — restored and `ACTIVE_HEALTHY`. Schema present, **no data**: 0 auth users, 0 organizations, 0 journal entries. |
-| Migrations | **All 60 applied.** The 26-file expand step ran on 2026-08-28 and was verified against a local replay — see §2. |
+| Supabase | ⚠️ **Contradiction — re-verify before acting.** This line records an observation made against `Property` / `alrirkvfcmhqumqaidxj`: restored, `ACTIVE_HEALTHY`, schema present, **no data** (0 auth users, 0 organizations, 0 journal entries). §1 now names `tbivpbbejttacfcqeqia` / `Property-management` as production on the owner's statement. One of the two is stale and it cannot be settled from this repository. Confirm in the dashboard which project holds the schema before applying anything. |
+| Migrations | **All 60 applied** — *to the project observed above*, which is the same unresolved question. The 26-file expand step ran on 2026-08-28 and was verified against a local replay (see §2); what is unverified is which database it ran against. |
 | Providers | Scan relay, mail relay and Stripe Connect are all unconfigured. |
 
 ---
@@ -28,14 +28,21 @@ Set these on the Vercel project before the first production deploy. `NEXT_PUBLIC
 into the client bundle at **build** time, so a value added after a build does not take effect until the
 next one.
 
-The Supabase project is **`alrirkvfcmhqumqaidxj`** ("Property"). Dashboard paths below are relative to
-`supabase.com/dashboard/project/alrirkvfcmhqumqaidxj`.
+The Supabase project is **`tbivpbbejttacfcqeqia`** ("Property-management"). Dashboard paths below are
+relative to `supabase.com/dashboard/project/tbivpbbejttacfcqeqia`.
+
+> This document previously named `alrirkvfcmhqumqaidxj` ("Property"). That is the wrong database for
+> this product, and a runbook that directs a migration or an auth-hook secret at the wrong project is
+> worse than one that says nothing. The ref above is the one the project owner states is production.
+> It could not be confirmed from this repository's tooling — the Supabase credentials available to the
+> development environment belong to a different account and list neither ref — so treat it as owner-
+> stated, and check it in the dashboard before the first migration is applied.
 
 ### Required for the app to work at all
 
 | Variable | Where to get it | If unset |
 | --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | `https://alrirkvfcmhqumqaidxj.supabase.co` — Settings → API → Project URL | The whole app runs in demo/preview mode with hardcoded sample data |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://tbivpbbejttacfcqeqia.supabase.co` — Settings → API → Project URL | The whole app runs in demo/preview mode with hardcoded sample data |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Settings → API Keys → the `sb_publishable_…` key (not the legacy `anon` JWT, and never the secret key) | Same |
 | `SUPABASE_SECRET_KEY` **or** `SUPABASE_SERVICE_ROLE_KEY` | Either works — the first *usable* one wins, and a `replace_me` placeholder counts as unset. `SUPABASE_SECRET_KEY` is Settings → API Keys → **Secret key** (`sb_secret_…`). `SUPABASE_SERVICE_ROLE_KEY` is the legacy JWT the Supabase↔Vercel integration provisions automatically, so a linked Vercel project already has it | Invitation delivery and every worker route fail |
 | `NEXT_PUBLIC_SITE_URL` | The **operator application** origin — production `https://app.crecyos.com`, no trailing slash. Also add it to Supabase → Authentication → URL Configuration → Redirect URLs, or email confirmation links break. This is NOT the marketing origin | Auth callbacks, secure document links, transactional mail links and Stripe return URLs are built from `http://localhost:3000` |
@@ -60,7 +67,7 @@ data, that is the first thing to check.
 | `CRECY_DOCUMENT_SCAN_RELAY_URL` + `_SECRET` | Your scanning service's endpoint; the secret is yours to generate and share with it | The scan route reports **503** and every uploaded document stays `quarantined` — unusable, which is the safe direction |
 | `CRECY_NOTIFICATION_RELAY_URL` + `_SECRET` | Your mail relay's endpoint; the secret is yours to generate and share with it | The notification route reports **503**; jobs queue and are never sent |
 | `RESEND_API_KEY` | Resend → API Keys. Also verify both sending domains — see *Transactional email* below | The bundled relay reports **503**; no invitation or notification is delivered |
-| `SUPABASE_AUTH_HOOK_SECRET` | Generate it: `openssl rand -hex 32`, then paste the same value into Supabase → Authentication → Hooks. Separate from the relay secret on purpose | The Send Email Auth Hook answers **500**. Harmless while the hook is disabled; stops all authentication mail once it is enabled |
+| `SUPABASE_AUTH_HOOK_SECRET` | **Copy it from Supabase → Authentication → Hooks**, which generates it. Do NOT invent one — see *Transactional email* below for the format, which is not a plain random string | The Send Email Auth Hook answers **500**. Harmless while the hook is disabled; stops all authentication mail once it is enabled |
 | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | Stripe dashboard → API keys (`sk_test_…`), and Developers → Webhooks → your endpoint → signing secret (`whsec_…`) | Payment routes report 503; manual payment recording still works |
 
 ### Optional
@@ -153,9 +160,17 @@ renders Supabase's own authentication mail (sign-in links, password resets, emai
 notifications) in Crecy's design instead of Supabase's defaults. Enabling it is a production step to
 take **after** the deployed URL has been verified, in this order:
 
-  1. Set `SUPABASE_AUTH_HOOK_SECRET` on Vercel and deploy. The route answers **500** until it is set —
-     an unconfigured secret is our fault, not a forged request, so it fails loudly rather than looking
-     like a rejection.
+  1. In Supabase → Authentication → Hooks, generate the Send Email Hook secret and copy it **verbatim**
+     into `SUPABASE_AUTH_HOOK_SECRET` on Vercel, then deploy. The route answers **500** until it is set
+     — an unconfigured secret is our fault, not a forged request, so it fails loudly rather than
+     looking like a rejection.
+
+     **Do not generate this one yourself.** It is a Standard Webhooks symmetric key and looks like
+     `v1,whsec_<base64>`; the verifier base64-decodes the part after `whsec_` to get the signing bytes.
+     An earlier version of this runbook said `openssl rand -hex 32`, which is the wrong shape: hex text
+     is not the base64 the two sides must agree on, so the signature would never match and every
+     authentication email would fail with a 401 that looks exactly like an attack. The verifier accepts
+     the value with or without the `v1,` prefix, so pasting what the dashboard shows is safe.
   2. Confirm `https://app.crecyos.com/api/internal/auth/send-email` responds (a 401 to an unsigned POST
      is the correct answer and proves the route is live).
   3. Supabase → Authentication → Hooks → Send Email Hook → HTTPS endpoint, same URL, same secret.

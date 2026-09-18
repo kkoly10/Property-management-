@@ -69,17 +69,22 @@ export async function runNotificationDispatch(
       const token = typeof job.payload.secureLinkToken === "string" ? job.payload.secureLinkToken : null;
       const link = token ? secureLinkUrl(token) : null;
       const payload = link ? { ...job.payload, secureLinkUrl: link } : job.payload;
-      const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload });
 
       // `document_delivered` is the one template that reaches more than one audience, so its template
-      // code cannot say which brand should appear in the From line. The delivery row already records
-      // the recipient's relationship, so resolve it from there rather than guessing — and rather than
-      // widening the queue payload, which would mean replacing a security-definer function and
-      // applying a migration out of band to fix a From address.
+      // code cannot say which brand should appear in the From line — NOR which portal the recipient
+      // can actually open. The delivery row already records the recipient's relationship, so resolve
+      // it from there rather than guessing, and rather than widening the queue payload, which would
+      // mean replacing a security-definer function and applying a migration out of band.
       //
-      // Failing to resolve is not an error: the sender falls back to the neutral operator identity,
-      // which is exactly the behavior before this lookup existed. A brand is worth a query; it is not
-      // worth dead-lettering a document delivery.
+      // This runs BEFORE rendering, which it did not use to. The audience decided only the From line,
+      // so resolving it afterwards was harmless; it now also decides the link in the body, and a
+      // template cannot be handed a fact after it has already used it. That ordering bug shipped as
+      // `link("/documents", "operator")` — the resident path on the operator origin, a page that
+      // exists for nobody who receives this message.
+      //
+      // Failing to resolve is not an error: the sender falls back to the neutral operator identity and
+      // the template renders no portal button. A brand is worth a query; it is not worth
+      // dead-lettering a document delivery.
       let audience = null as ReturnType<typeof audienceForRelationshipType>;
       const deliveryId = job.payload.documentDeliveryId;
       if (job.templateCode === "document_delivered" && typeof deliveryId === "string" && job.organizationId) {
@@ -94,6 +99,8 @@ export async function runNotificationDispatch(
           .maybeSingle();
         audience = audienceForRelationshipType(delivery?.recipient_relationship_type);
       }
+
+      const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload, audience });
 
       outcome = rendered
         ? await transport.send({

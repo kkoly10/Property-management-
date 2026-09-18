@@ -59,6 +59,16 @@ export type NotificationJobForRender = {
   templateCode: string;
   locale: string;
   payload: Record<string, unknown>;
+  /**
+   * The RECIPIENT's surface, where the template code cannot say it.
+   *
+   * `document_delivered` is the case: the same template reaches residents, owners and vendor contacts,
+   * so its code identifies the message but not the portal. The worker resolves this from the delivery
+   * row's `recipient_relationship_type` and passes it in — and it must do so BEFORE rendering, because
+   * the portal link is part of what is rendered. Absent means "not resolved", and a template that
+   * needs it then declines to guess rather than linking somebody to a console they cannot open.
+   */
+  audience?: LinkAudience | null;
 };
 
 export function resolveLanguage(locale: string): NotificationLanguage {
@@ -118,27 +128,64 @@ function link(path: string, audience: LinkAudience): string {
 }
 
 /**
+ * Where a delivered document actually lives, for THIS recipient.
+ *
+ * The portal path is not shared. `/documents` is the Crecy Living resident surface; an owner's is
+ * `/owner/documents` on the owner origin; a vendor contact has no portal at all, because Crecy Vendor
+ * is a reserved surface with nothing behind it (FD-037).
+ *
+ * This used to be `link("/documents", "operator")` for every recipient — the resident path on the
+ * OPERATOR origin, which is a page that exists for nobody being emailed. An owner was sent to a
+ * resident route on a console they have no account on, and a vendor to the same.
+ *
+ * Returning null is the honest answer for an unresolved or portal-less recipient. The caller then
+ * renders no button rather than a link that fails one click later, which is not an improvement on
+ * failing zero clicks later.
+ */
+function documentPortalUrl(audience: LinkAudience | null | undefined): string | null {
+  if (audience === "resident") return link("/documents", "resident");
+  if (audience === "owner") return link("/owner/documents", "owner");
+  return null;
+}
+
+/**
  * The one link in an invitation email.
  *
- * `authActionUrl` is the Supabase Auth action link minted by the route with `generateLink`. Opening it
- * authenticates the invited address and returns through Crecy's auth callback to the invitation
- * acceptance path carrying the Crecy token — so ONE click both signs the person in and accepts the
- * invitation, and there is no second competing email.
+ * `authTokenHash` is a Supabase magic-link token hash, minted by the route with `generateLink` and
+ * attached to the queued job by a `service_role`-only command. The link is BUILT HERE, from this
+ * worker's own origin, rather than carried in the payload: a URL supplied by a caller is a URL the
+ * Crecy worker would then send under Crecy's From domain and branding, which is a phishing primitive
+ * wearing our own envelope. The payload carries an opaque hash; the destination is never negotiable.
  *
- * When it is absent (a job queued before this shipped, or a credential already scrubbed) the message
- * falls back to the bare acceptance link with the Crecy token. That link still works for somebody who
- * is already signed in, and is a dead end for somebody who is not — which is strictly better than
- * rendering nothing at all, and is exactly the state every invitation was in before.
+ * Opening it lands on Crecy's `/auth/confirm`, which redeems the hash server-side with
+ * `verifyOtp({ type: "magiclink", token_hash })`, writes the session to cookies, and then redirects to
+ * `next` — the invitation acceptance path with the Crecy token. One click signs the person in AND
+ * accepts, and there is no second competing email.
+ *
+ * `next` stays relative on purpose. `/auth/confirm` re-validates it with `safeRedirectPath` and builds
+ * the final redirect from its own origin, so nothing here can steer a just-signed-in user off-site.
+ *
+ * When the hash is absent (a job queued before this shipped, or a credential already scrubbed) the
+ * message falls back to the bare acceptance link with the Crecy token. That link still works for
+ * somebody already signed in, and is a dead end for somebody who is not — strictly better than
+ * rendering nothing, and exactly the state every invitation was in before.
  */
 function invitationCta(p: Record<string, unknown>, path: string, audience: LinkAudience): string {
-  const auth = typeof p.authActionUrl === "string" ? p.authActionUrl.trim() : "";
-  if (/^https:\/\//i.test(auth)) return auth;
-
-  const base = link(path, audience);
   const token = typeof p.invitationToken === "string" ? p.invitationToken.trim() : "";
   // base64url only — the shape the invitation route mints. Anything else is not appended.
-  if (!token || !/^[A-Za-z0-9_-]+$/.test(token)) return base;
-  return `${base}?token=${encodeURIComponent(token)}`;
+  const acceptPath = token && /^[A-Za-z0-9_-]+$/.test(token)
+    ? `${path}?token=${encodeURIComponent(token)}`
+    : path;
+
+  const hash = typeof p.authTokenHash === "string" ? p.authTokenHash.trim() : "";
+  const origin = originForAudience(audience);
+  if (!origin || !/^[A-Za-z0-9_-]{16,512}$/.test(hash)) return link(acceptPath, audience);
+
+  const url = new URL("/auth/confirm", origin);
+  url.searchParams.set("token_hash", hash);
+  url.searchParams.set("type", "magiclink");
+  url.searchParams.set("next", acceptPath);
+  return url.toString();
 }
 
 /** `2026-09-18T10:00:00Z` -> `2026-09-18`. A time of day is noise in an expiry a person reads. */
@@ -202,7 +249,7 @@ function invitationDetails(
   return details;
 }
 
-type TemplateBuilder = (payload: Record<string, unknown>) => RenderedNotification;
+type TemplateBuilder = (payload: Record<string, unknown>, audience?: LinkAudience | null) => RenderedNotification;
 
 const ORG_FALLBACK: Record<NotificationLanguage, string> = {
   en: "your property manager",
@@ -361,8 +408,9 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
   // account; every other channel points at the portal. `secureLinkUrl` is injected by the worker at
   // send time and never persisted with the job. Nothing here claims the file was inspected or scanned.
   document_delivered: {
-    en: (p) => {
+    en: (p, audience) => {
       const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\//i.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
+      const portal = documentPortalUrl(audience);
       const expires = dateOnly(p.expiresAt);
       return compose({
         subject: `A document is available: ${text(p.documentTitle, "your document")}`,
@@ -372,12 +420,16 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
           "Some documents ask you to confirm you have read them.",
         ],
         ...(expires && secure ? { details: [{ label: EMAIL_CHROME.en.expiresLabel, value: expires }] } : {}),
-        ctaLabel: secure ? "Open the document" : "Open it in your portal",
-        ctaUrl: secure ?? link("/documents", "operator"),
+        // No portal and no secure link means no button. A recipient with nowhere to go is told what
+        // happened and nothing more; the alternative is a link that 404s or asks them to sign in to a
+        // product they have no account on.
+        ...(secure || portal ? { ctaLabel: secure ? "Open the document" : "Open it in your portal" } : {}),
+        ...(secure || portal ? { ctaUrl: secure ?? portal! } : {}),
       }, "en");
     },
-    es: (p) => {
+    es: (p, audience) => {
       const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\//i.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
+      const portal = documentPortalUrl(audience);
       const expires = dateOnly(p.expiresAt);
       return compose({
         subject: `Hay un documento disponible: ${text(p.documentTitle, "tu documento")}`,
@@ -387,12 +439,16 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
           "Algunos documentos te piden confirmar que los leíste.",
         ],
         ...(expires && secure ? { details: [{ label: EMAIL_CHROME.es.expiresLabel, value: expires }] } : {}),
-        ctaLabel: secure ? "Abrir el documento" : "Abrirlo en tu portal",
-        ctaUrl: secure ?? link("/documents", "operator"),
+        // No portal and no secure link means no button. A recipient with nowhere to go is told what
+        // happened and nothing more; the alternative is a link that 404s or asks them to sign in to a
+        // product they have no account on.
+        ...(secure || portal ? { ctaLabel: secure ? "Abrir el documento" : "Abrirlo en tu portal" } : {}),
+        ...(secure || portal ? { ctaUrl: secure ?? portal! } : {}),
       }, "es");
     },
-    fr: (p) => {
+    fr: (p, audience) => {
       const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\//i.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
+      const portal = documentPortalUrl(audience);
       const expires = dateOnly(p.expiresAt);
       return compose({
         subject: `Un document est disponible : ${text(p.documentTitle, "votre document")}`,
@@ -402,8 +458,11 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
           "Certains documents demandent une confirmation de lecture.",
         ],
         ...(expires && secure ? { details: [{ label: EMAIL_CHROME.fr.expiresLabel, value: expires }] } : {}),
-        ctaLabel: secure ? "Ouvrir le document" : "Ouvrir dans votre portail",
-        ctaUrl: secure ?? link("/documents", "operator"),
+        // No portal and no secure link means no button. A recipient with nowhere to go is told what
+        // happened and nothing more; the alternative is a link that 404s or asks them to sign in to a
+        // product they have no account on.
+        ...(secure || portal ? { ctaLabel: secure ? "Ouvrir le document" : "Ouvrir dans votre portail" } : {}),
+        ...(secure || portal ? { ctaUrl: secure ?? portal! } : {}),
       }, "fr");
     },
   },
@@ -474,5 +533,5 @@ export function renderNotification(job: NotificationJobForRender): RenderedNotif
   if (!byLanguage) return null;
   const language = resolveLanguage(job.locale);
   const build = byLanguage[language] ?? byLanguage.en;
-  return build(job.payload ?? {});
+  return build(job.payload ?? {}, job.audience ?? null);
 }

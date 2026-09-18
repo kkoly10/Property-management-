@@ -10,14 +10,17 @@ import { renderNotification } from "./templates";
  * Every value the fixture supplies is fixed — no dates from the clock, no random ids — so two renders
  * on one deployment are byte-identical and a screenshot diff means a real change.
  *
- * ONE thing here is not fixed, and it is worth knowing before reviewing a screenshot: the CATEGORY
- * templates (document, announcement, message) build their link with `originForAudience`, which returns
- * "" when `NEXT_PUBLIC_SITE_URL` is unset. The template then emits a relative path, the renderer drops
- * it because only http(s) reaches an href, and the message renders with no button. That is the demo
+ * ONE thing here is not fixed, and it is worth knowing before reviewing a screenshot: every link in
+ * these messages is BUILT by the template from `originForAudience`, which returns "" when
+ * `NEXT_PUBLIC_SITE_URL` is unset. The template then emits a relative path, the renderer drops it
+ * because only http(s) reaches an href, and the message renders with no button. That is the demo
  * build's configuration showing through, not the template — `templates.test.ts` pins the absolute URLs
  * with the origins stubbed. To review these the way a recipient sees them, run the preview with
- * `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_LIVING_ROOT_DOMAIN` and `NEXT_PUBLIC_OWNER_ORIGIN` set. The
- * three INVITATION fixtures carry an absolute `authActionUrl`, so they render identically either way.
+ * `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_LIVING_ROOT_DOMAIN` and `NEXT_PUBLIC_OWNER_ORIGIN` set.
+ *
+ * That now includes the invitations. They used to carry a ready-made absolute URL in their payload and
+ * so rendered identically anywhere; they now carry an opaque TOKEN HASH and the worker assembles the
+ * `/auth/confirm` link itself, precisely so that no payload can decide where an invitation points.
  * These are the nine messages worth looking at with human eyes: the three invitations, the three
  * category messages, and the three authentication messages that a recipient is most likely to receive
  * while under time pressure.
@@ -35,7 +38,10 @@ export type EmailFixture = {
 };
 
 const ORGANIZATION = "Northstar Property Group";
-const AUTH_LINK = "https://app.crecyos.com/auth/confirm?token_hash=fixture0token0hash0value00000000&type=magiclink&next=%2Fsettings%2Fteam%2Faccept%3Ftoken%3Dfixture";
+/** A fixed Supabase magic-link token hash. The invitation link is BUILT from it, never carried. */
+const AUTH_TOKEN_HASH = "fixture0token0hash0value00000000";
+/** Already assembled, for the auth-email fixtures — those take a finished URL rather than a hash. */
+const AUTH_LINK = `https://app.crecyos.com/auth/confirm?token_hash=${AUTH_TOKEN_HASH}&type=magiclink&next=%2Fsettings%2Fteam%2Faccept`;
 
 type NotificationFixture = {
   id: string;
@@ -53,7 +59,7 @@ const NOTIFICATION_FIXTURES: NotificationFixture[] = [
     templateCode: "staff_invitation",
     locale: "en-US",
     audience: "operator",
-    payload: { organizationName: ORGANIZATION, roleCode: "property_manager", expiresAt: "2026-09-21T10:00:00Z", mfaRequired: true, authActionUrl: AUTH_LINK },
+    payload: { organizationName: ORGANIZATION, roleCode: "property_manager", expiresAt: "2026-09-21T10:00:00Z", mfaRequired: true, authTokenHash: AUTH_TOKEN_HASH },
   },
   {
     id: "resident-invitation",
@@ -61,7 +67,7 @@ const NOTIFICATION_FIXTURES: NotificationFixture[] = [
     templateCode: "resident_invitation",
     locale: "en-US",
     audience: "resident",
-    payload: { organizationName: ORGANIZATION, expiresAt: "2026-09-21T10:00:00Z", authActionUrl: AUTH_LINK },
+    payload: { organizationName: ORGANIZATION, expiresAt: "2026-09-21T10:00:00Z", authTokenHash: AUTH_TOKEN_HASH },
   },
   {
     id: "owner-invitation",
@@ -69,7 +75,7 @@ const NOTIFICATION_FIXTURES: NotificationFixture[] = [
     templateCode: "owner_invitation",
     locale: "en-US",
     audience: "owner",
-    payload: { organizationName: ORGANIZATION, expiresAt: "2026-09-21T10:00:00Z", authActionUrl: AUTH_LINK },
+    payload: { organizationName: ORGANIZATION, expiresAt: "2026-09-21T10:00:00Z", authTokenHash: AUTH_TOKEN_HASH },
   },
   {
     id: "document-delivered",
@@ -114,6 +120,9 @@ export function renderEmailFixture(id: string): EmailFixture | null {
       templateCode: notification.templateCode,
       locale: notification.locale,
       payload: notification.payload,
+      // The worker resolves this from the delivery row and renders with it; a fixture that omitted it
+      // would show a `document_delivered` message with no button and misrepresent the real thing.
+      audience: notification.audience,
     });
     if (!rendered) return null;
     const unsubscribeUrl = unsubscribeUrlFor(notification.templateCode, notification.audience);

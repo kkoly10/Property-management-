@@ -3607,18 +3607,49 @@ async function validateRecurringCharges() {
   // the queued job `sent` because signInWithOtp returned success. The auth credential now rides inside
   // the Crecy job instead, so there is exactly one email — and exactly one more credential that must
   // never outlive the send.
-  const authActionUrl = "https://project.supabase.co/auth/v1/verify?type=magiclink&token=hashed-token-abc&redirect_to=https%3A%2F%2Fapp.crecyos.com%2Fauth%2Fconfirm";
+  const authTokenHash = "hashedtokenabc0123456789abcdef";
   await db.exec("reset role");
   await db.query(`update private.notification_jobs set status='queued' where id='${tokenJob.id}'`);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  const enrichedInvite = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-resident-0002','${activationRaw}','${authActionUrl}') as result`)).rows[0].result;
+  // The operator-callable overload takes a BOOLEAN, never a credential. It says "one is coming", which
+  // holds the job back so the service-role attach below cannot lose a race with the worker.
+  const enrichedInvite = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-resident-0002','${activationRaw}',true) as result`)).rows[0].result;
   assert(enrichedInvite.invitationId === tokenInvite.invitationId, "The enriched overload did not replay the existing invitation idempotently.");
+
+  // Deferred means genuinely unclaimable: `claim_notification_jobs` gates on `available_at <= now()`.
+  await db.exec("reset role");
+  const deferred = (await db.query(`select available_at > now() as held from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  assert(deferred.held === true, "A deferred invitation job was claimable before its credential was attached.");
+
+  // An operator must NOT be able to attach the credential. This is the whole boundary: the invite
+  // commands run as the operator because they check that operator's permissions, and this one runs only
+  // as the deployment, because what it writes signs somebody in.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(
+    () => db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${authTokenHash}')`),
+    "permission denied",
+  );
+
+  await db.exec("reset role; set role service_role");
+  const attached = (await db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${authTokenHash}') as result`)).rows[0].result;
+  assert(attached.attached === true, "The service-role attach did not reach the queued invitation job.");
+
+  // A hash that could not possibly be redeemed is refused rather than stored and mailed.
+  for (const hostileHash of ["short", "a".repeat(513), "has spaces in it 012345", "with.a.dot0123456789"]) {
+    await expectDatabaseError(
+      () => db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${hostileHash}')`),
+      "INVALID_AUTH_TOKEN_HASH",
+    );
+  }
+
   await db.exec("reset role");
   const enrichedJob = (await db.query(`select
     payload->>'organizationName' as organization_name,
-    payload->>'authActionUrl' as auth_url,
-    payload->>'invitationToken' as token
+    payload->>'authTokenHash' as auth_hash,
+    payload->>'invitationToken' as token,
+    available_at <= now() as released
     from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  assert(enrichedJob.released === true, "Attaching the credential did not release the deferred job.");
   // The literal fixture name, not a field off the command response: this asserts the real
   // organizations row reached the payload, which is the whole point. Before this migration the key was
   // absent and every invitation read "your home" instead of naming who was inviting.
@@ -3626,15 +3657,15 @@ async function validateRecurringCharges() {
     enrichedJob.organization_name === "Finance Atlas",
     `The invitation payload did not name the organization (got ${enrichedJob.organization_name}).`,
   );
-  assert(enrichedJob.auth_url === authActionUrl, "The auth action URL did not reach the invitation notification payload.");
+  assert(enrichedJob.auth_hash === authTokenHash, "The auth token hash did not reach the invitation notification payload.");
 
   // `failed` is RETRYABLE, so the credential must survive it — the worker rebuilds the same message on
   // the next attempt. Scrubbing here would turn one transient relay error into an invitation that can
   // never be delivered.
   await db.query(`update private.notification_jobs set status='failed' where id='${tokenJob.id}'`);
-  const retryableJob = (await db.query(`select payload->>'authActionUrl' as auth_url, payload->>'invitationToken' as token from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  const retryableJob = (await db.query(`select payload->>'authTokenHash' as auth_hash, payload->>'invitationToken' as token from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
   assert(
-    retryableJob.auth_url === authActionUrl && retryableJob.token === activationRaw,
+    retryableJob.auth_hash === authTokenHash && retryableJob.token === activationRaw,
     "A retryable failure scrubbed the credential the retry still needs.",
   );
 
@@ -3643,10 +3674,10 @@ async function validateRecurringCharges() {
   // them.
   for (const terminalState of ["sent", "dead_letter", "canceled"]) {
     await db.query(`update private.notification_jobs set status='queued' where id='${tokenJob.id}'`);
-    await db.query(`update private.notification_jobs set payload = payload || jsonb_build_object('invitationToken','${activationRaw}','authActionUrl','${authActionUrl}') where id='${tokenJob.id}'`);
+    await db.query(`update private.notification_jobs set payload = payload || jsonb_build_object('invitationToken','${activationRaw}','authTokenHash','${authTokenHash}') where id='${tokenJob.id}'`);
     await db.query(`update private.notification_jobs set status='${terminalState}' where id='${tokenJob.id}'`);
     const scrubbed = (await db.query(`select
-      (payload->'authActionUrl') is null as auth_scrubbed,
+      (payload->'authTokenHash') is null as auth_scrubbed,
       (payload->'invitationToken') is null as token_scrubbed
       from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
     assert(
@@ -3655,33 +3686,44 @@ async function validateRecurringCharges() {
     );
   }
 
+  // The operator can see whether the invitation EMAIL left, not merely that an invitation exists. A
+  // pending invitation whose mail dead-lettered will never be accepted and is otherwise
+  // indistinguishable from one sitting unread in an inbox.
+  await db.exec("reset role");
+  for (const [jobStatus, expectedState] of [
+    ["queued", "queued"],
+    ["processing", "sending"],
+    ["sent", "sent"],
+    ["failed", "retrying"],
+    ["dead_letter", "undeliverable"],
+    ["canceled", "canceled"],
+  ]) {
+    await db.query(`update private.notification_jobs set status='${jobStatus}' where idempotency_key='staff-invitation:${leasingInvite.invitationId}'`);
+    await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
+    const workspace = (await db.query(`select public.get_staff_management_workspace('${organization.organizationId}') as result`)).rows[0].result;
+    const projected = workspace.invitations.find((row) => row.invitationId === leasingInvite.invitationId);
+    assert(
+      projected && projected.deliveryState === expectedState,
+      `A '${jobStatus}' invitation job reported delivery state '${projected && projected.deliveryState}' instead of '${expectedState}'.`,
+    );
+    // The relay's own diagnostics must not ride along into a browser projection.
+    assert(
+      !JSON.stringify(projected).includes("last_error") && !JSON.stringify(projected).includes("lastError"),
+      "The invitation projection leaked the relay's error detail to the operator surface.",
+    );
+    await db.exec("reset role");
+  }
+
   // The credential never reaches the trace tables. An audit row and an outbox row outlive the queue on
   // purpose, so a copy there would be the durable leak the scrub exists to prevent.
   const credentialLeak = (await db.query(`select
-    (select count(*)::integer from audit.audit_events where after_data::text like '%${activationRaw}%' or before_data::text like '%${activationRaw}%' or after_data::text like '%hashed-token-abc%') as audit_rows,
-    (select count(*)::integer from private.outbox_events where payload::text like '%${activationRaw}%' or payload::text like '%hashed-token-abc%') as outbox_rows
+    (select count(*)::integer from audit.audit_events where after_data::text like '%${activationRaw}%' or before_data::text like '%${activationRaw}%' or after_data::text like '%' || '${authTokenHash}' || '%') as audit_rows,
+    (select count(*)::integer from private.outbox_events where payload::text like '%${activationRaw}%' or payload::text like '%' || '${authTokenHash}' || '%') as outbox_rows
   `)).rows[0];
   assert(
     credentialLeak.audit_rows === 0 && credentialLeak.outbox_rows === 0,
     "An invitation credential was written to the audit or outbox trace.",
   );
-
-  // The auth action URL becomes the call to action in an email, and this command is callable by any
-  // signed-in user — so a destination that is not plainly an https URL is refused rather than rendered
-  // under Crecy branding from a Crecy sending domain.
-  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
-  for (const hostileUrl of [
-    "javascript:alert(1)//aaaaaaaaaaaaaaaaaaaa",
-    "http://insecure.example.com/auth/v1/verify?token=abc",
-    "https://evil.example.com/verify?a=1 onmouseover=x",
-    `https://evil.example.com/${"a".repeat(2100)}`,
-  ]) {
-    await expectDatabaseError(
-      () => db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-resident-0002','${activationRaw}','${hostileUrl}') as result`),
-      "INVALID_AUTH_ACTION_URL",
-    );
-  }
-  await db.exec("reset role");
 
   // The token overload is granted to `authenticated`, so PostgREST hands any signed-in caller straight
   // to it. A real token is a base64url HMAC digest — 43 characters of [A-Za-z0-9_-] — so anything

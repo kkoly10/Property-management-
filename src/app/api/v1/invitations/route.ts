@@ -1,10 +1,9 @@
 import { createHash, createHmac } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { generateInvitationAuthLink } from "@/lib/auth/invitation-link";
+import { generateInvitationAuthToken } from "@/lib/auth/invitation-link";
 import { invitationDatabaseError, invitationErrorResponse } from "@/lib/api/invitations";
-import { audienceForSurface, inviteRelationshipSchema } from "@/lib/validation/invitations";
-import { originForAudience } from "@/lib/runtime/host";
+import { inviteRelationshipSchema } from "@/lib/validation/invitations";
 
 export async function POST(request: Request) {
   const parsed = inviteRelationshipSchema.safeParse(await request.json().catch(() => null));
@@ -33,15 +32,6 @@ export async function POST(request: Request) {
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
   const tokenPrefix = tokenHash.slice(0, 10);
   const activationPath = `/invitations/accept?token=${encodeURIComponent(rawToken)}`;
-  // The recipient activates on their own portal origin, derived from the relationship, never from
-  // the inviting operator's host. originForAudience collapses to the app origin in local development,
-  // so this does not break the dev loop or Playwright.
-  // Falls back to the request origin when no app origin is configured: originForAudience
-  // returns "" there, and new URL(path, "") throws — which would turn an unconfigured preview
-  // or a bare local checkout into a 500 on every invitation.
-  const callbackUrl = new URL("/auth/callback", originForAudience(audienceForSurface[input.redirectSurface]) || request.url);
-  callbackUrl.searchParams.set("next", activationPath);
-
   let admin;
   try {
     admin = createAdminClient();
@@ -70,16 +60,13 @@ export async function POST(request: Request) {
     createdAuthUser = true;
   }
 
-  // The ONE email's credential. See `generateInvitationAuthLink` for why this is a `magiclink` and not
-  // an `invite`, and why it runs before the command: the link is persisted onto the queued notification
-  // job so the Crecy worker sends the single branded invitation. It replaces a `signInWithOtp()` call
-  // that made Supabase send a second, competing email — after which this route marked the Crecy job
-  // "sent" for a message no transport had accepted.
-  const authLink = await generateInvitationAuthLink(admin, {
-    email: input.email,
-    redirectTo: callbackUrl.toString(),
-  });
-  if (!authLink.ok) {
+  // The ONE email's credential. See `invitation-link.ts` for why this is a `magiclink` and not an
+  // `invite`, and why it is the TOKEN HASH rather than the action link — the action link is an
+  // implicit-flow redirect whose session arrives in a URL fragment no server route can read. It
+  // replaces a `signInWithOtp()` call that made Supabase send a second, competing email, after which
+  // this route marked the Crecy job "sent" for a message no transport had accepted.
+  const authToken = await generateInvitationAuthToken(admin, { email: input.email });
+  if (!authToken.ok) {
     if (createdAuthUser) await admin.auth.admin.deleteUser(invitedUserId).catch(() => undefined);
     return invitationErrorResponse(
       "INVITATION_LINK_UNAVAILABLE",
@@ -99,7 +86,10 @@ export async function POST(request: Request) {
     p_token_hash: tokenHash,
     p_token_prefix: tokenPrefix,
     p_activation_token: rawToken,
-    p_auth_action_url: authLink.actionUrl,
+    // Not the credential — a flag saying one is coming, so the queued job is held back until the
+    // service-role attach below lands. This command runs as the OPERATOR, and nothing an operator can
+    // call is allowed to decide what an invitation email contains.
+    p_defer_for_auth_token: true,
     p_idempotency_key: idempotencyKey,
   });
   if (error || !data) {
@@ -107,6 +97,16 @@ export async function POST(request: Request) {
     return invitationDatabaseError(error?.message ?? "");
   }
   const result = data as Record<string, unknown>;
+
+  // The credential goes onto the queued job through a `service_role`-only command, which also releases
+  // the job the command deferred. A failure here is not worth failing the invitation: the job becomes
+  // available on its own two minutes later and sends the bare acceptance link.
+  await admin.rpc("attach_invitation_auth_token", {
+    p_organization_id: input.organizationId,
+    p_invitation_kind: "relationship",
+    p_invitation_id: String(result.invitationId),
+    p_auth_token_hash: authToken.tokenHash,
+  });
 
   // `queued` is the truth: the invitation email is queued for the Crecy notification worker, and only
   // `complete_notification_job` — which runs after a transport accepted the message — can write `sent`.

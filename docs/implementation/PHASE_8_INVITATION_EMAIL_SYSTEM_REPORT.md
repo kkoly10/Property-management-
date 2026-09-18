@@ -22,13 +22,23 @@ anywhere downstream of Supabase's accept was indistinguishable from a success.
 
 ## What replaced it
 
-**One link, minted by us.** Both invitation routes now call `auth.admin.generateLink` and pass the
-resulting action URL into the command as `p_auth_action_url`. Opening it signs the recipient in AND
-lands them on the acceptance path with the Crecy token, so one click completes the journey and there is
-only one email.
+**One link, built by us.** Both invitation routes call `auth.admin.generateLink` and keep
+`properties.hashed_token`. The worker assembles Crecy's own
+`/auth/confirm?token_hash=…&type=magiclink&next=…` around it, `/auth/confirm` redeems it server-side
+with `verifyOtp`, writes the session to cookies, and redirects to the acceptance path. One click signs
+the recipient in AND accepts, and there is only one email.
 
 `generateLink` *generates* — it sends nothing — which is what makes this safe: Crecy renders and sends
-the only message, through its own relay, in its own design.
+the only message.
+
+**The action link is discarded, and the first version of this work was wrong to use it.** Review
+caught it. `properties.action_link` is a Supabase-hosted `/auth/v1/verify` redirect, and an
+admin-generated link carries no PKCE code_verifier, so GoTrue completes it in the **implicit flow**:
+the session comes back as a URL *fragment*, never as `?code=`. A browser never sends a fragment to a
+server. Crecy's `/auth/callback` reads `?code=` and calls `exchangeCodeForSession`, so it would have
+found nothing and redirected every invited person to `/signup?auth_error=1`. The "one click" path
+would have failed for everybody, silently, in the one place nobody tests by hand
+(supabase/auth-js#767, supabase/supabase discussion #20937).
 
 **`magiclink`, not `invite`.** Crecy's invitation routes create the auth user first, so at
 `generateLink` time the address always exists. `type: "invite"` is the version-unstable path here
@@ -37,11 +47,27 @@ v2.145.0); `magiclink` is stable for an address that exists. The reasoning is re
 `src/lib/auth/invitation-link.ts` rather than only in this report, because the next person to touch it
 will be reading that file.
 
-**A hard configuration prerequisite, documented not assumed.** GoTrue validates the requested
-`redirect_to` against the project's Redirect URL allow-list and, when it does not match, **silently
-substitutes the Site URL**. There is no error. A misconfigured allow-list therefore presents as "the
-link works but goes to the wrong page", which is why it is called out in the launch runbook rather than
-left to be discovered.
+**Nothing a caller supplies decides where an invitation points.** The credential the payload carries
+is an opaque token hash, never a URL, and it is attached by `public.attach_invitation_auth_token`,
+which is granted to `service_role` alone.
+
+This was the second review finding, and it was a real hole. The first version let the operator-callable
+invite overloads take `p_auth_action_url`. Those functions are granted to `authenticated`, so any
+operator with invite permission could have called them straight through PostgREST with a URL of their
+choosing — and the Crecy worker would then have sent that URL to the invited person, under Crecy
+branding, from a Crecy sending domain. A regex proving "https, no angle brackets" proves shape, never
+provenance. The operator-callable overload now takes a *boolean* saying a credential is coming; the
+worst it can do is delay its own invitation.
+
+That boolean also closes a race the two-step version would otherwise have introduced. It defers the
+job's `available_at` by two minutes — the worker's claim gate is `status='queued' and available_at <=
+now()` — and the attach step sets it back to `now()` in the same statement that writes the credential.
+There is no ordering in which the worker sees one without the other, and if the attach never happens
+the invitation still goes out, carrying the bare acceptance link.
+
+Using the token hash also removed a configuration hazard the previous version had to document as a
+launch prerequisite: GoTrue's `redirect_to` allow-list no longer decides where an invited person
+lands, because `redirect_to` is no longer sent. Crecy's own `safeRedirectPath` decides.
 
 **The lie is gone.** `mark_staff_invitation_email_sent` and `mark_relationship_invitation_email_sent`
 are revoked from `service_role` by the contract migration — they were only ever granted to
@@ -52,10 +78,10 @@ after a mail transport has accepted the message. The two
 point. The routes now return `deliveryState: "queued"`, and the three invitation forms say the message
 is queued rather than claiming it was sent.
 
-**The credential is treated as one.** The generated action URL authenticates whoever holds it, so it
-gets exactly the handling the invitation token already had: private storage only, never in an audit
-payload, never in an outbox event, never logged, never returned to a browser client. The migration's
-scrub trigger was generalized from one hardcoded key to a list, so `authActionUrl` is removed from
+**The credential is treated as one.** The token hash signs in whoever holds it, so it gets exactly the
+handling the invitation token already had: private storage only, never in an audit payload, never in an
+outbox event, never logged, never returned to a browser client. The migration's scrub trigger was
+generalized from one hardcoded key to a list, so `authTokenHash` is removed from
 `private.notification_jobs.payload` the moment the job reaches `sent`, `dead_letter` or `canceled` —
 and NOT on `failed`, which is retryable and still needs the credential. A `test:db` assertion drives
 each of those transitions and reads the payload back.
@@ -131,6 +157,33 @@ they had been promoted to. Every assertion passed, because each only asked wheth
 present. Templates now pass `paragraphs` (the prose alone) separately from `body` (the finished text
 part), and there is a regression test that counts occurrences rather than checking presence.
 
+## Three more corrections from the same review
+
+**A delivered document pointed at a portal the recipient does not have.** For a non-secure-link
+delivery the template built `link("/documents", "operator")` — the *resident* path on the *operator*
+origin, a page that exists for nobody who receives that message. An owner's documents are at
+`/owner/documents` on the owner origin; a vendor contact has no portal at all. The worker already
+resolved the recipient's relationship, but *after* rendering, which was harmless while the audience
+only decided the From line and became a bug the moment it also decided a link. The lookup now runs
+before rendering, each audience gets its own portal, and a recipient with no portal gets no button —
+a link that fails one click later is not an improvement on failing zero clicks later.
+
+**The auth-hook secret instructions were wrong.** The runbook said `openssl rand -hex 32`. Supabase
+hook secrets are Standard Webhooks symmetric keys shaped `v1,whsec_<base64>`, and the verifier
+base64-decodes them; hex text is not that, so the signature would never have matched and every
+authentication email would have failed with a 401 that looks exactly like an attack. The runbook now
+says to copy the dashboard-generated value verbatim.
+
+**"Queued" was where the operator's knowledge stopped.** More truthful than the old false "sent", and
+still a dead end: a pending invitation whose mail dead-lettered will never be accepted and looked
+identical to one sitting unread in an inbox. The retained read RPCs could not close it — they are
+`service_role`-only and take a bare invitation id with no tenant predicate. So the staff workspace
+projection gained a coarse `deliveryState` (`queued`/`sending`/`sent`/`retrying`/`undeliverable`/
+`canceled`/`unknown`), and the team page now lists pending invitations with it — it did not list them
+at all before, so the loop was wider open than the review said. The relay's own error text deliberately
+does not travel: it answers a question the operator did not ask and cannot act on. All six states are
+asserted end to end through the real projection in `test:db`.
+
 ## Not done, and deliberately so
 
 * The hook is **not enabled** and production Supabase is untouched — no migration applied, no
@@ -139,3 +192,9 @@ part), and there is a regression test that counts occurrences rather than checki
 * `support@crecyos.com` and `support@crecyliving.com` are the default Reply-To addresses and are **not
   known to be monitored inboxes**. Both are overridable per audience. Confirming them is an external
   founder check, recorded in the runbook, not something code can settle.
+* The production Supabase project ref could not be confirmed from here. The runbook named
+  `alrirkvfcmhqumqaidxj`; the owner states production is `tbivpbbejttacfcqeqia`. The runbook now says
+  the latter, but the Supabase credentials available to this environment belong to a different account
+  and list neither ref, so it is recorded as owner-stated. The contradicting status line is flagged for
+  re-verification rather than silently rewritten: it records an observation, and which database it was
+  observed against is exactly what is unresolved.

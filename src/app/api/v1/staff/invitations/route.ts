@@ -1,8 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { originForAudience } from "@/lib/runtime/host";
 import { createClient } from "@/lib/supabase/server";
-import { generateInvitationAuthLink } from "@/lib/auth/invitation-link";
+import { generateInvitationAuthToken } from "@/lib/auth/invitation-link";
 import { staffDatabaseError, staffErrorResponse } from "@/lib/api/staff";
 import { inviteStaffSchema } from "@/lib/validation/staff";
 
@@ -47,14 +46,6 @@ export async function POST(request: Request) {
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
   const tokenPrefix = tokenHash.slice(0, 10);
   const activationPath = `/settings/team/accept?token=${encodeURIComponent(rawToken)}`;
-  // Staff activate in Crecy OS by definition, so the operator origin is correct here — but it is
-  // stated explicitly rather than inherited from the request host.
-  // Falls back to the request origin when no app origin is configured: originForAudience
-  // returns "" there, and new URL(path, "") throws — which would turn an unconfigured preview
-  // or a bare local checkout into a 500 on every invitation.
-  const callbackUrl = new URL("/auth/callback", originForAudience("operator") || request.url);
-  callbackUrl.searchParams.set("next", activationPath);
-
   let admin;
   try {
     admin = createAdminClient();
@@ -85,16 +76,15 @@ export async function POST(request: Request) {
 
   // The ONE email's credential, minted here and sent by nobody but the Crecy worker.
   //
-  // This runs before the command because the command persists it: the auth link travels into the
-  // queued notification job the same way the invitation token does. `generateLink` sends no mail,
-  // which is exactly why it replaced `signInWithOtp` — that call made Supabase send a second,
-  // competing invitation email and left this route marking the Crecy job "sent" for a message no
-  // transport had ever accepted.
-  const authLink = await generateInvitationAuthLink(admin, {
-    email: input.email,
-    redirectTo: callbackUrl.toString(),
-  });
-  if (!authLink.ok) {
+  // `generateLink` sends no mail, which is why it replaced `signInWithOtp` — that call made Supabase
+  // send a second, competing invitation email and left this route marking the Crecy job "sent" for a
+  // message no transport had ever accepted.
+  //
+  // What comes back is the TOKEN HASH, not the action link. The action link is an implicit-flow
+  // redirect that delivers the session in a URL fragment, which no server route can read; see
+  // `invitation-link.ts`. The worker builds Crecy's own `/auth/confirm` URL around this hash.
+  const authToken = await generateInvitationAuthToken(admin, { email: input.email });
+  if (!authToken.ok) {
     if (createdAuthUser) await admin.auth.admin.deleteUser(invitedUserId).catch(() => undefined);
     return staffErrorResponse(
       "INVITATION_LINK_UNAVAILABLE",
@@ -117,7 +107,10 @@ export async function POST(request: Request) {
     p_token_prefix: tokenPrefix,
     p_audit_reason: input.auditReason,
     p_activation_token: rawToken,
-    p_auth_action_url: authLink.actionUrl,
+    // Not the credential — a flag saying one is coming, so the queued job is held back until the
+    // service-role attach below lands. This command runs as the OPERATOR, and nothing an operator
+    // can call is allowed to decide what an invitation email contains.
+    p_defer_for_auth_token: true,
     p_idempotency_key: idempotencyKey,
   });
   if (error || !data) {
@@ -125,6 +118,17 @@ export async function POST(request: Request) {
     return staffDatabaseError(error?.message ?? "");
   }
   const result = data as Record<string, unknown>;
+
+  // The credential goes onto the queued job through a `service_role`-only command, which also
+  // releases the job the command deferred. A failure here is not worth failing the invitation: the
+  // job becomes available on its own two minutes later and sends the bare acceptance link, which is
+  // the behaviour this whole slice replaced rather than a lost message.
+  await admin.rpc("attach_invitation_auth_token", {
+    p_organization_id: input.organizationId,
+    p_invitation_kind: "staff",
+    p_invitation_id: String(result.invitationId),
+    p_auth_token_hash: authToken.tokenHash,
+  });
 
   // `queued` is the truth and the only thing this route may claim. The invitation email is now queued
   // for the Crecy notification worker; only `complete_notification_job`, which runs after a transport

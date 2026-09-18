@@ -5,6 +5,13 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+/** The production-shaped origins. Without them every absolute link collapses to a bare path. */
+function stubOrigins() {
+  vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://app.crecyos.com");
+  vi.stubEnv("NEXT_PUBLIC_MARKETING_ORIGIN", "https://crecyos.com");
+  vi.stubEnv("NEXT_PUBLIC_LIVING_ROOT_DOMAIN", "crecyliving.com");
+}
+
 describe("resolveLanguage", () => {
   it("maps every supported locale to a base language with an English fallback", () => {
     expect(resolveLanguage("en-US")).toBe("en");
@@ -55,15 +62,48 @@ describe("renderNotification", () => {
     expect(rendered.body).toContain("2026-09-01");
   });
 
-  it("REFUSES a relative secure link and falls back to the portal wording", () => {
+  it("REFUSES a relative secure link and falls back to the recipient's own portal", () => {
     // A bare path is a dead link in an email; emitting it would look fine and silently fail.
+    stubOrigins();
     const rendered = renderNotification({
       templateCode: "document_delivered",
       locale: "en-US",
       payload: { documentTitle: "Lease", secureLinkUrl: "/documents/secure/tok" },
+      audience: "resident",
     })!;
     expect(rendered.body).not.toContain("/documents/secure/tok");
-    expect(rendered.body).toContain("/documents");
+    expect(rendered.ctaUrl).toBe("https://crecyliving.com/documents");
+  });
+
+  it("sends each document recipient to the portal THEY can open", () => {
+    stubOrigins();
+    // This template reaches residents, owners and vendor contacts under one code, and it used to send
+    // all three to `link("/documents", "operator")` — the RESIDENT path on the OPERATOR origin, a page
+    // that exists for nobody who receives this message. An owner landed on a resident route of a
+    // console they have no account on.
+    const payload = { documentTitle: "Lease renewal" };
+    const resident = renderNotification({ templateCode: "document_delivered", locale: "en-US", payload, audience: "resident" })!;
+    const owner = renderNotification({ templateCode: "document_delivered", locale: "en-US", payload, audience: "owner" })!;
+
+    expect(resident.ctaUrl, "resident").toBe("https://crecyliving.com/documents");
+    expect(owner.ctaUrl, "owner").toBe("https://owner.crecyos.com/owner/documents");
+    expect(owner.ctaUrl, "owner sent to the resident path").not.toContain("crecyliving.com");
+  });
+
+  it("offers no button to a recipient with no portal", () => {
+    stubOrigins();
+    // A vendor contact has no Crecy surface (FD-037), and an unresolved audience is not a guess worth
+    // making. A link that fails one click later is not an improvement on failing zero clicks later.
+    for (const audience of [null, "operator"] as const) {
+      const rendered = renderNotification({
+        templateCode: "document_delivered",
+        locale: "en-US",
+        payload: { documentTitle: "Lease renewal" },
+        audience,
+      })!;
+      expect(rendered.ctaUrl, `${audience}`).toBeUndefined();
+      expect(rendered.body, `${audience}`).not.toContain("/documents");
+    }
   });
 
   it("renders the secure link in each supported language", () => {
@@ -248,26 +288,63 @@ describe("the transactional template matrix", () => {
     }
   });
 
-  it("prefers the auth action link over the bare acceptance path", () => {
-    // One click both signs the recipient in and accepts the invitation. The bare path is the fallback
-    // for a job queued before this existed, or one whose credential has already been scrubbed.
-    const authUrl = "https://project.supabase.co/auth/v1/verify?type=magiclink&token=hashed";
+  it("builds the sign-in link itself, from a token hash, on a Crecy origin", () => {
+    stubOrigins();
+    // One click both signs the recipient in and accepts the invitation. The credential in the payload
+    // is an OPAQUE HASH, never a URL: a URL supplied by a caller is a URL this worker would then send
+    // under Crecy's From domain and branding, which is a phishing primitive in our own envelope. The
+    // destination is assembled here from an origin only this deployment supplies.
+    const hash = "abcdef0123456789abcdef0123456789";
     for (const templateCode of INVITATIONS) {
-      const withAuth = renderNotification({ templateCode, locale: "en-US", payload: { ...payloadFor(templateCode), authActionUrl: authUrl } });
-      expect(withAuth!.ctaUrl, templateCode).toBe(authUrl);
+      const rendered = renderNotification({ templateCode, locale: "en-US", payload: { ...payloadFor(templateCode), authTokenHash: hash } })!;
+      const url = new URL(rendered.ctaUrl!);
 
-      const withoutAuth = renderNotification({ templateCode, locale: "en-US", payload: payloadFor(templateCode) });
-      expect(withoutAuth!.ctaUrl, `${templateCode}: fallback`).toContain("token=tok-abc_123");
+      expect(url.pathname, templateCode).toBe("/auth/confirm");
+      expect(url.searchParams.get("token_hash"), templateCode).toBe(hash);
+      expect(url.searchParams.get("type"), templateCode).toBe("magiclink");
+      // `next` stays RELATIVE: /auth/confirm re-validates it and builds the final redirect from its
+      // own origin, so nothing in a payload can steer a just-signed-in user off-site.
+      expect(url.searchParams.get("next"), templateCode).toMatch(/^\/[^/]/);
+      expect(url.searchParams.get("next"), templateCode).toContain("token=tok-abc_123");
+
+      const withoutHash = renderNotification({ templateCode, locale: "en-US", payload: payloadFor(templateCode) });
+      expect(withoutHash!.ctaUrl, `${templateCode}: fallback`).toContain("token=tok-abc_123");
+      expect(withoutHash!.ctaUrl, `${templateCode}: fallback`).not.toContain("/auth/confirm");
     }
   });
 
-  it("ignores an auth action link that is not https", () => {
+  it("cannot be made to point an invitation anywhere but Crecy", () => {
+    stubOrigins();
+    // The whole point of carrying a hash rather than a URL. Anything that is not a plausible token
+    // hash is simply not a credential, and the message falls back to the bare acceptance link — it
+    // never becomes a destination.
+    for (const hostile of [
+      "https://evil.example/steal",
+      "javascript:alert(1)",
+      "//evil.example",
+      "abc",
+      "has spaces 0123456789abcdef",
+    ]) {
+      const rendered = renderNotification({
+        templateCode: "staff_invitation",
+        locale: "en-US",
+        payload: { ...payloadFor("staff_invitation"), authTokenHash: hostile },
+      })!;
+      expect(rendered.ctaUrl, hostile).toContain("/settings/team/accept");
+      expect(rendered.ctaUrl, hostile).not.toContain("evil.example");
+      expect(rendered.ctaUrl, hostile).not.toContain("javascript:");
+    }
+  });
+
+  it("ignores an auth action URL, which is no longer a thing a payload can carry", () => {
+    // The previous design put `properties.action_link` here. It is now inert: only `authTokenHash` is
+    // read, so a stale job carrying the old key renders the fallback rather than an unusable link.
     const rendered = renderNotification({
       templateCode: "staff_invitation",
       locale: "en-US",
-      payload: { ...payloadFor("staff_invitation"), authActionUrl: "javascript:alert(1)" },
+      payload: { ...payloadFor("staff_invitation"), authActionUrl: "https://project.supabase.co/auth/v1/verify?token=x" },
     });
-    expect(rendered!.ctaUrl).not.toContain("javascript:");
+    expect(rendered!.ctaUrl).not.toContain("/auth/v1/verify");
     expect(rendered!.ctaUrl).toContain("/settings/team/accept");
   });
 
