@@ -27,6 +27,35 @@ For each file here, in timestamp order:
 Steps 1–3 can be repeated safely. Step 4 cannot be undone by re-running anything here — restoring a
 grant requires a new forward migration.
 
+
+## Release sequence for `20260918130000_phase_8_retire_invitation_email_marks.sql`
+
+This one retires `mark_staff_invitation_email_sent` and `mark_relationship_invitation_email_sent` from
+`service_role`. The currently deployed invitation routes **call them**, so applying it before the new
+build is live breaks every invitation on the running site. The order is not advisory:
+
+1. **Verify the production migration ledger.** Confirm which migrations the target project has actually
+   applied, and that `20260918120000_phase_8_invitation_email_delivery.sql` is not among them yet.
+   Confirm you are pointed at the right project first — see the runbook's §1 note on the project ref.
+2. **Apply the additive migration only:**
+   `supabase/migrations/20260918120000_phase_8_invitation_email_delivery.sql`.
+   It is additive — new overloads, a new `service_role`-only attach command, a new delivery-state
+   helper, a widened scrub trigger. The running application is unaffected by all of it.
+3. **Do NOT apply the contract migration yet.** The deployed build still calls the mark-as-sent RPCs.
+4. **Deploy the compatible application build** (this PR, once merged).
+5. **Verify the new architecture is actually in use**, not merely built: send one staff invitation and
+   one relationship invitation against the target environment, and confirm the queued job carries
+   `authTokenHash`, that the rendered link points at `/auth/confirm` on the recipient's own origin, and
+   that no call to `mark_*_invitation_email_sent` remains in the deployed route code.
+6. **Apply the contract migration:**
+   `supabase/migrations-contract/20260918130000_phase_8_retire_invitation_email_marks.sql`.
+7. **Verify again immediately.** Send one more invitation of each kind and confirm delivery state still
+   advances to `sent` through `complete_notification_job`. This is the step most likely to surface a
+   caller nobody knew about, and the window to notice is right after it runs.
+
+Step 6 cannot be undone by re-running anything here; restoring the grants requires a new forward
+migration. Steps 1–5 are all repeatable.
+
 ## What is in here
 
 | File | Removes | Safe only after |

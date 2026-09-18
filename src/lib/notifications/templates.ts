@@ -417,7 +417,12 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
         heading: text(p.documentTitle, "A document is available"),
         paragraphs: [
           `${text(p.organizationName, ORG_FALLBACK.en)} shared a document with you.`,
-          "Some documents ask you to confirm you have read them.",
+          // The second line depends on whether this recipient HAS somewhere to read it. A vendor
+          // contact has no Crecy surface (FD-037), so telling them to confirm they have read it in a
+          // portal describes a product they cannot open. Say what is actually true instead.
+          secure || portal
+            ? "Some documents ask you to confirm you have read them."
+            : "Your property manager can send you a copy or a secure link on request.",
         ],
         ...(expires && secure ? { details: [{ label: EMAIL_CHROME.en.expiresLabel, value: expires }] } : {}),
         // No portal and no secure link means no button. A recipient with nowhere to go is told what
@@ -436,7 +441,12 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
         heading: text(p.documentTitle, "Hay un documento disponible"),
         paragraphs: [
           `${text(p.organizationName, ORG_FALLBACK.es)} compartió un documento contigo.`,
-          "Algunos documentos te piden confirmar que los leíste.",
+          // The second line depends on whether this recipient HAS somewhere to read it. A vendor
+          // contact has no Crecy surface (FD-037), so telling them to confirm they have read it in a
+          // portal describes a product they cannot open. Say what is actually true instead.
+          secure || portal
+            ? "Algunos documentos te piden confirmar que los leíste."
+            : "Tu administrador puede enviarte una copia o un enlace seguro si lo solicitas.",
         ],
         ...(expires && secure ? { details: [{ label: EMAIL_CHROME.es.expiresLabel, value: expires }] } : {}),
         // No portal and no secure link means no button. A recipient with nowhere to go is told what
@@ -455,7 +465,12 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
         heading: text(p.documentTitle, "Un document est disponible"),
         paragraphs: [
           `${text(p.organizationName, ORG_FALLBACK.fr)} a partagé un document avec vous.`,
-          "Certains documents demandent une confirmation de lecture.",
+          // The second line depends on whether this recipient HAS somewhere to read it. A vendor
+          // contact has no Crecy surface (FD-037), so telling them to confirm they have read it in a
+          // portal describes a product they cannot open. Say what is actually true instead.
+          secure || portal
+            ? "Certains documents demandent une confirmation de lecture."
+            : "Votre gestionnaire peut vous envoyer une copie ou un lien sécurisé sur demande.",
         ],
         ...(expires && secure ? { details: [{ label: EMAIL_CHROME.fr.expiresLabel, value: expires }] } : {}),
         // No portal and no secure link means no button. A recipient with nowhere to go is told what

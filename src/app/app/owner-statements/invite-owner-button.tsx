@@ -5,16 +5,20 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, LoaderCircle, Mail, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { INVITATION_DELIVERY_COPY } from "@/lib/notifications/delivery-copy";
+import type { InvitationDeliveryState } from "@/lib/data/invitation-delivery";
 
 type Props = {
   ownerEntityId: string;
   organizationId: string;
   email: string | null;
   invitationState: "active" | "invited" | "not_invited";
+  /** Whether the pending invitation's email left. Null when there is no pending invitation. */
+  invitationDelivery: InvitationDeliveryState | null;
   disabled: boolean;
 };
 
-export function InviteOwnerButton({ ownerEntityId, organizationId, email, invitationState, disabled }: Props) {
+export function InviteOwnerButton({ ownerEntityId, organizationId, email, invitationState, invitationDelivery, disabled }: Props) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +60,15 @@ export function InviteOwnerButton({ ownerEntityId, organizationId, email, invita
   // worker, which is the only thing that can report an actual delivery.
   if (sent) return <Badge variant="success"><CheckCircle2 className="h-3.5 w-3.5" />Invitation queued</Badge>;
 
+  // After a refresh the operator needs the state the WORKER reached, not the optimistic one this
+  // component set. "Invited" only says a record exists; an invitation whose email dead-lettered will
+  // never be accepted and otherwise looks identical to one sitting unread in an inbox.
+  const delivery = invitationState === "invited" && invitationDelivery
+    ? INVITATION_DELIVERY_COPY[invitationDelivery]
+    : null;
+
   return <div className="flex flex-col items-end gap-1">
+    {delivery && <Badge variant={delivery.variant} title={delivery.hint}>{delivery.label}</Badge>}
     <Button size="sm" variant={invitationState === "invited" ? "outline" : "default"} disabled={disabled || pending || !email} onClick={invite}>
       {pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : invitationState === "invited" ? <Mail className="h-4 w-4" /> : <Send className="h-4 w-4" />}
       {invitationState === "invited" ? "Resend owner invite" : "Invite owner to portal"}

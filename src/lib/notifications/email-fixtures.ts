@@ -103,6 +103,52 @@ const NOTIFICATION_FIXTURES: NotificationFixture[] = [
   },
 ];
 
+/**
+ * The stress cases. Not part of the nine representative messages, but the ones a layout actually
+ * breaks on: a name with no spaces to wrap at, and the two non-English languages whose words are
+ * longer than the English the layout was eyeballed against.
+ */
+const STRESS_FIXTURES: NotificationFixture[] = [
+  {
+    id: "staff-invitation-long-name",
+    title: "Crecy — very long organization name",
+    templateCode: "staff_invitation",
+    locale: "en-US",
+    audience: "operator",
+    payload: {
+      organizationName: "Northstar Residential Property Management and Associates of the Greater Metropolitan Region",
+      roleCode: "maintenance_coordinator",
+      expiresAt: "2026-09-21T10:00:00Z",
+      mfaRequired: true,
+      authTokenHash: AUTH_TOKEN_HASH,
+    },
+  },
+  {
+    id: "resident-invitation-es",
+    title: "Crecy Living — español",
+    templateCode: "resident_invitation",
+    locale: "es-MX",
+    audience: "resident",
+    payload: { organizationName: ORGANIZATION, expiresAt: "2026-09-21T10:00:00Z", authTokenHash: AUTH_TOKEN_HASH },
+  },
+  {
+    id: "owner-invitation-fr",
+    title: "Crecy Owner — français",
+    templateCode: "owner_invitation",
+    locale: "fr-CA",
+    audience: "owner",
+    payload: { organizationName: ORGANIZATION, expiresAt: "2026-09-21T10:00:00Z", authTokenHash: AUTH_TOKEN_HASH },
+  },
+  {
+    id: "document-delivered-no-portal",
+    title: "Document — recipient with no portal",
+    templateCode: "document_delivered",
+    locale: "en-US",
+    audience: "operator",
+    payload: { organizationName: ORGANIZATION, documentTitle: "Signed vendor agreement" },
+  },
+];
+
 const AUTH_FIXTURES: { id: string; title: string; actionType: AuthEmailActionType; audience: MailAudience }[] = [
   { id: "auth-magiclink", title: "Magic sign-in link", actionType: "magiclink", audience: "operator" },
   { id: "auth-recovery", title: "Password recovery", actionType: "recovery", audience: "resident" },
@@ -110,11 +156,11 @@ const AUTH_FIXTURES: { id: string; title: string; actionType: AuthEmailActionTyp
 ];
 
 export function listEmailFixtureIds(): string[] {
-  return [...NOTIFICATION_FIXTURES.map((f) => f.id), ...AUTH_FIXTURES.map((f) => f.id)];
+  return [...NOTIFICATION_FIXTURES.map((f) => f.id), ...STRESS_FIXTURES.map((f) => f.id), ...AUTH_FIXTURES.map((f) => f.id)];
 }
 
 export function renderEmailFixture(id: string): EmailFixture | null {
-  const notification = NOTIFICATION_FIXTURES.find((f) => f.id === id);
+  const notification = [...NOTIFICATION_FIXTURES, ...STRESS_FIXTURES].find((f) => f.id === id);
   if (notification) {
     const rendered = renderNotification({
       templateCode: notification.templateCode,

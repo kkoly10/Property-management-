@@ -103,6 +103,23 @@ describe("renderNotification", () => {
       })!;
       expect(rendered.ctaUrl, `${audience}`).toBeUndefined();
       expect(rendered.body, `${audience}`).not.toContain("/documents");
+      // And the COPY must not imply one either. "Confirm you have read them" describes an action in a
+      // portal, which is a product a vendor contact cannot open.
+      expect(rendered.body, `${audience}: copy implies a portal`).not.toContain("confirm you have read");
+      expect(rendered.body, `${audience}`).toContain("can send you a copy or a secure link");
+    }
+  });
+
+  it("keeps the portal wording for a recipient who has one", () => {
+    stubOrigins();
+    for (const audience of ["resident", "owner"] as const) {
+      const rendered = renderNotification({
+        templateCode: "document_delivered",
+        locale: "en-US",
+        payload: { documentTitle: "Lease renewal" },
+        audience,
+      })!;
+      expect(rendered.body, audience).toContain("confirm you have read");
     }
   });
 

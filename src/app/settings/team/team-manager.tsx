@@ -1,4 +1,5 @@
-import type { StaffInvitation, StaffWorkspace } from "@/lib/data/staff";
+import type { StaffWorkspace } from "@/lib/data/staff";
+import { INVITATION_DELIVERY_COPY } from "@/lib/notifications/delivery-copy";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StaffInviteForm } from "@/app/settings/team/staff-invite-form";
@@ -8,27 +9,6 @@ type TeamManagerProps = Pick<
   StaffWorkspace,
   "authenticatorLevel" | "organization" | "staffSeatCount" | "staffSeatLimit" | "members" | "invitations" | "roles" | "properties"
 > & { disabled: boolean };
-
-/**
- * What an operator is actually told about a pending invitation's email.
- *
- * "Queued" is honest at the moment of sending and useless a day later. These are the states the
- * notification worker really reaches, in the operator's own words — the one that matters is
- * `undeliverable`, because a pending invitation whose mail dead-lettered will never be accepted and
- * looks identical, on every other surface, to one sitting unread in an inbox.
- *
- * The relay's own error text is deliberately not here. `RELAY_UNAUTHORIZED` answers a question the
- * operator did not ask and cannot act on.
- */
-const DELIVERY_COPY: Record<StaffInvitation["deliveryState"], { label: string; variant: "success" | "info" | "warning" | "destructive"; hint: string }> = {
-  sent: { label: "Email sent", variant: "success", hint: "A mail provider accepted this message." },
-  sending: { label: "Sending", variant: "info", hint: "A worker is delivering this message now." },
-  queued: { label: "Email queued", variant: "info", hint: "Waiting for the next delivery run." },
-  retrying: { label: "Retrying", variant: "warning", hint: "Delivery failed and will be attempted again." },
-  undeliverable: { label: "Not delivered", variant: "destructive", hint: "Delivery was abandoned. Send a new invitation." },
-  canceled: { label: "Not sent", variant: "warning", hint: "Delivery was cancelled before it was sent." },
-  unknown: { label: "No delivery record", variant: "warning", hint: "This invitation predates delivery tracking." },
-};
 
 export function TeamManager({
   authenticatorLevel,
@@ -83,7 +63,7 @@ export function TeamManager({
           <Card>
             <CardContent className="divide-y p-0">
               {pending.map((invitation) => {
-                const delivery = DELIVERY_COPY[invitation.deliveryState];
+                const delivery = INVITATION_DELIVERY_COPY[invitation.deliveryState];
                 return (
                   <div key={invitation.invitationId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                     <div className="min-w-0">

@@ -189,10 +189,24 @@ grant execute on function public.invite_relationship_user(uuid,uuid,text,uuid,te
 -- the destination of an invitation email is not an input to anything: the worst a malformed or
 -- foreign hash can do is land the recipient on Crecy's own `/auth/confirm`, fail `verifyOtp`, and
 -- redirect to the login page. There is no value here that can point an invitation off-site.
+--
+-- The update is bound on every dimension that could otherwise be substituted:
+--
+--   organization       a credential cannot be written across a tenant boundary
+--   invitation id      via the job's idempotency key, which the command owns
+--   template code      it must be an INVITATION email, not any job sharing that key shape
+--   recipient address  the address the credential was minted for, case-insensitively
+--   channel            email only
+--   queued status      never a claimed, sent, or already-scrubbed job
+--
+-- The recipient binding is the one that matters most and is easiest to omit. A magic-link hash
+-- authenticates exactly one identity; attaching it to a job addressed to somebody else would deliver a
+-- working session for one person into another person's inbox.
 create or replace function public.attach_invitation_auth_token(
   p_organization_id uuid,
   p_invitation_kind text,
   p_invitation_id uuid,
+  p_recipient_address text,
   p_auth_token_hash text
 )
 returns jsonb
@@ -202,6 +216,7 @@ set search_path = ''
 as $$
 declare
   v_prefix text;
+  v_templates text[];
   v_updated integer;
 begin
   if p_organization_id is null or p_invitation_id is null then
@@ -218,9 +233,18 @@ begin
     raise exception using errcode='23514',message='INVALID_AUTH_TOKEN_HASH';
   end if;
 
+  if p_recipient_address is null or length(trim(p_recipient_address)) = 0 then
+    raise exception using errcode='23514',message='INVALID_RECIPIENT_ADDRESS';
+  end if;
+
   v_prefix := case p_invitation_kind
                 when 'staff' then 'staff-invitation:'
                 else 'relationship-invitation:' end;
+  -- The template set this kind of invitation is allowed to be. Binding it means the credential cannot
+  -- be attached to a job that merely shares an id-shaped key — it must be an invitation email.
+  v_templates := case p_invitation_kind
+                   when 'staff' then array['staff_invitation']
+                   else array['resident_invitation','owner_invitation'] end;
 
   -- Only a job still waiting to be sent, and only within the stated organization. On an idempotent
   -- replay the invitation already exists and its job may be long terminal; writing a credential back
@@ -234,6 +258,13 @@ begin
       available_at = now()
   where j.organization_id = p_organization_id
     and j.idempotency_key = v_prefix || p_invitation_id::text
+    and j.template_code = any(v_templates)
+    -- Bound to the address the caller says it minted the credential FOR. A magic-link hash
+    -- authenticates one identity; attaching it to a job addressed to somebody else would mail a
+    -- working session for one person to the inbox of another. `citext` is not in play on this column,
+    -- so the comparison is explicitly case-insensitive the way an address is.
+    and lower(j.recipient_address) = lower(trim(p_recipient_address))
+    and j.channel = 'email'
     and j.status = 'queued';
   get diagnostics v_updated = row_count;
 
@@ -243,8 +274,8 @@ begin
   return jsonb_build_object('attached', v_updated > 0);
 end;
 $$;
-revoke all on function public.attach_invitation_auth_token(uuid,text,uuid,text) from public,anon,authenticated;
-grant execute on function public.attach_invitation_auth_token(uuid,text,uuid,text) to service_role;
+revoke all on function public.attach_invitation_auth_token(uuid,text,uuid,text,text) from public,anon,authenticated;
+grant execute on function public.attach_invitation_auth_token(uuid,text,uuid,text,text) to service_role;
 
 
 -- ── The operator can see whether the invitation actually left ────────────────────────────────────
@@ -430,6 +461,54 @@ end;
 $$;
 revoke all on function public.get_staff_management_workspace(uuid) from public,anon;
 grant execute on function public.get_staff_management_workspace(uuid) to authenticated;
+
+
+-- Residents and owners are invited from their own directories, not from the team page, so the staff
+-- workspace projection above reaches neither. This is the same coarse state for a RELATIONSHIP
+-- invitation, keyed by the relationship the directory already has in hand.
+--
+-- Definer, because `private.notification_jobs` is not readable from the browser, and gated on the same
+-- org permission the directories themselves require. `resident.read` and `owner.read` are deliberately
+-- both accepted: one call serves both directories, and each row is already scoped to the caller's
+-- organization, so the narrower question of which directory is asking adds no protection.
+create or replace function public.list_relationship_invitation_delivery(
+  p_organization_id uuid
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_rows jsonb;
+begin
+  if (select auth.uid()) is null then
+    raise exception using errcode='28000',message='AUTHENTICATION_REQUIRED';
+  end if;
+  if not (private.has_org_permission(p_organization_id, 'resident.read')
+          or private.has_org_permission(p_organization_id, 'resident.manage')
+          or private.has_org_permission(p_organization_id, 'owner.read')
+          or private.has_org_permission(p_organization_id, 'owner.manage')) then
+    raise exception using errcode='42501',message='ORGANIZATION_SCOPE_DENIED';
+  end if;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'relationshipId', i.relationship_id,
+    'deliveryState', coalesce(private.notification_delivery_state('relationship-invitation:'||i.id::text),'unknown')
+  ) order by i.created_at desc), '[]'::jsonb)
+  into v_rows
+  from public.invitations i
+  where i.organization_id = p_organization_id
+    and i.invitation_type in ('resident_relationship','owner_relationship')
+    and i.status = 'pending'
+    and i.relationship_id is not null;
+
+  return v_rows;
+end;
+$$;
+revoke all on function public.list_relationship_invitation_delivery(uuid) from public,anon;
+grant execute on function public.list_relationship_invitation_delivery(uuid) to authenticated;
 
 -- ── Scrub every persisted credential, not just the first one ─────────────────────────────────────
 -- The trigger removed `invitationToken` by name. `authTokenHash` is a second, independent credential:

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderNotification } from "@/lib/notifications/templates";
 
 /**
  * The token-hash confirmation boundary.
@@ -31,7 +32,7 @@ beforeEach(() => {
   verifyOtp.mockReset();
   verifyOtp.mockResolvedValue({ error: null });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe("the token-hash confirmation route", () => {
   it("redeems a well-formed link and lands on the requested path", async () => {
@@ -106,6 +107,31 @@ describe("the token-hash confirmation route", () => {
   it("lands a link with no destination on the root rather than nowhere", async () => {
     const response = await GET(confirmRequest(`?token_hash=${GOOD_HASH}&type=invite`));
     expect(response.headers.get("location")).toBe("https://app.crecyos.com/");
+  });
+
+  it("completes the invitation journey a template actually builds", async () => {
+    // The joined proof the review asked for: the URL the worker renders is redeemed by this route and
+    // lands on the acceptance path carrying the Crecy invitation token. The link is not hand-written
+    // here — it is the one `renderNotification` emits for a staff invitation, so if the template's
+    // shape drifts from what this route accepts, this fails.
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://app.crecyos.com");
+    const rendered = renderNotification({
+      templateCode: "staff_invitation",
+      locale: "en-US",
+      payload: { organizationName: "Northstar", invitationToken: "tok-abc_123", authTokenHash: GOOD_HASH },
+    })!;
+
+    const built = new URL(rendered.ctaUrl!);
+    expect(built.pathname, "the template did not build a confirm URL").toBe("/auth/confirm");
+
+    const response = await GET(confirmRequest(built.search));
+
+    expect(verifyOtp).toHaveBeenCalledWith({ type: "magiclink", token_hash: GOOD_HASH });
+    const location = response.headers.get("location") ?? "";
+    expect(location).toBe("https://app.crecyos.com/settings/team/accept?token=tok-abc_123");
+    // The credential does not survive into the page the recipient lands on.
+    expect(location).not.toContain(GOOD_HASH);
+    expect(location).not.toContain("token_hash");
   });
 
   it("redeems a replay exactly once, because the second attempt fails upstream", async () => {

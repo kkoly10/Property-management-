@@ -3626,21 +3626,44 @@ async function validateRecurringCharges() {
   // as the deployment, because what it writes signs somebody in.
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
   await expectDatabaseError(
-    () => db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${authTokenHash}')`),
+    () => db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${residentEmail}','${authTokenHash}')`),
     "permission denied",
   );
 
   await db.exec("reset role; set role service_role");
-  const attached = (await db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${authTokenHash}') as result`)).rows[0].result;
+  const attached = (await db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${residentEmail}','${authTokenHash}') as result`)).rows[0].result;
   assert(attached.attached === true, "The service-role attach did not reach the queued invitation job.");
 
   // A hash that could not possibly be redeemed is refused rather than stored and mailed.
   for (const hostileHash of ["short", "a".repeat(513), "has spaces in it 012345", "with.a.dot0123456789"]) {
     await expectDatabaseError(
-      () => db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${hostileHash}')`),
+      () => db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${residentEmail}','${hostileHash}')`),
       "INVALID_AUTH_TOKEN_HASH",
     );
   }
+
+  // Every dimension the attach is bound on, driven one at a time. A credential that can be written
+  // across a tenant, onto a different template, or into a job addressed to somebody else is a working
+  // session delivered to the wrong inbox — the recipient binding is the one that matters most.
+  await db.exec("reset role; set role service_role");
+  const substitutions = {
+    "another organization": ["00000000-0000-4000-8000-0000000000ff", "relationship", tokenInvite.invitationId, residentEmail],
+    "the wrong invitation kind (and so the wrong template)": [organization.organizationId, "staff", tokenInvite.invitationId, residentEmail],
+    "a different recipient address": [organization.organizationId, "relationship", tokenInvite.invitationId, "someone.else@example.com"],
+  };
+  for (const [label, args] of Object.entries(substitutions)) {
+    const argsSql = [...args, authTokenHash].map((value) => `'${value}'`).join(",");
+    const outcome = (await db.query(`select public.attach_invitation_auth_token(${argsSql}) as result`)).rows[0].result;
+    assert(outcome.attached === false, `The credential was attachable using ${label}.`);
+  }
+
+  // Case-insensitively bound, because an address is. A correct recipient in different case must still
+  // match, or a legitimate invitation silently loses its credential.
+  await db.exec("reset role");
+  await db.query(`update private.notification_jobs set payload = payload - 'authTokenHash' where id='${tokenJob.id}'`);
+  await db.exec("set role service_role");
+  const mixedCase = (await db.query(`select public.attach_invitation_auth_token('${organization.organizationId}','relationship','${tokenInvite.invitationId}','${residentEmail.toUpperCase()}','${authTokenHash}') as result`)).rows[0].result;
+  assert(mixedCase.attached === true, "A correct recipient address in a different case was rejected.");
 
   await db.exec("reset role");
   const enrichedJob = (await db.query(`select

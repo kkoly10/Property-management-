@@ -127,6 +127,9 @@ export async function POST(request: Request) {
     p_organization_id: input.organizationId,
     p_invitation_kind: "staff",
     p_invitation_id: String(result.invitationId),
+    // The address the credential was minted FOR. The command binds on it, so a hash can never be
+    // attached to a job addressed to somebody else.
+    p_recipient_address: input.email,
     p_auth_token_hash: authToken.tokenHash,
   });
 

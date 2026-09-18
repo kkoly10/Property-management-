@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
+import { getRelationshipInvitationDelivery, type InvitationDeliveryState } from "@/lib/data/invitation-delivery";
 import { createClient } from "@/lib/supabase/server";
 import type { DataMode } from "@/lib/data/maintenance";
 
@@ -52,6 +53,8 @@ export type OperatorOwnerStatementContext = {
   ownerName: string;
   email: string | null;
   invitationState: "active" | "invited" | "not_invited";
+  /** Whether the invitation email left. Null unless this owner has a pending invitation. */
+  invitationDelivery: InvitationDeliveryState | null;
   propertyId: string;
   propertyName: string;
   accountingBookId: string;
@@ -135,6 +138,7 @@ const previewContext: OperatorOwnerStatementContext = {
   ownerName: previewSummary.ownerName,
   email: "owner@maplecourt.example",
   invitationState: "not_invited",
+  invitationDelivery: null,
   propertyId: previewSummary.propertyId,
   propertyName: previewSummary.propertyName,
   accountingBookId: "d2000000-0000-4000-8000-000000000001",
@@ -257,6 +261,9 @@ function normalizeContext(raw: unknown): OperatorOwnerStatementContext {
     ownerName: stringValue(item.ownerName),
     email: nullableString(item.email),
     invitationState: item.invitationState === "active" ? "active" : item.invitationState === "invited" ? "invited" : "not_invited",
+    // Filled in by the caller, which resolves it in one query for the whole workspace rather than
+    // per row. Absent here so the normalizer stays a pure shape coercion.
+    invitationDelivery: null,
     propertyId: stringValue(item.propertyId),
     propertyName: stringValue(item.propertyName),
     accountingBookId: stringValue(item.accountingBookId),
@@ -353,7 +360,19 @@ export async function getOperatorOwnerStatementWorkspace(organizationId: string 
     const { data, error } = await supabase.rpc("get_operator_owner_statement_workspace", { p_organization_id: organizationId });
     if (error || !data) throw error ?? new Error("Owner statement preparation is unavailable.");
     const owners = (data as Record<string, unknown>).owners;
-    return { mode: "ready", owners: Array.isArray(owners) ? owners.map(normalizeContext) : [] };
+    const contexts = Array.isArray(owners) ? owners.map(normalizeContext) : [];
+    // Whether each pending invitation's EMAIL left, resolved once for the workspace. "Invited" says a
+    // record exists; this says whether the message that makes it usable reached a transport.
+    const delivery = organizationId ? await getRelationshipInvitationDelivery(supabase, organizationId) : null;
+    return {
+      mode: "ready",
+      owners: contexts.map((context) => ({
+        ...context,
+        invitationDelivery: context.invitationState === "invited"
+          ? delivery?.get(context.ownerEntityId) ?? "unknown"
+          : null,
+      })),
+    };
   } catch {
     return { mode: "error", owners: [], requestId: crypto.randomUUID() };
   }
