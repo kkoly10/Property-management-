@@ -3,15 +3,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const GOOD_HASH = "abcdef0123456789abcdef0123456789";
 const generateLink = vi.fn();
 const deleteUser = vi.fn();
+const rpc = vi.fn();
 const sendViaResend = vi.fn();
 const redirect = vi.fn((path: string) => {
   throw new Error(`REDIRECT:${path}`);
 });
 
 vi.mock("next/navigation", () => ({ redirect }));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ "x-forwarded-for": "203.0.113.10" }),
+}));
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     auth: { admin: { generateLink, deleteUser } },
+    rpc,
   }),
 }));
 vi.mock("@/lib/notifications/resend", () => ({ sendViaResend }));
@@ -51,13 +56,41 @@ function form(email = "new@example.com", password = "a-secure-password-123") {
 beforeEach(() => {
   generateLink.mockReset();
   deleteUser.mockReset();
+  rpc.mockReset();
   sendViaResend.mockReset();
   redirect.mockClear();
   deleteUser.mockResolvedValue({ data: null, error: null });
+  rpc.mockResolvedValue({ data: { allowed: true }, error: null });
   sendViaResend.mockResolvedValue({ ok: true, messageId: "msg_123" });
 });
 
 describe("signup activation", () => {
+  it("claims the public signup throttle before creating an auth user", async () => {
+    generateLink.mockResolvedValue({
+      data: { user: { id: "user-123" }, properties: { hashed_token: GOOD_HASH } },
+      error: null,
+    });
+
+    await expect(signupAction({ status: "idle" }, form())).rejects.toThrow("REDIRECT:/signup?check_email=1");
+
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls[0][0]).toBe("claim_public_signup_attempt");
+    expect(rpc.mock.calls[0][1].p_email_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(rpc.mock.calls[0][1].p_ip_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(rpc.mock.invocationCallOrder[0]).toBeLessThan(generateLink.mock.invocationCallOrder[0]);
+  });
+
+  it("stops a throttled request before auth creation or email delivery", async () => {
+    rpc.mockResolvedValue({ data: { allowed: false }, error: null });
+
+    const result = await signupAction({ status: "idle" }, form());
+
+    expect(result.status).toBe("error");
+    expect(result.message).toContain("Too many signup attempts");
+    expect(generateLink).not.toHaveBeenCalled();
+    expect(sendViaResend).not.toHaveBeenCalled();
+  });
+
   it("creates a custom-email signup and sends a Crecy confirmation link to onboarding", async () => {
     generateLink.mockResolvedValue({
       data: { user: { id: "user-123" }, properties: { hashed_token: GOOD_HASH } },
