@@ -82,6 +82,17 @@ export function getNotificationTransport(): NotificationTransport | null {
             ...(message.audience ? { audience: message.audience } : {}),
             subject: message.rendered.subject,
             body: message.rendered.body,
+            // The structured half of the message. `subject` + `body` remain the required wire fields,
+            // so a relay that does not understand these still sends a complete plain-text email —
+            // which is what keeps this contract safe to evolve while jobs are already queued.
+            ...(message.rendered.preheader ? { preheader: message.rendered.preheader } : {}),
+            ...(message.rendered.paragraphs?.length ? { paragraphs: message.rendered.paragraphs } : {}),
+            ...(message.rendered.heading ? { heading: message.rendered.heading } : {}),
+            ...(message.rendered.ctaLabel ? { ctaLabel: message.rendered.ctaLabel } : {}),
+            ...(message.rendered.ctaUrl ? { ctaUrl: message.rendered.ctaUrl } : {}),
+            ...(message.rendered.details?.length ? { details: message.rendered.details } : {}),
+            ...(message.rendered.securityNote ? { securityNote: message.rendered.securityNote } : {}),
+            ...(message.rendered.language ? { language: message.rendered.language } : {}),
           }),
           signal: controller.signal,
         });

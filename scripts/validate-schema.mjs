@@ -65,10 +65,12 @@ const platformBusinessOverviewSql = await readFile(resolve(root, "supabase/migra
 const livingCommunityPresentationSql = await readFile(resolve(root, "supabase/migrations/20260905040000_phase_8_living_community_presentation.sql"), "utf8");
 const livingCommunityControlsSql = await readFile(resolve(root, "supabase/migrations/20260905170000_phase_8_living_community_controls.sql"), "utf8");
 const vendorManagementSql = await readFile(resolve(root, "supabase/migrations/20260918090000_phase_6_vendor_management.sql"), "utf8");
+const invitationEmailDeliverySql = await readFile(resolve(root, "supabase/migrations/20260918120000_phase_8_invitation_email_delivery.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
 const closeUnscopedOperatorSurfacesSql = await readFile(resolve(root, "supabase/migrations-contract/20260828130000_phase_8_close_unscoped_operator_surfaces.sql"), "utf8");
+const retireInvitationEmailMarksSql = await readFile(resolve(root, "supabase/migrations-contract/20260918130000_phase_8_retire_invitation_email_marks.sql"), "utf8");
 const batchAReviewCorrectionsSql = await readFile(resolve(root, "supabase/migrations/20260828140000_phase_8_batch_a_review_corrections.sql"), "utf8");
 const organizationCreationBoundarySql = await readFile(resolve(root, "supabase/migrations/20260829100000_phase_1_organization_creation_boundary.sql"), "utf8");
 const scanRecoveryTracingSql = await readFile(resolve(root, "supabase/migrations/20260829110000_phase_2_scan_recovery_and_tracing.sql"), "utf8");
@@ -866,10 +868,12 @@ async function validateRecurringCharges() {
   await db.exec(livingCommunityPresentationSql);
   await db.exec(livingCommunityControlsSql);
   await db.exec(vendorManagementSql);
+  await db.exec(invitationEmailDeliverySql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
   await db.exec(closeUnscopedOperatorSurfacesSql);
+  await db.exec(retireInvitationEmailMarksSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1809,18 +1813,21 @@ async function validateRecurringCharges() {
   const queuedStaffInvitation = (await db.query(`select public.get_staff_invitation_delivery_status(
     '${leasingInvite.invitationId}'
   ) as status`)).rows[0].status;
-  const markedStaffInvitation = (await db.query(`select public.mark_staff_invitation_email_sent(
-    '${leasingInvite.invitationId}'
-  ) as marked`)).rows[0].marked;
+  // `mark_staff_invitation_email_sent` used to be driven here. It is retired by the contract release
+  // (20260918130000) because its only function was to write `sent` on a job no transport had touched.
+  // The status now changes the one legitimate way — the job itself moves — and the read reports it.
+  await db.exec("reset role");
+  await db.query(`update private.notification_jobs set status='sent'
+    where idempotency_key='staff-invitation:${leasingInvite.invitationId}'`);
+  await db.exec("set role service_role");
   const sentStaffInvitation = (await db.query(`select public.get_staff_invitation_delivery_status(
     '${leasingInvite.invitationId}'
   ) as status`)).rows[0].status;
   assert(
     resolvedStaffUser === invitedAdmin
       && queuedStaffInvitation === "queued"
-      && markedStaffInvitation
       && sentStaffInvitation === "sent",
-    "The service-only staff identity or invitation-delivery helpers are incomplete.",
+    "The service-only staff identity or invitation-delivery read is incomplete.",
   );
   await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'; set request.jwt.claim.aal='aal2'`);
   await expectDatabaseError(() => db.query(`select public.resolve_auth_user_by_email(
@@ -3595,6 +3602,87 @@ async function validateRecurringCharges() {
   const scrubbedJob = (await db.query(`select (payload->'invitationToken') is null as scrubbed from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
   assert(scrubbedJob.scrubbed === true, "A terminal notification job kept the plaintext activation token.");
 
+  // ── One email, one credential, one honest terminal state (phase_8_invitation_email_delivery) ────
+  // The invitation used to queue a Crecy job AND have Supabase Auth send its own magic link, then mark
+  // the queued job `sent` because signInWithOtp returned success. The auth credential now rides inside
+  // the Crecy job instead, so there is exactly one email — and exactly one more credential that must
+  // never outlive the send.
+  const authActionUrl = "https://project.supabase.co/auth/v1/verify?type=magiclink&token=hashed-token-abc&redirect_to=https%3A%2F%2Fapp.crecyos.com%2Fauth%2Fconfirm";
+  await db.exec("reset role");
+  await db.query(`update private.notification_jobs set status='queued' where id='${tokenJob.id}'`);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  const enrichedInvite = (await db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-resident-0002','${activationRaw}','${authActionUrl}') as result`)).rows[0].result;
+  assert(enrichedInvite.invitationId === tokenInvite.invitationId, "The enriched overload did not replay the existing invitation idempotently.");
+  await db.exec("reset role");
+  const enrichedJob = (await db.query(`select
+    payload->>'organizationName' as organization_name,
+    payload->>'authActionUrl' as auth_url,
+    payload->>'invitationToken' as token
+    from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  // The literal fixture name, not a field off the command response: this asserts the real
+  // organizations row reached the payload, which is the whole point. Before this migration the key was
+  // absent and every invitation read "your home" instead of naming who was inviting.
+  assert(
+    enrichedJob.organization_name === "Finance Atlas",
+    `The invitation payload did not name the organization (got ${enrichedJob.organization_name}).`,
+  );
+  assert(enrichedJob.auth_url === authActionUrl, "The auth action URL did not reach the invitation notification payload.");
+
+  // `failed` is RETRYABLE, so the credential must survive it — the worker rebuilds the same message on
+  // the next attempt. Scrubbing here would turn one transient relay error into an invitation that can
+  // never be delivered.
+  await db.query(`update private.notification_jobs set status='failed' where id='${tokenJob.id}'`);
+  const retryableJob = (await db.query(`select payload->>'authActionUrl' as auth_url, payload->>'invitationToken' as token from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+  assert(
+    retryableJob.auth_url === authActionUrl && retryableJob.token === activationRaw,
+    "A retryable failure scrubbed the credential the retry still needs.",
+  );
+
+  // Every terminal state, not just the happy one. A dead letter and a cancellation are exactly the rows
+  // most likely to sit in the table forever, which is precisely why a live credential must not be in
+  // them.
+  for (const terminalState of ["sent", "dead_letter", "canceled"]) {
+    await db.query(`update private.notification_jobs set status='queued' where id='${tokenJob.id}'`);
+    await db.query(`update private.notification_jobs set payload = payload || jsonb_build_object('invitationToken','${activationRaw}','authActionUrl','${authActionUrl}') where id='${tokenJob.id}'`);
+    await db.query(`update private.notification_jobs set status='${terminalState}' where id='${tokenJob.id}'`);
+    const scrubbed = (await db.query(`select
+      (payload->'authActionUrl') is null as auth_scrubbed,
+      (payload->'invitationToken') is null as token_scrubbed
+      from private.notification_jobs where id='${tokenJob.id}'`)).rows[0];
+    assert(
+      scrubbed.auth_scrubbed === true && scrubbed.token_scrubbed === true,
+      `A '${terminalState}' notification job kept a live authentication credential.`,
+    );
+  }
+
+  // The credential never reaches the trace tables. An audit row and an outbox row outlive the queue on
+  // purpose, so a copy there would be the durable leak the scrub exists to prevent.
+  const credentialLeak = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where after_data::text like '%${activationRaw}%' or before_data::text like '%${activationRaw}%' or after_data::text like '%hashed-token-abc%') as audit_rows,
+    (select count(*)::integer from private.outbox_events where payload::text like '%${activationRaw}%' or payload::text like '%hashed-token-abc%') as outbox_rows
+  `)).rows[0];
+  assert(
+    credentialLeak.audit_rows === 0 && credentialLeak.outbox_rows === 0,
+    "An invitation credential was written to the audit or outbox trace.",
+  );
+
+  // The auth action URL becomes the call to action in an email, and this command is callable by any
+  // signed-in user — so a destination that is not plainly an https URL is refused rather than rendered
+  // under Crecy branding from a Crecy sending domain.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  for (const hostileUrl of [
+    "javascript:alert(1)//aaaaaaaaaaaaaaaaaaaa",
+    "http://insecure.example.com/auth/v1/verify?token=abc",
+    "https://evil.example.com/verify?a=1 onmouseover=x",
+    `https://evil.example.com/${"a".repeat(2100)}`,
+  ]) {
+    await expectDatabaseError(
+      () => db.query(`select public.invite_relationship_user('${organization.organizationId}','${invitedResidentUser}','resident_person','${invitedResidentPerson}','${residentEmail}','en-US','crecy_living','${residentTokenHashTwo}','${residentTokenHashTwo.slice(0, 10)}','relationship-invite-resident-0002','${activationRaw}','${hostileUrl}') as result`),
+      "INVALID_AUTH_ACTION_URL",
+    );
+  }
+  await db.exec("reset role");
+
   // The token overload is granted to `authenticated`, so PostgREST hands any signed-in caller straight
   // to it. A real token is a base64url HMAC digest — 43 characters of [A-Za-z0-9_-] — so anything
   // outside those bounds is either a bug or someone stuffing private.notification_jobs by hand.
@@ -5243,6 +5331,28 @@ async function validateRecurringCharges() {
     await expectDatabaseError(() => db.query(`select public.${unscoped}()`), `permission denied for function ${unscoped}`);
   }
   await expectDatabaseError(() => db.query("select public.get_operator_global_search('Map',24)"), "permission denied for function get_operator_global_search");
+
+  // (2b) The two invitation "mark as sent" writers are gone. Driven as `service_role` because that is
+  // the grant they actually held — they were never browser-callable, the invitation routes reached
+  // them through the admin client. Asserting this as `authenticated` would have passed without the
+  // contraction existing at all.
+  //
+  // Their only job was to flip a queued notification job to `sent` after an unrelated provider call
+  // returned success — a forged delivery record. `complete_notification_job` owns that transition and
+  // only runs after a transport has actually accepted the message.
+  await db.exec("reset role; set role service_role");
+  for (const retired of ["mark_staff_invitation_email_sent", "mark_relationship_invitation_email_sent"]) {
+    await expectDatabaseError(
+      () => db.query(`select public.${retired}('00000000-0000-4000-8000-000000000001')`),
+      `permission denied for function ${retired}`,
+    );
+  }
+  // The READ side deliberately survives: an operator still needs an honest answer to "did it arrive?",
+  // and these now report the job's real status rather than a status something else wrote.
+  const deliveryReadable = (await db.query("select public.get_staff_invitation_delivery_status('00000000-0000-4000-8000-000000000001') as status")).rows[0];
+  assert(deliveryReadable.status === null, "The staff invitation delivery-status read was revoked along with the writers.");
+  // Back to the operator this block runs as, with the MFA claim the scoped surfaces below require.
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${secondOperator}'; set request.jwt.claim.aal='aal2'`);
 
   // (3) DECISIVE: every audited surface follows the organization it is given, with no mixed rows.
   const ctxSurfaces = [

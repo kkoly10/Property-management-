@@ -63,12 +63,16 @@ export function StaffInviteForm({
       const result = await response.json() as {
         error?: string;
         activationUrl?: string;
-        activationEmailSent?: boolean;
+        deliveryState?: string;
       };
       if (!response.ok || !result.activationUrl) throw new Error(result.error ?? "The invitation could not be created.");
+      // "Queued", not "sent". The route hands the invitation to the notification worker; only the
+      // worker, after a mail transport accepts the message, can make it sent. This used to read "The
+      // activation email was sent" because a Supabase call had returned success — telling the operator
+      // a message had arrived when none had been sent at all.
       setSuccess({
-        message: result.activationEmailSent
-          ? "The activation email was sent and the 72-hour staff invitation is recorded."
+        message: result.deliveryState === "queued"
+          ? "The invitation is recorded and its email is queued for delivery. The link is valid for 72 hours."
           : "The invitation is recorded. Share the activation link with the recipient.",
         activationUrl: result.activationUrl,
       });

@@ -1,19 +1,58 @@
 import { originForAudience, type LinkAudience } from "@/lib/runtime/host";
+import { EMAIL_CHROME } from "@/lib/notifications/email-brand";
 import "server-only";
 
 /**
  * Transactional message bodies for the notification worker.
  *
- * Locales in this product are `en-US | es-MX | en-CA | fr-CA`; templates are written per base language
- * and resolved with an English fallback, so a new regional locale never drops a transactional message.
- * Bodies are plain text on purpose — the relay is free to wrap them, and plain text cannot smuggle
- * markup from a payload value into a recipient's mail client.
+ * ── Structured, and plain text derived from the structure ────────────────────────────────────────
+ *
+ * A template used to return a subject and a wall of prose, and the HTML renderer reconstructed the
+ * call to action by running a regex over it. Templates now declare what a message IS — heading,
+ * paragraphs, detail rows, one call to action, one security note — and BOTH parts are generated from
+ * that single description. The plain-text body is composed here from the same fields the HTML uses, so
+ * the two halves of a multipart message cannot drift apart: there is no second copy to forget.
+ *
+ * ── Locale ───────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Locales are `en-US | es-MX | en-CA | fr-CA`; templates are written per base language and resolved
+ * with an English fallback, so a new regional locale never drops a transactional message. Every
+ * visible string resolves through that language — including the chrome (button fallback text, footer,
+ * preference link, security note) in `email-brand.ts`. A Spanish body with an English footer is an
+ * English email with a translated paragraph.
+ *
+ * ── Only capabilities that exist ─────────────────────────────────────────────────────────────────
+ *
+ * Invitation copy names what the recipient can actually do on the surface they are being invited to.
+ * Resident mail does not promise online payment, because the payment provider is not activated for the
+ * pilot and an invitation that opens onto a missing feature is a broken promise on first login. No
+ * message claims an uploaded file has been inspected for malware, because scanning is deliberately not
+ * active. Nothing here is marketing copy; these are operational messages.
  */
 export type NotificationLanguage = "en" | "es" | "fr";
 
+export type NotificationDetail = { label: string; value: string };
+
 export type RenderedNotification = {
   subject: string;
+  /** The plain-text part, composed from the structured fields below. Always sent. */
   body: string;
+  /** Preview text shown beside the subject in a mail list. */
+  preheader?: string;
+  /**
+   * The message's prose, separate from `body`.
+   *
+   * `body` is the finished plain-text part and therefore contains everything — heading, prose, detail
+   * lines, link, security note. The HTML side needs the prose ALONE, because it renders the other
+   * elements itself; handing it `body` made it print them a second time.
+   */
+  paragraphs?: string[];
+  heading?: string;
+  ctaLabel?: string;
+  ctaUrl?: string;
+  details?: NotificationDetail[];
+  securityNote?: string;
+  language?: NotificationLanguage;
 };
 
 export type NotificationJobForRender = {
@@ -29,8 +68,6 @@ export function resolveLanguage(locale: string): NotificationLanguage {
   return "en";
 }
 
-
-
 /** Payload values are operator/resident supplied. Keep them inert: single line, bounded, no markup. */
 function text(value: unknown, fallback = ""): string {
   if (value === null || value === undefined) return fallback;
@@ -42,22 +79,30 @@ function text(value: unknown, fallback = ""): string {
  * A human role name.
  *
  * `roleCode` is an internal identifier — `org_owner`, `maintenance_coordinator` — and rendering it raw
- * put "invited to join Crecy as org_owner" in front of the person being invited. An unknown code falls
- * back to the generic wording rather than leaking a new identifier the same way.
+ * put "invited to join Crecy as org_owner" in front of the person being invited. The mapping lives
+ * here rather than in the payload so it resolves in the RECIPIENT's language; a label pre-rendered at
+ * queue time would pick one language and ship it to everyone. An unknown code falls back to the
+ * generic wording rather than leaking a new identifier the same way.
  */
 const ROLE_LABELS: Record<string, Record<NotificationLanguage, string>> = {
-  org_owner: { en: "an owner", es: "propietario", fr: "propriétaire" },
-  org_admin: { en: "an administrator", es: "administrador", fr: "administrateur" },
-  property_manager: { en: "a property manager", es: "gestor de propiedades", fr: "gestionnaire immobilier" },
-  leasing_agent: { en: "a leasing agent", es: "agente de arrendamiento", fr: "agent de location" },
-  accountant: { en: "an accountant", es: "contador", fr: "comptable" },
-  maintenance_coordinator: { en: "a maintenance coordinator", es: "coordinador de mantenimiento", fr: "coordinateur de maintenance" },
-  read_only_auditor: { en: "a read-only auditor", es: "auditor de solo lectura", fr: "auditeur de lecture seule" },
+  org_owner: { en: "Owner", es: "Propietario", fr: "Propriétaire" },
+  org_admin: { en: "Administrator", es: "Administrador", fr: "Administrateur" },
+  property_manager: { en: "Property manager", es: "Gestor de propiedades", fr: "Gestionnaire immobilier" },
+  leasing_agent: { en: "Leasing agent", es: "Agente de arrendamiento", fr: "Agent de location" },
+  accountant: { en: "Accountant", es: "Contador", fr: "Comptable" },
+  maintenance_coordinator: { en: "Maintenance coordinator", es: "Coordinador de mantenimiento", fr: "Coordinateur de maintenance" },
+  read_only_auditor: { en: "Read-only auditor", es: "Auditor de solo lectura", fr: "Auditeur de lecture seule" },
 };
 
-function roleLabel(value: unknown, language: NotificationLanguage, fallback: string): string {
+const GENERIC_ROLE: Record<NotificationLanguage, string> = {
+  en: "Team member",
+  es: "Miembro del equipo",
+  fr: "Membre de l'équipe",
+};
+
+function roleLabel(value: unknown, language: NotificationLanguage): string {
   const code = typeof value === "string" ? value.trim() : "";
-  return ROLE_LABELS[code]?.[language] ?? fallback;
+  return ROLE_LABELS[code]?.[language] ?? GENERIC_ROLE[language];
 }
 
 /**
@@ -65,8 +110,7 @@ function roleLabel(value: unknown, language: NotificationLanguage, fallback: str
  *
  * NEXT_PUBLIC_SITE_URL means the operator application (app.crecyos.com), so using it for every
  * recipient sent residents and owners into Crecy OS. The audience comes from the template code, which
- * IS the relationship: staff_invitation is an operator, owner_invitation is an owner. Nothing is
- * guessed from the sending host.
+ * IS the relationship: staff_invitation is an operator, owner_invitation is an owner.
  */
 function link(path: string, audience: LinkAudience): string {
   const origin = originForAudience(audience);
@@ -74,16 +118,22 @@ function link(path: string, audience: LinkAudience): string {
 }
 
 /**
- * The activation link for an invitation.
+ * The one link in an invitation email.
  *
- * The accept page requires `?token=`; without it the recipient is told "The invitation link is
- * incomplete", which is what every invitation email said before the worker was given the token. The
- * token is injected into the job payload by the invite command and scrubbed once the job is terminal.
+ * `authActionUrl` is the Supabase Auth action link minted by the route with `generateLink`. Opening it
+ * authenticates the invited address and returns through Crecy's auth callback to the invitation
+ * acceptance path carrying the Crecy token — so ONE click both signs the person in and accepts the
+ * invitation, and there is no second competing email.
  *
- * A missing or malformed token falls back to the bare path rather than emitting a broken query
- * string, so jobs queued before the token existed still render exactly as they did.
+ * When it is absent (a job queued before this shipped, or a credential already scrubbed) the message
+ * falls back to the bare acceptance link with the Crecy token. That link still works for somebody who
+ * is already signed in, and is a dead end for somebody who is not — which is strictly better than
+ * rendering nothing at all, and is exactly the state every invitation was in before.
  */
-function invitationLink(p: Record<string, unknown>, path: string, audience: LinkAudience): string {
+function invitationCta(p: Record<string, unknown>, path: string, audience: LinkAudience): string {
+  const auth = typeof p.authActionUrl === "string" ? p.authActionUrl.trim() : "";
+  if (/^https:\/\//i.test(auth)) return auth;
+
   const base = link(path, audience);
   const token = typeof p.invitationToken === "string" ? p.invitationToken.trim() : "";
   // base64url only — the shape the invitation route mints. Anything else is not appended.
@@ -91,118 +141,330 @@ function invitationLink(p: Record<string, unknown>, path: string, audience: Link
   return `${base}?token=${encodeURIComponent(token)}`;
 }
 
+/** `2026-09-18T10:00:00Z` -> `2026-09-18`. A time of day is noise in an expiry a person reads. */
+function dateOnly(value: unknown): string | null {
+  const raw = typeof value === "string" ? value.trim() : "";
+  return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null;
+}
+
+type Composed = {
+  subject: string;
+  heading: string;
+  paragraphs: string[];
+  details?: NotificationDetail[];
+  ctaLabel?: string;
+  ctaUrl?: string;
+  securityNote?: string;
+};
+
 /**
- * A secure_link delivery points at a one-time tokenized URL the recipient can open without an account;
- * every other channel points at the portal. `secureLinkUrl` is injected by the worker at send time —
- * it is never persisted with the job beyond the send.
+ * Compose both halves of the message from one description.
+ *
+ * The plain-text part is built here rather than written by hand, which is what guarantees it carries
+ * the same heading, the same facts, the same link and the same security note as the HTML. A text-only
+ * client gets a complete message, not a stub.
  */
-function documentAccessLine(p: Record<string, unknown>, language: NotificationLanguage): string {
-  // Absolute only: a relative path is a dead link in an email, so fall through to the portal wording.
-  const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\//i.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
-  const expires = typeof p.expiresAt === "string" ? p.expiresAt.slice(0, 10) : null;
-  if (secure) {
-    if (language === "es") return `Ábrelo con este enlace seguro: ${secure}${expires ? `\n\nEste enlace vence el ${expires}.` : ""}`;
-    if (language === "fr") return `Ouvrez-le avec ce lien sécurisé : ${secure}${expires ? `\n\nCe lien expire le ${expires}.` : ""}`;
-    return `Open it with this secure link: ${secure}${expires ? `\n\nThis link expires on ${expires}.` : ""}`;
+function compose(parts: Composed, language: NotificationLanguage): RenderedNotification {
+  const lines: string[] = [parts.heading, ...parts.paragraphs];
+  if (parts.details?.length) {
+    lines.push(parts.details.map((d) => `${d.label}: ${d.value}`).join("\n"));
   }
-  if (language === "es") return `Ábrelo en tu portal: ${link("/documents", "operator")}`;
-  if (language === "fr") return `Ouvrez-le dans votre portail : ${link("/documents", "operator")}`;
-  return `Open it in your portal: ${link("/documents", "operator")}`;
+  if (parts.ctaUrl) {
+    lines.push(parts.ctaLabel ? `${parts.ctaLabel}: ${parts.ctaUrl}` : parts.ctaUrl);
+  }
+  if (parts.securityNote) lines.push(parts.securityNote);
+
+  return {
+    subject: parts.subject,
+    body: lines.join("\n\n"),
+    preheader: parts.paragraphs[0] ?? parts.subject,
+    paragraphs: parts.paragraphs,
+    heading: parts.heading,
+    ...(parts.ctaLabel ? { ctaLabel: parts.ctaLabel } : {}),
+    ...(parts.ctaUrl ? { ctaUrl: parts.ctaUrl } : {}),
+    ...(parts.details?.length ? { details: parts.details } : {}),
+    ...(parts.securityNote ? { securityNote: parts.securityNote } : {}),
+    language,
+  };
+}
+
+/** Shared invitation shape: the same facts in three languages, differing only in wording. */
+function invitationDetails(
+  p: Record<string, unknown>,
+  language: NotificationLanguage,
+  options: { organization: string; withRole?: boolean },
+): NotificationDetail[] {
+  const chrome = EMAIL_CHROME[language];
+  const details: NotificationDetail[] = [{ label: chrome.organizationLabel, value: options.organization }];
+  if (options.withRole) details.push({ label: chrome.roleLabel, value: roleLabel(p.roleCode, language) });
+  const expires = dateOnly(p.expiresAt);
+  if (expires) details.push({ label: chrome.expiresLabel, value: expires });
+  return details;
 }
 
 type TemplateBuilder = (payload: Record<string, unknown>) => RenderedNotification;
 
+const ORG_FALLBACK: Record<NotificationLanguage, string> = {
+  en: "your property manager",
+  es: "tu administrador",
+  fr: "votre gestionnaire",
+};
+
 const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> = {
   staff_invitation: {
-    en: (p) => ({
-      subject: `You have been invited to join ${text(p.organizationName, "your team")} on Crecy`,
-      body: `You have been invited to join ${text(p.organizationName, "your team")} on Crecy as ${roleLabel(p.roleCode, "en", "a team member")}.\n\nAccept the invitation: ${invitationLink(p, "/settings/team/accept", "operator")}\n\nIf you were not expecting this, you can ignore this message.`,
-    }),
-    es: (p) => ({
-      subject: `Te invitaron a unirte a ${text(p.organizationName, "tu equipo")} en Crecy`,
-      body: `Te invitaron a unirte a ${text(p.organizationName, "tu equipo")} en Crecy como ${roleLabel(p.roleCode, "es", "miembro del equipo")}.\n\nAcepta la invitación: ${invitationLink(p, "/settings/team/accept", "operator")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
-    }),
-    fr: (p) => ({
-      subject: `Vous avez été invité à rejoindre ${text(p.organizationName, "votre équipe")} sur Crecy`,
-      body: `Vous avez été invité à rejoindre ${text(p.organizationName, "votre équipe")} sur Crecy en tant que ${roleLabel(p.roleCode, "fr", "membre de l'équipe")}.\n\nAccepter l'invitation : ${invitationLink(p, "/settings/team/accept", "operator")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
-    }),
+    en: (p) => {
+      const org = text(p.organizationName, ORG_FALLBACK.en);
+      return compose({
+        subject: `${org} invited you to join their team on Crecy`,
+        heading: `You have been invited to ${org}`,
+        paragraphs: [
+          `${org} uses Crecy to run its properties, and has invited you to join the team. Opening the link below signs you in and accepts the invitation.`,
+          ...(p.mfaRequired === true ? ["This role requires two-factor authentication. You will be asked to set it up after you sign in."] : []),
+        ],
+        details: invitationDetails(p, "en", { organization: org, withRole: true }),
+        ctaLabel: "Accept the invitation",
+        ctaUrl: invitationCta(p, "/settings/team/accept", "operator"),
+        securityNote: `${EMAIL_CHROME.en.expiresIn72Hours} ${EMAIL_CHROME.en.ignoreIfUnexpected}`,
+      }, "en");
+    },
+    es: (p) => {
+      const org = text(p.organizationName, ORG_FALLBACK.es);
+      return compose({
+        subject: `${org} te invitó a unirte a su equipo en Crecy`,
+        heading: `Te invitaron a ${org}`,
+        paragraphs: [
+          `${org} usa Crecy para administrar sus propiedades y te invitó a unirte al equipo. Al abrir el enlace de abajo inicias sesión y aceptas la invitación.`,
+          ...(p.mfaRequired === true ? ["Esta función requiere autenticación de dos factores. Se te pedirá configurarla después de iniciar sesión."] : []),
+        ],
+        details: invitationDetails(p, "es", { organization: org, withRole: true }),
+        ctaLabel: "Aceptar la invitación",
+        ctaUrl: invitationCta(p, "/settings/team/accept", "operator"),
+        securityNote: `${EMAIL_CHROME.es.expiresIn72Hours} ${EMAIL_CHROME.es.ignoreIfUnexpected}`,
+      }, "es");
+    },
+    fr: (p) => {
+      const org = text(p.organizationName, ORG_FALLBACK.fr);
+      return compose({
+        subject: `${org} vous invite à rejoindre son équipe sur Crecy`,
+        heading: `Vous avez été invité à rejoindre ${org}`,
+        paragraphs: [
+          `${org} utilise Crecy pour gérer ses biens et vous invite à rejoindre l'équipe. En ouvrant le lien ci-dessous, vous vous connectez et acceptez l'invitation.`,
+          ...(p.mfaRequired === true ? ["Ce rôle exige l'authentification à deux facteurs. Il vous sera demandé de la configurer après connexion."] : []),
+        ],
+        details: invitationDetails(p, "fr", { organization: org, withRole: true }),
+        ctaLabel: "Accepter l'invitation",
+        ctaUrl: invitationCta(p, "/settings/team/accept", "operator"),
+        securityNote: `${EMAIL_CHROME.fr.expiresIn72Hours} ${EMAIL_CHROME.fr.ignoreIfUnexpected}`,
+      }, "fr");
+    },
   },
+
   resident_invitation: {
-    en: (p) => ({
-      subject: `Your resident portal for ${text(p.organizationName, "your home")} is ready`,
-      body: `You can now access your resident portal to view charges, make payments, and submit maintenance requests.\n\nAccept the invitation: ${invitationLink(p, "/invitations/accept", "resident")}\n\nIf you were not expecting this, you can ignore this message.`,
-    }),
-    es: (p) => ({
-      subject: `Tu portal de residente para ${text(p.organizationName, "tu hogar")} está listo`,
-      body: `Ya puedes acceder a tu portal de residente para ver cargos, hacer pagos y enviar solicitudes de mantenimiento.\n\nAcepta la invitación: ${invitationLink(p, "/invitations/accept", "resident")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
-    }),
-    fr: (p) => ({
-      subject: `Votre portail résident pour ${text(p.organizationName, "votre logement")} est prêt`,
-      body: `Vous pouvez maintenant accéder à votre portail résident pour consulter les frais, payer et soumettre des demandes d'entretien.\n\nAccepter l'invitation : ${invitationLink(p, "/invitations/accept", "resident")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
-    }),
+    // Deliberately no promise of online payment: the payment provider is not activated for the pilot,
+    // and an invitation that opens onto a missing feature is a broken promise on the first visit.
+    en: (p) => {
+      const org = text(p.organizationName, ORG_FALLBACK.en);
+      return compose({
+        subject: `${org} set up your resident portal`,
+        heading: "Your resident portal is ready",
+        paragraphs: [
+          `${org} uses Crecy Living to keep you up to date on your home. In your portal you can see your charges and balance, submit maintenance requests, and read the documents and messages your property manager sends you.`,
+          "Opening the link below signs you in and sets up your access.",
+        ],
+        details: invitationDetails(p, "en", { organization: org }),
+        ctaLabel: "Open my resident portal",
+        ctaUrl: invitationCta(p, "/invitations/accept", "resident"),
+        securityNote: `${EMAIL_CHROME.en.expiresIn72Hours} ${EMAIL_CHROME.en.ignoreIfUnexpected}`,
+      }, "en");
+    },
+    es: (p) => {
+      const org = text(p.organizationName, ORG_FALLBACK.es);
+      return compose({
+        subject: `${org} preparó tu portal de residente`,
+        heading: "Tu portal de residente está listo",
+        paragraphs: [
+          `${org} usa Crecy Living para mantenerte al día sobre tu hogar. En tu portal puedes ver tus cargos y tu saldo, enviar solicitudes de mantenimiento y leer los documentos y mensajes que te envía tu administrador.`,
+          "Al abrir el enlace de abajo inicias sesión y activas tu acceso.",
+        ],
+        details: invitationDetails(p, "es", { organization: org }),
+        ctaLabel: "Abrir mi portal de residente",
+        ctaUrl: invitationCta(p, "/invitations/accept", "resident"),
+        securityNote: `${EMAIL_CHROME.es.expiresIn72Hours} ${EMAIL_CHROME.es.ignoreIfUnexpected}`,
+      }, "es");
+    },
+    fr: (p) => {
+      const org = text(p.organizationName, ORG_FALLBACK.fr);
+      return compose({
+        subject: `${org} a préparé votre portail résident`,
+        heading: "Votre portail résident est prêt",
+        paragraphs: [
+          `${org} utilise Crecy Living pour vous tenir informé au sujet de votre logement. Dans votre portail, vous pouvez consulter vos frais et votre solde, soumettre des demandes d'entretien et lire les documents et messages de votre gestionnaire.`,
+          "En ouvrant le lien ci-dessous, vous vous connectez et activez votre accès.",
+        ],
+        details: invitationDetails(p, "fr", { organization: org }),
+        ctaLabel: "Ouvrir mon portail résident",
+        ctaUrl: invitationCta(p, "/invitations/accept", "resident"),
+        securityNote: `${EMAIL_CHROME.fr.expiresIn72Hours} ${EMAIL_CHROME.fr.ignoreIfUnexpected}`,
+      }, "fr");
+    },
   },
+
   owner_invitation: {
-    en: (p) => ({
-      subject: `Your owner portal for ${text(p.organizationName, "your portfolio")} is ready`,
-      body: `You can now access your owner portal to review statements, approvals, and property performance.\n\nAccept the invitation: ${invitationLink(p, "/invitations/accept", "owner")}\n\nIf you were not expecting this, you can ignore this message.`,
-    }),
-    es: (p) => ({
-      subject: `Tu portal de propietario para ${text(p.organizationName, "tu portafolio")} está listo`,
-      body: `Ya puedes acceder a tu portal de propietario para revisar estados de cuenta, aprobaciones y el desempeño de tus propiedades.\n\nAcepta la invitación: ${invitationLink(p, "/invitations/accept", "owner")}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
-    }),
-    fr: (p) => ({
-      subject: `Votre portail propriétaire pour ${text(p.organizationName, "votre portefeuille")} est prêt`,
-      body: `Vous pouvez maintenant accéder à votre portail propriétaire pour consulter les relevés, les approbations et la performance de vos biens.\n\nAccepter l'invitation : ${invitationLink(p, "/invitations/accept", "owner")}\n\nSi vous n'attendiez pas ce message, vous pouvez l'ignorer.`,
-    }),
+    en: (p) => {
+      const org = text(p.organizationName, ORG_FALLBACK.en);
+      return compose({
+        subject: `${org} set up your owner portal`,
+        heading: "Your owner portal is ready",
+        paragraphs: [
+          `${org} uses Crecy Owner to share how your properties are doing. In your portal you can review owner statements, respond to approval requests, and read the documents sent to you.`,
+          "Opening the link below signs you in and sets up your access.",
+        ],
+        details: invitationDetails(p, "en", { organization: org }),
+        ctaLabel: "Open my owner portal",
+        ctaUrl: invitationCta(p, "/invitations/accept", "owner"),
+        securityNote: `${EMAIL_CHROME.en.expiresIn72Hours} ${EMAIL_CHROME.en.ignoreIfUnexpected}`,
+      }, "en");
+    },
+    es: (p) => {
+      const org = text(p.organizationName, ORG_FALLBACK.es);
+      return compose({
+        subject: `${org} preparó tu portal de propietario`,
+        heading: "Tu portal de propietario está listo",
+        paragraphs: [
+          `${org} usa Crecy Owner para compartir cómo van tus propiedades. En tu portal puedes revisar estados de cuenta, responder solicitudes de aprobación y leer los documentos que te envían.`,
+          "Al abrir el enlace de abajo inicias sesión y activas tu acceso.",
+        ],
+        details: invitationDetails(p, "es", { organization: org }),
+        ctaLabel: "Abrir mi portal de propietario",
+        ctaUrl: invitationCta(p, "/invitations/accept", "owner"),
+        securityNote: `${EMAIL_CHROME.es.expiresIn72Hours} ${EMAIL_CHROME.es.ignoreIfUnexpected}`,
+      }, "es");
+    },
+    fr: (p) => {
+      const org = text(p.organizationName, ORG_FALLBACK.fr);
+      return compose({
+        subject: `${org} a préparé votre portail propriétaire`,
+        heading: "Votre portail propriétaire est prêt",
+        paragraphs: [
+          `${org} utilise Crecy Owner pour partager la performance de vos biens. Dans votre portail, vous pouvez consulter les relevés, répondre aux demandes d'approbation et lire les documents qui vous sont envoyés.`,
+          "En ouvrant le lien ci-dessous, vous vous connectez et activez votre accès.",
+        ],
+        details: invitationDetails(p, "fr", { organization: org }),
+        ctaLabel: "Ouvrir mon portail propriétaire",
+        ctaUrl: invitationCta(p, "/invitations/accept", "owner"),
+        securityNote: `${EMAIL_CHROME.fr.expiresIn72Hours} ${EMAIL_CHROME.fr.ignoreIfUnexpected}`,
+      }, "fr");
+    },
   },
+
+  // A secure_link delivery points at a one-time tokenized URL the recipient can open without an
+  // account; every other channel points at the portal. `secureLinkUrl` is injected by the worker at
+  // send time and never persisted with the job. Nothing here claims the file was inspected or scanned.
   document_delivered: {
-    en: (p) => ({
-      subject: `A new document is available: ${text(p.documentTitle, "your document")}`,
-      body: `${text(p.organizationName, "Your property manager")} shared a document with you: ${text(p.documentTitle, "your document")}.\n\n${documentAccessLine(p, "en")}\n\nSome documents ask you to confirm you have read them.`,
-    }),
-    es: (p) => ({
-      subject: `Hay un documento nuevo disponible: ${text(p.documentTitle, "tu documento")}`,
-      body: `${text(p.organizationName, "Tu administrador")} compartió un documento contigo: ${text(p.documentTitle, "tu documento")}.\n\n${documentAccessLine(p, "es")}\n\nAlgunos documentos te piden confirmar que los leíste.`,
-    }),
-    fr: (p) => ({
-      subject: `Un nouveau document est disponible : ${text(p.documentTitle, "votre document")}`,
-      body: `${text(p.organizationName, "Votre gestionnaire")} a partagé un document avec vous : ${text(p.documentTitle, "votre document")}.\n\n${documentAccessLine(p, "fr")}\n\nCertains documents demandent une confirmation de lecture.`,
-    }),
+    en: (p) => {
+      const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\//i.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
+      const expires = dateOnly(p.expiresAt);
+      return compose({
+        subject: `A document is available: ${text(p.documentTitle, "your document")}`,
+        heading: text(p.documentTitle, "A document is available"),
+        paragraphs: [
+          `${text(p.organizationName, ORG_FALLBACK.en)} shared a document with you.`,
+          "Some documents ask you to confirm you have read them.",
+        ],
+        ...(expires && secure ? { details: [{ label: EMAIL_CHROME.en.expiresLabel, value: expires }] } : {}),
+        ctaLabel: secure ? "Open the document" : "Open it in your portal",
+        ctaUrl: secure ?? link("/documents", "operator"),
+      }, "en");
+    },
+    es: (p) => {
+      const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\//i.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
+      const expires = dateOnly(p.expiresAt);
+      return compose({
+        subject: `Hay un documento disponible: ${text(p.documentTitle, "tu documento")}`,
+        heading: text(p.documentTitle, "Hay un documento disponible"),
+        paragraphs: [
+          `${text(p.organizationName, ORG_FALLBACK.es)} compartió un documento contigo.`,
+          "Algunos documentos te piden confirmar que los leíste.",
+        ],
+        ...(expires && secure ? { details: [{ label: EMAIL_CHROME.es.expiresLabel, value: expires }] } : {}),
+        ctaLabel: secure ? "Abrir el documento" : "Abrirlo en tu portal",
+        ctaUrl: secure ?? link("/documents", "operator"),
+      }, "es");
+    },
+    fr: (p) => {
+      const secure = typeof p.secureLinkUrl === "string" && /^https?:\/\//i.test(p.secureLinkUrl) ? p.secureLinkUrl : null;
+      const expires = dateOnly(p.expiresAt);
+      return compose({
+        subject: `Un document est disponible : ${text(p.documentTitle, "votre document")}`,
+        heading: text(p.documentTitle, "Un document est disponible"),
+        paragraphs: [
+          `${text(p.organizationName, ORG_FALLBACK.fr)} a partagé un document avec vous.`,
+          "Certains documents demandent une confirmation de lecture.",
+        ],
+        ...(expires && secure ? { details: [{ label: EMAIL_CHROME.fr.expiresLabel, value: expires }] } : {}),
+        ctaLabel: secure ? "Ouvrir le document" : "Ouvrir dans votre portail",
+        ctaUrl: secure ?? link("/documents", "operator"),
+      }, "fr");
+    },
   },
+
+  // Concise on purpose: the announcement itself is in the portal, and restating it here would send the
+  // same words twice and make the message longer than what it is telling you.
   announcement_published: {
-    en: (p) => ({
+    en: (p) => compose({
       subject: text(p.title, "A new announcement from your property manager"),
-      body: `${text(p.title, "A new announcement")}\n\nRead it in your portal: ${link("/home", "resident")}`,
-    }),
-    es: (p) => ({
+      heading: text(p.title, "A new announcement"),
+      paragraphs: [`${text(p.organizationName, ORG_FALLBACK.en)} posted an announcement for you.`],
+      ctaLabel: "Read the announcement",
+      ctaUrl: link("/home", "resident"),
+    }, "en"),
+    es: (p) => compose({
       subject: text(p.title, "Un nuevo aviso de tu administrador"),
-      body: `${text(p.title, "Un nuevo aviso")}\n\nLéelo en tu portal: ${link("/home", "resident")}`,
-    }),
-    fr: (p) => ({
+      heading: text(p.title, "Un nuevo aviso"),
+      paragraphs: [`${text(p.organizationName, ORG_FALLBACK.es)} publicó un aviso para ti.`],
+      ctaLabel: "Leer el aviso",
+      ctaUrl: link("/home", "resident"),
+    }, "es"),
+    fr: (p) => compose({
       subject: text(p.title, "Une nouvelle annonce de votre gestionnaire"),
-      body: `${text(p.title, "Une nouvelle annonce")}\n\nConsultez-la dans votre portail : ${link("/home", "resident")}`,
-    }),
+      heading: text(p.title, "Une nouvelle annonce"),
+      paragraphs: [`${text(p.organizationName, ORG_FALLBACK.fr)} a publié une annonce pour vous.`],
+      ctaLabel: "Lire l'annonce",
+      ctaUrl: link("/home", "resident"),
+    }, "fr"),
   },
+
+  // The message text itself is deliberately NOT in the email: it is not suppressible category mail
+  // going to an address we cannot assume is private, and the portal is one click away.
   conversation_message_received: {
-    en: () => ({
+    en: () => compose({
       subject: "You have a new message",
-      body: `You have a new message in your Crecy conversation.\n\nRead it: ${link("/messages", "resident")}`,
-    }),
-    es: () => ({
+      heading: "You have a new message",
+      paragraphs: ["There is a new message waiting in your Crecy conversation."],
+      ctaLabel: "Read the message",
+      ctaUrl: link("/messages", "resident"),
+    }, "en"),
+    es: () => compose({
       subject: "Tienes un mensaje nuevo",
-      body: `Tienes un mensaje nuevo en tu conversación de Crecy.\n\nLéelo: ${link("/messages", "resident")}`,
-    }),
-    fr: () => ({
+      heading: "Tienes un mensaje nuevo",
+      paragraphs: ["Hay un mensaje nuevo esperando en tu conversación de Crecy."],
+      ctaLabel: "Leer el mensaje",
+      ctaUrl: link("/messages", "resident"),
+    }, "es"),
+    fr: () => compose({
       subject: "Vous avez un nouveau message",
-      body: `Vous avez un nouveau message dans votre conversation Crecy.\n\nLisez-le : ${link("/messages", "resident")}`,
-    }),
+      heading: "Vous avez un nouveau message",
+      paragraphs: ["Un nouveau message vous attend dans votre conversation Crecy."],
+      ctaLabel: "Lire le message",
+      ctaUrl: link("/messages", "resident"),
+    }, "fr"),
   },
 };
 
-/** True when the worker knows how to render this template — an unknown code is a non-retryable failure. */
 /** Every template code that exists, so other modules can assert they cover all of them. */
 export const TEMPLATE_CODES = Object.keys(TEMPLATES);
 
+/** True when the worker knows how to render this template — an unknown code is a non-retryable failure. */
 export function hasTemplate(templateCode: string): boolean {
   return Object.hasOwn(TEMPLATES, templateCode);
 }

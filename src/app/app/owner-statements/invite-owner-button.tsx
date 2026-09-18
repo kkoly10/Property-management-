@@ -41,18 +41,20 @@ export function InviteOwnerButton({ ownerEntityId, organizationId, email, invita
         // so the workspace may show "not invited" for an already-active owner. Reflect the truth.
         if (body.code === "RELATIONSHIP_ALREADY_ACTIVE") { setAlreadyActive(true); router.refresh(); return; }
         idempotencyKey.current = null;
-        throw new Error(body.error ?? "The invitation could not be sent.");
+        throw new Error(body.error ?? "The invitation could not be created.");
       }
       setSent(true);
       router.refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The invitation could not be sent.");
+      setError(caught instanceof Error ? caught.message : "The invitation could not be created.");
     } finally {
       setPending(false);
     }
   }
 
-  if (sent) return <Badge variant="success"><CheckCircle2 className="h-3.5 w-3.5" />Invitation sent</Badge>;
+  // Queued, not sent: the route records the invitation and queues its email for the notification
+  // worker, which is the only thing that can report an actual delivery.
+  if (sent) return <Badge variant="success"><CheckCircle2 className="h-3.5 w-3.5" />Invitation queued</Badge>;
 
   return <div className="flex flex-col items-end gap-1">
     <Button size="sm" variant={invitationState === "invited" ? "outline" : "default"} disabled={disabled || pending || !email} onClick={invite}>

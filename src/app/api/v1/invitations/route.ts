@@ -1,8 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requirePublicSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
+import { generateInvitationAuthLink } from "@/lib/auth/invitation-link";
 import { invitationDatabaseError, invitationErrorResponse } from "@/lib/api/invitations";
 import { audienceForSurface, inviteRelationshipSchema } from "@/lib/validation/invitations";
 import { originForAudience } from "@/lib/runtime/host";
@@ -71,6 +70,24 @@ export async function POST(request: Request) {
     createdAuthUser = true;
   }
 
+  // The ONE email's credential. See `generateInvitationAuthLink` for why this is a `magiclink` and not
+  // an `invite`, and why it runs before the command: the link is persisted onto the queued notification
+  // job so the Crecy worker sends the single branded invitation. It replaces a `signInWithOtp()` call
+  // that made Supabase send a second, competing email — after which this route marked the Crecy job
+  // "sent" for a message no transport had accepted.
+  const authLink = await generateInvitationAuthLink(admin, {
+    email: input.email,
+    redirectTo: callbackUrl.toString(),
+  });
+  if (!authLink.ok) {
+    if (createdAuthUser) await admin.auth.admin.deleteUser(invitedUserId).catch(() => undefined);
+    return invitationErrorResponse(
+      "INVITATION_LINK_UNAVAILABLE",
+      "The invitation could not be prepared because Supabase Auth did not return an activation link. Retry this request.",
+      503,
+    );
+  }
+
   const { data, error } = await supabase.rpc("invite_relationship_user", {
     p_organization_id: input.organizationId,
     p_invited_user_id: invitedUserId,
@@ -82,6 +99,7 @@ export async function POST(request: Request) {
     p_token_hash: tokenHash,
     p_token_prefix: tokenPrefix,
     p_activation_token: rawToken,
+    p_auth_action_url: authLink.actionUrl,
     p_idempotency_key: idempotencyKey,
   });
   if (error || !data) {
@@ -89,30 +107,13 @@ export async function POST(request: Request) {
     return invitationDatabaseError(error?.message ?? "");
   }
   const result = data as Record<string, unknown>;
-  const invitationId = String(result.invitationId);
-  const { data: deliveryStatus } = await admin.rpc("get_relationship_invitation_delivery_status", {
-    p_invitation_id: invitationId,
-  });
-  let activationEmailSent = deliveryStatus === "sent";
-  if (!activationEmailSent) {
-    const { url, publishableKey } = requirePublicSupabaseConfig();
-    const deliveryClient = createSupabaseClient(url, publishableKey, {
-      auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
-    });
-    const { error: deliveryError } = await deliveryClient.auth.signInWithOtp({
-      email: input.email,
-      options: { shouldCreateUser: false, emailRedirectTo: callbackUrl.toString() },
-    });
-    if (deliveryError) {
-      return invitationErrorResponse("INVITATION_DELIVERY_FAILED", "The invitation exists, but its activation email could not be sent. Retry this request.", 502);
-    }
-    await admin.rpc("mark_relationship_invitation_email_sent", { p_invitation_id: invitationId });
-    activationEmailSent = true;
-  }
 
+  // `queued` is the truth: the invitation email is queued for the Crecy notification worker, and only
+  // `complete_notification_job` — which runs after a transport accepted the message — can write `sent`.
+  // The auth action link is never returned; it is a credential that signs the recipient in.
   return Response.json({
     ...result,
     activationUrl: new URL(activationPath, request.url).toString(),
-    activationEmailSent,
+    deliveryState: "queued",
   }, { status: 201 });
 }

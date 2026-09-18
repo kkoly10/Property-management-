@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hasTemplate, renderNotification, resolveLanguage } from "./templates";
+import { TEMPLATE_CODES, hasTemplate, renderNotification, resolveLanguage } from "./templates";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -129,8 +129,10 @@ describe("invitation activation links", () => {
     });
     expect(owner?.body).toContain("/invitations/accept?token=tok_owner-1");
     expect(staff?.body).toContain("/settings/team/accept?token=tok_staff-1");
-    // And the role reads as a role, not as a database identifier.
-    expect(staff?.body).toContain("an owner");
+    // And the role reads as a role, not as a database identifier. It is now a labelled detail row
+    // rather than a clause, so the assertion is on the row rather than on the sentence wording.
+    expect(staff?.details).toContainEqual({ label: "Role", value: "Owner" });
+    expect(staff?.body).toContain("Role: Owner");
     expect(staff?.body).not.toContain("org_owner");
   });
 
@@ -150,5 +152,129 @@ describe("invitation activation links", () => {
     });
     expect(rendered?.body).not.toContain("?token=");
     expect(rendered?.body).not.toContain("injected");
+  });
+});
+
+/**
+ * The template matrix.
+ *
+ * Every template, in every language, with the properties that make a transactional message safe to
+ * send: it names the sender, it has exactly one thing to do, it says what happens if you ignore it,
+ * and it does not promise a capability the pilot has not switched on.
+ */
+describe("the transactional template matrix", () => {
+  const LANGUAGES = [["en", "en-US"], ["es", "es-MX"], ["fr", "fr-CA"]] as const;
+  const INVITATIONS = ["staff_invitation", "resident_invitation", "owner_invitation"] as const;
+
+  const payloadFor = (templateCode: string) => ({
+    organizationName: "Northstar Property Group",
+    roleCode: "property_manager",
+    expiresAt: "2026-09-21T10:00:00Z",
+    mfaRequired: false,
+    documentTitle: "Lease renewal",
+    title: "Water shutoff on Tuesday",
+    invitationToken: "tok-abc_123",
+    ...(templateCode === "staff_invitation" ? {} : {}),
+  });
+
+  it("renders every template in every language with a subject, a body and a heading", () => {
+    for (const templateCode of TEMPLATE_CODES) {
+      for (const [language, locale] of LANGUAGES) {
+        const rendered = renderNotification({ templateCode, locale, payload: payloadFor(templateCode) });
+        expect(rendered, `${templateCode}/${language}`).not.toBeNull();
+        expect(rendered!.subject.length, `${templateCode}/${language}: subject`).toBeGreaterThan(8);
+        expect(rendered!.body.length, `${templateCode}/${language}: body`).toBeGreaterThan(40);
+        expect(rendered!.heading, `${templateCode}/${language}: heading`).toBeTruthy();
+        expect(rendered!.language, `${templateCode}/${language}: language`).toBe(language);
+        // The plain-text part is composed from the structured fields, so it must carry the link.
+        if (rendered!.ctaUrl) {
+          expect(rendered!.body, `${templateCode}/${language}: text part lost the link`).toContain(rendered!.ctaUrl);
+        }
+      }
+    }
+  });
+
+  it("names the inviting organization in every invitation, in every language", () => {
+    for (const templateCode of INVITATIONS) {
+      for (const [language, locale] of LANGUAGES) {
+        const rendered = renderNotification({ templateCode, locale, payload: payloadFor(templateCode) });
+        expect(rendered!.body, `${templateCode}/${language}`).toContain("Northstar Property Group");
+        expect(rendered!.details, `${templateCode}/${language}: organization row`)
+          .toContainEqual(expect.objectContaining({ value: "Northstar Property Group" }));
+      }
+    }
+  });
+
+  it("states the 72-hour expiry and what to do if the invitation was unexpected", () => {
+    const expectations = {
+      en: ["72 hours", "not expecting"],
+      es: ["72 horas", "no esperabas"],
+      fr: ["72 heures", "n'attendiez pas"],
+    } as const;
+    for (const templateCode of INVITATIONS) {
+      for (const [language, locale] of LANGUAGES) {
+        const rendered = renderNotification({ templateCode, locale, payload: payloadFor(templateCode) });
+        for (const phrase of expectations[language]) {
+          expect(rendered!.securityNote ?? "", `${templateCode}/${language}: ${phrase}`).toContain(phrase);
+        }
+      }
+    }
+  });
+
+  it("never leaks a raw role code, in any language, even for an unknown role", () => {
+    for (const roleCode of ["org_owner", "maintenance_coordinator", "read_only_auditor", "some_future_role"]) {
+      for (const [language, locale] of LANGUAGES) {
+        const rendered = renderNotification({ templateCode: "staff_invitation", locale, payload: { ...payloadFor("staff_invitation"), roleCode } });
+        expect(rendered!.body, `${roleCode}/${language}`).not.toContain(roleCode);
+        expect(rendered!.body, `${roleCode}/${language}: underscore identifier`).not.toMatch(/\b[a-z]+_[a-z_]+\b/);
+      }
+    }
+  });
+
+  it("promises no capability the pilot has not switched on", () => {
+    // Online payment is not activated for the pilot, and no uploaded file is inspected for malware.
+    // An invitation that opens onto a missing feature is a broken promise on the first visit.
+    const forbidden = [
+      /\bpay (?:your )?rent\b/i, /\bmake a payment\b/i, /\bmake payments\b/i, /\bpagar\b/i, /\bpayer\b/i,
+      /\bscan(?:ned|ning)?\b/i, /\bmalware\b/i, /\bvirus\b/i,
+    ];
+    for (const templateCode of TEMPLATE_CODES) {
+      for (const [language, locale] of LANGUAGES) {
+        const rendered = renderNotification({ templateCode, locale, payload: payloadFor(templateCode) });
+        for (const pattern of forbidden) {
+          expect(rendered!.body, `${templateCode}/${language} matched ${pattern}`).not.toMatch(pattern);
+        }
+      }
+    }
+  });
+
+  it("prefers the auth action link over the bare acceptance path", () => {
+    // One click both signs the recipient in and accepts the invitation. The bare path is the fallback
+    // for a job queued before this existed, or one whose credential has already been scrubbed.
+    const authUrl = "https://project.supabase.co/auth/v1/verify?type=magiclink&token=hashed";
+    for (const templateCode of INVITATIONS) {
+      const withAuth = renderNotification({ templateCode, locale: "en-US", payload: { ...payloadFor(templateCode), authActionUrl: authUrl } });
+      expect(withAuth!.ctaUrl, templateCode).toBe(authUrl);
+
+      const withoutAuth = renderNotification({ templateCode, locale: "en-US", payload: payloadFor(templateCode) });
+      expect(withoutAuth!.ctaUrl, `${templateCode}: fallback`).toContain("token=tok-abc_123");
+    }
+  });
+
+  it("ignores an auth action link that is not https", () => {
+    const rendered = renderNotification({
+      templateCode: "staff_invitation",
+      locale: "en-US",
+      payload: { ...payloadFor("staff_invitation"), authActionUrl: "javascript:alert(1)" },
+    });
+    expect(rendered!.ctaUrl).not.toContain("javascript:");
+    expect(rendered!.ctaUrl).toContain("/settings/team/accept");
+  });
+
+  it("mentions two-factor only when the role actually requires it", () => {
+    const required = renderNotification({ templateCode: "staff_invitation", locale: "en-US", payload: { ...payloadFor("staff_invitation"), mfaRequired: true } });
+    const not = renderNotification({ templateCode: "staff_invitation", locale: "en-US", payload: { ...payloadFor("staff_invitation"), mfaRequired: false } });
+    expect(required!.body).toContain("two-factor");
+    expect(not!.body).not.toContain("two-factor");
   });
 });
