@@ -5,7 +5,8 @@
       "codex/owner-secondary-premium-redesign": false,
       "codex/security-hero-word-split": false,
       "codex/pilot-vendor-workflow": false,
-      "codex/legal-contact-publication": false
+      "codex/legal-contact-publication": false,
+      "codex/pilot-invitation-email-system": false
     }
   },
   "crons": [
