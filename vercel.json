@@ -7,7 +7,8 @@
       "codex/pilot-vendor-workflow": false,
       "codex/legal-contact-publication": false,
       "codex/pilot-invitation-email-system": false,
-      "codex/signup-activation-fix": false
+      "codex/signup-activation-fix": false,
+      "codex/mobile-property-save-fix": false
     }
   },
   "crons": [
