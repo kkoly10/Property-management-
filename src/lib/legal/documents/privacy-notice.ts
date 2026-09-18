@@ -3,9 +3,23 @@ import type { LegalDocument } from "@/lib/legal/types";
 /**
  * PILOT RELEASE — published for the Crecy controlled pilot on founder approval.
  *
- * This is version 1.0.1, effective 2026-09-18. It supersedes 1.0.0 (2026-09-04) in one respect only:
- * the contact address, which was the placeholder `privacy@crecy.example` and is now the real
- * `privacy@crecyos.com`. No substantive term changed, and no term was added.
+ * This is version 1.0.1, effective 2026-09-18. It corrects 1.0.0 (2026-09-04) in three respects, all of
+ * them statements of fact rather than commitments:
+ *
+ *   * the contact address, which was the placeholder `privacy@crecy.example` and is now the real
+ *     `privacy@crecyos.com`;
+ *   * section 4 listed "scan uploaded files" among the things service providers do. Malware scanning is
+ *     deliberately not active for the controlled pilot, so the notice was describing an inspection that
+ *     does not happen. The claim is removed rather than reversed: the notice now simply does not say
+ *     anything about scanning, because promising that files are NOT inspected would be a new statement
+ *     rather than the withdrawal of an inaccurate one.
+ *   * section 4 also named the "vendor" among the people who can see a record. There is no vendor
+ *     portal in the launch product, so a vendor cannot see anything. Section 1 still names vendors,
+ *     correctly: an operator does enter records ABOUT vendors, which is a different claim from a vendor
+ *     having access.
+ *
+ * Nothing was added and no commitment changed. Removing a claim about a capability that is not active
+ * is not a removal of functionality.
  *
  * A new version is a new artifact, never an edit of a published one. 1.0.0 was NOT rewritten in place —
  * it is preserved verbatim at `@/lib/legal/documents/archive/privacy-notice-1.0.0.ts` so that a
@@ -60,9 +74,9 @@ because losing one would lock a person out of their own records. Category notifi
 
 ## 4. Who else sees it
 
-Only the people in your organization whose role and property scope permit it, and the resident, owner or
-vendor the record is about. We use service providers to host the product, deliver messages, scan
-uploaded files and process payments; each is bound to handle data only as instructed.
+Only the people in your organization whose role and property scope permit it, and the resident or owner
+the record is about. We use service providers to host the product, deliver messages and process
+payments; each is bound to handle data only as instructed.
 
 ## 5. How long we keep it
 

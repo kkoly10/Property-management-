@@ -201,9 +201,14 @@ still be checked against the bytes that were actually shown. `registry.test.ts` 
 artifact's hash, so an accidental edit fails the suite.
 
 Versions 1.0.0 of the Terms and the Privacy Notice went out with placeholder `@crecy.example` contact
-addresses; 1.0.1 carries `legal@crecyos.com` and `privacy@crecyos.com`. Nothing else in either document
-changed. The three legacy `consent_records` rows carrying `legal_document_version = "2026-07-20"`
-predate the registry entirely and are deliberately left alone — they are an honest record of what was
+addresses; 1.0.1 carries `legal@crecyos.com` and `privacy@crecyos.com`. 1.0.1 also removes two
+statements about pilot capabilities that are not active: the Terms offered portals to vendors
+(`vendor.crecyos.com` is a future surface, so no operator can give a vendor access), and the Privacy
+Notice listed "scan uploaded files" among what service providers do (malware scanning is deliberately
+off for the controlled pilot) and named a vendor among the people who can see a record. Those are
+corrections of fact, not changes to any obligation, and nothing was added. The three legacy
+`consent_records` rows carrying `legal_document_version = "2026-07-20"` predate the registry entirely
+and are deliberately left alone — they are an honest record of what was
 stored at the time, and rewriting them would invent evidence rather than correct it.
 
 ---
@@ -258,7 +263,9 @@ recorded here so the next person who diffs the schema against the repo is not su
    the live product is serving preview data, no screen reaches the database, and nothing about the
    deployed build's data path can be observed. `NEXT_PUBLIC_*` is inlined at build time, so setting the
    variables is not enough — the project must be **redeployed** afterwards. Verified live 2026-08-28.
-1. **Legal documents are drafts.** No production organization can be created.
+1. **Legal documents — cleared.** `operator_terms` and `privacy_notice` are published at 1.0.1 and
+   `esign_consent` at 1.0.0 (§3), so this no longer blocks organization creation. The gate itself stays
+   live: creation fails closed again if a required document ever returns to draft.
 2. **`CRON_SECRET` is unset.** No rent generates, no mail sends, no document is ever scanned. The
    endpoints correctly return `401` rather than running unauthenticated — verified live.
 3. **Scan relay unconfigured.** Every uploaded document stays quarantined and unusable.

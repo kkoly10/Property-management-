@@ -1,22 +1,48 @@
-# Phase 9 — Legal contact publication: Terms and Privacy Notice 1.0.1
+# Phase 9 — Terms and Privacy Notice 1.0.1: real contacts, and only capabilities that exist
 
 **No migration.** This release changes source artifacts only; the database is untouched.
 
-## The defect
+## The defects
 
-`operator_terms` and `privacy_notice` were published at 1.0.0 on 2026-09-04 carrying **placeholder**
-contact addresses — `legal@crecy.example` and `privacy@crecy.example`. A published legal document that
-tells a reader to write to an address which does not exist is not a cosmetic problem: section 8 of the
-Terms and section 7 of the Privacy Notice are the only routes a person has to raise a question or
-exercise a data right.
+Two kinds, both factual rather than substantive.
+
+**Placeholder contacts.** `operator_terms` and `privacy_notice` were published at 1.0.0 on 2026-09-04
+carrying `legal@crecy.example` and `privacy@crecy.example`. A published legal document that tells a
+reader to write to an address which does not exist is not a cosmetic problem: section 8 of the Terms and
+section 7 of the Privacy Notice are the only routes a person has to raise a question or exercise a data
+right.
+
+**Claims about capabilities the pilot does not have.** Adversarial review of the 1.0.1 text found three,
+each describing something a reader could reasonably expect and not get:
+
+* Terms §2 — *"presents portals to the residents, owners and vendors you invite."* There is no vendor
+  portal in the launch product; `vendor.crecyos.com` is a future surface, so no operator can give a
+  vendor access to anything.
+* Privacy §4 — *"service providers to host the product, deliver messages, scan uploaded files and
+  process payments."* Malware scanning is deliberately **not** active for the controlled pilot, so the
+  notice described an inspection that does not happen.
+* Privacy §4 — *"the resident, owner or vendor the record is about"*, in the section that answers *who
+  else sees it*. Naming a vendor there says a vendor can see a record. They cannot.
 
 ## What shipped
 
-**New current artifacts, version 1.0.1, effective 2026-09-18, published.** Each differs from 1.0.0 in
-exactly two places: the `**Effective … · Version …**` line, and the contact address, which is now the
-founder-approved `legal@crecyos.com` / `privacy@crecyos.com`. No substantive term changed and no term
-was added. `esign_consent` is untouched at 1.0.0 — it points signers at whoever sent them the document,
-so it never carried a Crecy address to correct.
+**Current artifacts at version 1.0.1, effective 2026-09-18, published.** They correct 1.0.0 in two
+ways: the contact addresses are now the founder-approved `legal@crecyos.com` / `privacy@crecyos.com`,
+and the three statements above are removed.
+
+Nothing was added and no obligation changed in either direction. Removing a claim about a capability
+that is not active is **not** a removal of functionality — the functionality was never there to
+describe. The scanning claim in particular is removed rather than reversed: the documents now say
+nothing about inspection either way, because asserting that files are *not* inspected would be a new
+statement rather than the withdrawal of an inaccurate one. Privacy §1 still names vendors, correctly —
+an operator does enter records *about* vendors, which is a different claim from a vendor having access.
+
+These corrections were made **before** 1.0.1 was merged or published to production, so 1.0.1 was never
+an accepted artifact and remains 1.0.1 rather than becoming 1.0.2. The published 1.0.0 artifacts are
+untouched, as they must be.
+
+`esign_consent` is untouched at 1.0.0 — it points signers at whoever sent them the document, so it never
+carried a Crecy address to correct, and it claims nothing about portals or scanning.
 
 **1.0.0 preserved verbatim.** `src/lib/legal/documents/archive/{operator-terms,privacy-notice}-1.0.0.ts`
 hold the exact bytes that were published, placeholder addresses and all. They were produced by copying
@@ -39,7 +65,7 @@ version cannot become active, cannot be routed to, cannot appear on `/legal` or 
 cannot be picked up by consent resolution — not by convention, but because no resolver reads `ARCHIVE`.
 
 **Consent binding** moves from `operator_terms@1.0.0+privacy_notice@1.0.0#…` to
-`operator_terms@1.0.1+privacy_notice@1.0.1#c90d483de53d518f`. Nothing about the mechanism changed: the
+`operator_terms@1.0.1+privacy_notice@1.0.1#9a840a08bdbb488b`. Nothing about the mechanism changed: the
 page and the server action both call `resolveOrganizationConsent`, nothing is hardcoded, and the action
 still refuses a submitted version that does not match the one it resolves for itself.
 
@@ -52,12 +78,24 @@ and rewriting it would invent evidence rather than correct it. This release bind
 moment a version was archived out of it. It now says it lists the current version of each document. One
 sentence; the page is otherwise unchanged, as are both document pages.
 
+## Considered and deliberately not changed
+
+The same Privacy §4 sentence also says service providers **deliver messages** and **process payments**,
+and neither the mail relay nor Stripe is configured for the pilot. That is a different situation from
+scanning and was left alone on purpose: messaging and payments are built and awaiting configuration,
+not deferred capabilities, and a privacy notice that omitted them would under-disclose real processing
+the moment they are switched on. Scanning is out because it is deliberately not being activated at all.
+
+The archived 1.0.0 files were not touched, including their explanatory comments — a comment is outside
+the hashed object and could safely be reworded, but "leave the historical artifact alone" is the
+simpler rule to keep.
+
 ## Content hashes
 
 | Artifact | Content hash (SHA-256) |
 | --- | --- |
-| `operator_terms@1.0.1` (current) | `99028e766b60313dbf603bf9c60deaefb277586479116b3daabd7444b7b03c6a` |
-| `privacy_notice@1.0.1` (current) | `e4ef7c4b38a170f74bc2f9da40cd1722854157a59bb58d14d691b4ed6d1864a3` |
+| `operator_terms@1.0.1` (current) | `4500fab7b997db58194b95d58ee189ee0b278de19f9b1ea47b258f177c1dfcdf` |
+| `privacy_notice@1.0.1` (current) | `72e5c6a38cc706bfb592cfa19c579c06246800fb1057df2710165815e1312e01` |
 | `esign_consent@1.0.0` (unchanged) | `a1f507cd714448e745d13d1b2e2614549fd7ab44560d5d2f3cef28034f8f2dc7` |
 | `operator_terms@1.0.0` (archived, pinned) | `be0bf7fff53879921ddfb81110a8057d565e87c5e9a1b399ed68a675d17269f3` |
 | `privacy_notice@1.0.0` (archived, pinned) | `e3b45572ec322c6e2323c2b99166a2b4354f1df0975b494b01495bb9eb091e81` |
@@ -74,10 +112,17 @@ Two guards were checked by breaking them on purpose and confirming the suite fai
 * Adding the archived artifact to `REGISTRY` ahead of the current one → three assertions fail, the
   decisive one being *"/legal/operator-terms resolved to an archived artifact"*.
 
+A third was checked the same way: reinstating all three capability claims fails exactly the three guards
+that exist for them — *"offers a portal to vendors"*, *"claims uploaded files are inspected"* and *"a
+vendor is still named among the people who can see a record"* — while the archived-hash assertions stay
+green, confirming the mutation touched only the active artifacts.
+
 `registry.test.ts` additionally proves the current documents resolve at 1.0.1 and published, carry the
 approved addresses, retain no `crecy.example` anywhere in the **active** set (while the archive still
 carries them, as it must), state their own version in the body a person reads, bind organization consent
-to 1.0.1+1.0.1, and produce a binding distinct from the superseded pair.
+to 1.0.1+1.0.1, produce a binding distinct from the superseded pair, offer a portal only to residents
+and owners, claim no inspection of uploaded files, and name vendors only as the subject of records —
+Privacy §1 — never as people with product access.
 
 `actions.test.ts` drives the real server action against the real registry with `CRECY_DEPLOYMENT_ENV=production`:
 a binding built from the archived 1.0.0 artifacts is refused with *"changed while you were on this

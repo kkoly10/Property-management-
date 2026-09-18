@@ -3,9 +3,17 @@ import type { LegalDocument } from "@/lib/legal/types";
 /**
  * PILOT RELEASE — published for the Crecy controlled pilot on founder approval.
  *
- * This is version 1.0.1, effective 2026-09-18. It supersedes 1.0.0 (2026-09-04) in one respect only:
- * the contact address, which was the placeholder `legal@crecy.example` and is now the real
- * `legal@crecyos.com`. No substantive term changed, and no term was added.
+ * This is version 1.0.1, effective 2026-09-18. It corrects 1.0.0 (2026-09-04) in two respects, both of
+ * them statements of fact rather than terms:
+ *
+ *   * the contact address, which was the placeholder `legal@crecy.example` and is now the real
+ *     `legal@crecyos.com`;
+ *   * section 2, which described portals for "residents, owners and vendors". There is no vendor
+ *     portal in the launch product — `vendor.crecyos.com` is a future surface — so the sentence named a
+ *     capability an operator could not actually give anyone.
+ *
+ * No obligation changed in either direction, and nothing was added. Removing the claim is not a removal
+ * of functionality; the functionality was never there to describe.
  *
  * A new version is a new artifact, never an edit of a published one. 1.0.0 was NOT rewritten in place —
  * it is preserved verbatim at `@/lib/legal/documents/archive/operator-terms-1.0.0.ts` so that a
@@ -39,8 +47,8 @@ on the organization's behalf.
 ## 2. What Crecy provides
 
 Crecy is a rental operating system. We provide the software that records your properties, leases,
-residents, owners, maintenance work and financial ledger, and that presents portals to the residents,
-owners and vendors you invite.
+residents, owners, maintenance work and financial ledger, and that presents portals to the residents
+and owners you invite.
 
 We are a software provider. We are not your agent, not a party to your leases, not a property manager,
 not a broker, not a lender, and not an escrow agent. Nothing in the product is legal, tax, accounting or

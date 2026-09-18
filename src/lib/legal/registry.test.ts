@@ -303,6 +303,49 @@ describe("the published pilot artifacts", () => {
     }
   });
 
+  /** Line wrapping is a source-file concern; what a reader sees is the text with it collapsed. */
+  const flat = (body: string) => body.replace(/\s+/g, " ");
+  const sentences = (body: string) => flat(body).split(/(?<=\.)\s+/);
+
+  it("offers a portal only to the people who actually have one", () => {
+    // There is no vendor portal in the launch product — `vendor.crecyos.com` is a future surface — so
+    // 1.0.0's "portals to the residents, owners and vendors you invite" named a capability an operator
+    // could not give anyone. The positive pin and the negative sweep are both needed: the first catches
+    // a deletion that loses the sentence, the second catches the claim coming back in other words.
+    expect(flat(current("operator_terms").body)).toContain("presents portals to the residents and owners you invite.");
+    for (const document of listLegalDocuments()) {
+      for (const sentence of sentences(document.body)) {
+        if (!/portal/i.test(sentence)) continue;
+        expect(sentence, `${document.code}@${document.version} offers a portal to vendors`).not.toMatch(/vendor/i);
+      }
+    }
+  });
+
+  it("claims no inspection of uploaded files, because none is active", () => {
+    // Malware scanning is deliberately not switched on for the controlled pilot, so 1.0.0's "service
+    // providers to host the product, deliver messages, scan uploaded files and process payments"
+    // described an inspection that does not happen. The claim is removed rather than reversed: the
+    // documents now say nothing either way, because asserting that files are NOT inspected would be a
+    // new statement rather than the withdrawal of an inaccurate one.
+    for (const document of listLegalDocuments()) {
+      expect(document.body, `${document.code}@${document.version} claims uploaded files are inspected`)
+        .not.toMatch(/\b(scan|scans|scanned|scanning|virus|malware)\b/i);
+    }
+  });
+
+  it("names vendors as the subject of records, never as people with product access", () => {
+    // The distinction the correction turns on. Section 4 answers "who else sees it", so naming a vendor
+    // there says a vendor can see something — they cannot. Section 1 names vendors correctly: an
+    // operator does enter records ABOUT vendors, and deleting that would be an over-correction that
+    // hides real processing from the person the data is about.
+    const privacy = current("privacy_notice");
+    const whoSeesIt = privacy.body.split(/\n## /).find((section) => section.startsWith("4. Who else sees it"));
+    expect(whoSeesIt, "the notice no longer has a 'Who else sees it' section to check").toBeTruthy();
+    expect(flat(whoSeesIt as string), "a vendor is still named among the people who can see a record")
+      .not.toMatch(/vendor/i);
+    expect(flat(privacy.body)).toContain("operational records an operator enters about their residents, owners and vendors");
+  });
+
   it("states its own version and effective date in the text a person reads", () => {
     // The badge on /legal/<slug> comes from the metadata; the "Effective … · Version …" line comes from
     // the body. If they disagree the page shows one version and the document claims another, which is
