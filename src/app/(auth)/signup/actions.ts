@@ -167,40 +167,34 @@ export async function signupAction(_previousState: ActionState, formData: FormDa
           idempotencyKey: `signup-existing-${userId}`,
         });
       }
-      // Fail closed on account enumeration: even if the recovery link could not be minted or sent, do
-      // not make the browser response distinguish an existing account from a new one.
-      redirect(SIGNUP_SUCCESS_PATH);
-    }
-
-    if (error) {
+      // Fail closed on account enumeration: even if the recovery link could not be minted or sent, the
+      // browser gets the same neutral completion state as a new signup.
+    } else if (error) {
       return signupFailure("We could not start account setup. Please try again.");
-    }
+    } else {
+      const tokenHash = data?.properties?.hashed_token;
+      const userId = data?.user?.id;
+      if (!isPlausibleTokenHash(tokenHash) || !userId) {
+        return signupFailure("We could not prepare the confirmation email. Please try again.");
+      }
 
-    const tokenHash = data?.properties?.hashed_token;
-    const userId = data?.user?.id;
-    if (!isPlausibleTokenHash(tokenHash) || !userId) {
-      return signupFailure("We could not prepare the confirmation email. Please try again.");
-    }
+      const delivered = await sendAuthLink({
+        email: result.data.email,
+        actionType: "signup",
+        tokenHash,
+        next: "/onboarding/organization",
+        idempotencyKey: `signup-${userId}`,
+      });
 
-    const delivered = await sendAuthLink({
-      email: result.data.email,
-      actionType: "signup",
-      tokenHash,
-      next: "/onboarding/organization",
-      idempotencyKey: `signup-${userId}`,
-    });
-
-    if (!delivered) {
-      // A confirmation email that did not leave Crecy is not a completed signup. Best-effort cleanup
-      // prevents a mail/configuration failure from leaving an unconfirmed account that blocks a later
-      // retry.
-      await admin.auth.admin.deleteUser(userId).catch(() => undefined);
-      return signupFailure("We could not send the confirmation email. Please try again.");
+      if (!delivered) {
+        // A confirmation email that did not leave Crecy is not a completed signup. Best-effort cleanup
+        // prevents a mail/configuration failure from leaving an unconfirmed account that blocks a later
+        // retry.
+        await admin.auth.admin.deleteUser(userId).catch(() => undefined);
+        return signupFailure("We could not send the confirmation email. Please try again.");
+      }
     }
-  } catch (error) {
-    // Next.js redirects are implemented as throws. Never catch the redirect used by the intentional
-    // existing-account neutral path above.
-    if (error instanceof Error && error.message.startsWith("NEXT_REDIRECT")) throw error;
+  } catch {
     return signupFailure("Unable to create the account right now. Please try again.");
   }
 
