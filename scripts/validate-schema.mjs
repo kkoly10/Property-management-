@@ -64,6 +64,7 @@ const activationTokenBoundsSql = await readFile(resolve(root, "supabase/migratio
 const platformBusinessOverviewSql = await readFile(resolve(root, "supabase/migrations/20260905030000_phase_8_platform_business_overview.sql"), "utf8");
 const livingCommunityPresentationSql = await readFile(resolve(root, "supabase/migrations/20260905040000_phase_8_living_community_presentation.sql"), "utf8");
 const livingCommunityControlsSql = await readFile(resolve(root, "supabase/migrations/20260905170000_phase_8_living_community_controls.sql"), "utf8");
+const vendorManagementSql = await readFile(resolve(root, "supabase/migrations/20260918090000_phase_6_vendor_management.sql"), "utf8");
 const documentScanLifecycleSql = await readFile(resolve(root, "supabase/migrations/20260828100000_phase_2_document_scan_lifecycle.sql"), "utf8");
 const runtimeSchedulerSql = await readFile(resolve(root, "supabase/migrations/20260828110000_phase_4_runtime_scheduler.sql"), "utf8");
 const activeOrganizationContextSql = await readFile(resolve(root, "supabase/migrations/20260828120000_phase_8_active_organization_context.sql"), "utf8");
@@ -864,6 +865,7 @@ async function validateRecurringCharges() {
   await db.exec(platformBusinessOverviewSql);
   await db.exec(livingCommunityPresentationSql);
   await db.exec(livingCommunityControlsSql);
+  await db.exec(vendorManagementSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
@@ -2021,6 +2023,129 @@ async function validateRecurringCharges() {
   assert(operatorAfterTriage.items[0].officialPriority === "high" && operatorAfterTriage.items[0].workOrder.workOrderId === workOrder.workOrderId && operatorAfterTriage.items[0].workOrder.vendorName === "Ready Fix Plumbing", "Operator workspace did not project the assigned work order.");
   const scopedVendorRead = (await db.query("select count(*)::integer as count from public.vendors")).rows[0].count;
   assert(scopedVendorRead === 1, "Property-scoped coordinator could not read the vendor already tied to their own work order.");
+
+  // ---- Vendor management ------------------------------------------------------------------------
+  // A vendor that can be created but never corrected is half a workflow. These assertions cover the
+  // mutation boundary and, more importantly, what must survive a vendor leaving: the work order that
+  // already names them.
+
+  // Still the property-scoped coordinator here. They can create a work order inside their scope, and
+  // that is exactly why the directory must not be theirs to rewrite.
+  await expectDatabaseError(() => db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Renamed By Scoped Staff',null,null,'active','vendor-scoped-update-0001'
+  )`), "ORGANIZATION_SCOPE_DENIED");
+
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${admin}'`);
+
+  // A vendor id that is not in this organization is simply not found, and an organization the caller
+  // has no permission on is refused before the vendor is ever looked up. Between them there is no
+  // ordering of ids that reaches another organization's vendor.
+  await expectDatabaseError(() => db.query(`select public.update_vendor(
+    '${organization.organizationId}','00000000-0000-4000-8000-0000000000ff','Foreign Vendor',null,null,'active','vendor-foreign-id-0001'
+  )`), "VENDOR_NOT_FOUND");
+  await expectDatabaseError(() => db.query(`select public.update_vendor(
+    '00000000-0000-4000-8000-0000000000fe','${vendor.vendorId}','Foreign Org',null,null,'active','vendor-foreign-org-0001'
+  )`), "ORGANIZATION_SCOPE_DENIED");
+
+  await expectDatabaseError(() => db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Ready Fix Plumbing',null,null,'retired','vendor-bad-status-0001'
+  )`), "INVALID_VENDOR_STATUS");
+  await expectDatabaseError(() => db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Ready Fix Plumbing','not-an-email',null,'active','vendor-bad-email-0001'
+  )`), "INVALID_VENDOR_EMAIL");
+  await expectDatabaseError(() => db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Ready Fix Plumbing',null,'5551234','active','vendor-bad-phone-0001'
+  )`), "INVALID_VENDOR_PHONE");
+
+  const vendorUpdate = (await db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Ready Fix Plumbing','ops@readyfix.example','+14045559999','active','vendor-update-0001'
+  ) as result`)).rows[0].result;
+  assert(
+    vendorUpdate.email === "ops@readyfix.example" && vendorUpdate.phoneE164 === "+14045559999" && vendorUpdate.status === "active",
+    "Vendor update did not return the corrected contact record.",
+  );
+  const vendorUpdateReplay = (await db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Ready Fix Plumbing','ops@readyfix.example','+14045559999','active','vendor-update-0001'
+  ) as result`)).rows[0].result;
+  assert(vendorUpdateReplay.phoneE164 === vendorUpdate.phoneE164, "Vendor update replay did not return the canonical record.");
+
+  // Inactive: gone from what can be assigned, still visible to whoever has to manage it.
+  await db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Ready Fix Plumbing','ops@readyfix.example','+14045559999','inactive','vendor-deactivate-0001'
+  )`);
+  const assignableAfterDeactivate = (await db.query(`select public.get_operator_vendor_directory('${organization.organizationId}') as result`)).rows[0].result;
+  assert(assignableAfterDeactivate.length === 0, "An inactive vendor was still offered as an assignable choice.");
+  const managedAfterDeactivate = (await db.query(`select public.get_operator_vendor_management_workspace('${organization.organizationId}') as result`)).rows[0].result;
+  assert(
+    managedAfterDeactivate.length === 1 && managedAfterDeactivate[0].status === "inactive" && managedAfterDeactivate[0].workOrderCount === 1 && managedAfterDeactivate[0].canManage === true,
+    "The management workspace lost the inactive vendor or its usage context.",
+  );
+  await expectDatabaseError(() => db.query(`select public.create_and_assign_work_order(
+    '${organization.organizationId}','${maintenance.maintenanceRequestId}','${vendor.vendorId}','Second attempt with an inactive vendor.',
+    null,null,null,null,false,null,'work-order-inactive-vendor-0001'
+  )`), "VENDOR_NOT_FOUND");
+
+  // Archived: the same, and the work order created before any of this still names them.
+  await db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Ready Fix Plumbing','ops@readyfix.example','+14045559999','archived','vendor-archive-0001'
+  )`);
+  const assignableAfterArchive = (await db.query(`select public.get_operator_vendor_directory('${organization.organizationId}') as result`)).rows[0].result;
+  assert(assignableAfterArchive.length === 0, "An archived vendor was still offered as an assignable choice.");
+  const historyAfterArchive = (await db.query(`select public.get_operator_maintenance_workspace('${organization.organizationId}') as result`)).rows[0].result;
+  assert(
+    historyAfterArchive.items[0].workOrder.vendorId === vendor.vendorId && historyAfterArchive.items[0].workOrder.vendorName === "Ready Fix Plumbing",
+    "The historical work order lost its vendor relationship once the vendor was archived.",
+  );
+  // Raw audit/private tables are not readable by a browser role; superuser is how this harness reads
+  // the trace it just asked a definer command to write.
+  await db.exec("reset role");
+  const vendorAudits = (await db.query(`select
+    (select count(*)::integer from audit.audit_events where resource_id='${vendor.vendorId}' and action_code='vendor.updated') as audits,
+    (select count(*)::integer from private.idempotency_records where route='UpdateVendor' and state='completed') as idempotency_records,
+    (select count(*)::integer from public.work_orders where vendor_id='${vendor.vendorId}') as retained_work_orders
+  `)).rows[0];
+  assert(
+    vendorAudits.audits === 3 && vendorAudits.idempotency_records === 3 && vendorAudits.retained_work_orders === 1,
+    "Vendor update audit, idempotency, or historical work-order retention was wrong.",
+  );
+
+  // The management workspace is organization-scoped or it is nothing: the unscoped collection form
+  // exists only for the wrapper to call, and a fetcher that forgets the organization gets a permission
+  // error rather than a silent read across every organization the caller belongs to.
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(
+    () => db.query("select public.get_operator_vendor_management_workspace()"),
+    "permission denied for function get_operator_vendor_management_workspace",
+  );
+
+  // Grants and revokes, asserted rather than read off the migration. `anon` reaches neither the
+  // command nor the scoped read, and the only two signatures on this name are the collection form and
+  // its organization-scoped wrapper — a third would mean a stale overload left behind by an edit.
+  await db.exec("reset role; set role anon");
+  await expectDatabaseError(() => db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Anon Rename',null,null,'active','vendor-anon-0001'
+  )`), "permission denied for function update_vendor");
+  await expectDatabaseError(
+    () => db.query(`select public.get_operator_vendor_management_workspace('${organization.organizationId}')`),
+    "permission denied for function get_operator_vendor_management_workspace",
+  );
+  await db.exec("reset role");
+  const vendorSignatures = (await db.query(`select p.proname, count(*)::integer as overloads
+    from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and p.proname in ('update_vendor','get_operator_vendor_management_workspace')
+    group by p.proname order by p.proname`)).rows;
+  assert(
+    vendorSignatures.length === 2
+      && vendorSignatures[0].proname === "get_operator_vendor_management_workspace" && vendorSignatures[0].overloads === 2
+      && vendorSignatures[1].proname === "update_vendor" && vendorSignatures[1].overloads === 1,
+    "The vendor functions do not have exactly the signatures they are meant to — a stale overload may remain.",
+  );
+
+  // Back to active so the rest of the chain keeps working against an assignable vendor.
+  await db.query(`select public.update_vendor(
+    '${organization.organizationId}','${vendor.vendorId}','Ready Fix Plumbing','dispatch@readyfix.example','+14045551234','active','vendor-reactivate-0001'
+  )`);
+  await db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${scopedCoordinator}'`);
 
   const accepted = (await db.query(`select public.transition_work_order('${workOrder.workOrderId}',1,'accept',null,null,null,null,null,null,'work-order-accept-0001') as result`)).rows[0].result;
   assert(accepted.status === "accepted" && accepted.version === 2, "Accept transition did not advance the work order.");

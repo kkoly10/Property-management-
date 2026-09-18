@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAndAssignWorkOrderSchema, createVendorSchema, ownerApprovalDecisionSchema, recordWorkOrderCostSchema, submitMaintenanceRequestSchema, transitionWorkOrderSchema } from "./maintenance";
+import { createAndAssignWorkOrderSchema, createVendorSchema, ownerApprovalDecisionSchema, recordWorkOrderCostSchema, submitMaintenanceRequestSchema, transitionWorkOrderSchema, updateVendorSchema } from "./maintenance";
 
 const valid = {
   tenancyId: "20000000-0000-4000-8000-000000000002",
@@ -37,6 +37,22 @@ describe("vendor validation", () => {
 
   it("rejects malformed phone numbers", () => {
     expect(createVendorSchema.safeParse({ ...validVendor, phoneE164: "404-555-1234" }).success).toBe(false);
+  });
+
+  it("accepts an update that clears the contact details", () => {
+    // Explicit nulls, not omission: an update replaces the vendor's mutable fields wholesale, so
+    // "no email" has to be sayable.
+    expect(updateVendorSchema.parse({ ...validVendor, email: null, phoneE164: null, status: "inactive" }))
+      .toMatchObject({ email: null, phoneE164: null, status: "inactive" });
+  });
+
+  it("rejects an update that omits the contact details", () => {
+    // Omission would mean both "leave it alone" and "clear it", and the command cannot tell which.
+    expect(updateVendorSchema.safeParse({ ...validVendor, email: undefined, phoneE164: undefined, status: "active" }).success).toBe(false);
+  });
+
+  it("rejects an unknown vendor status", () => {
+    expect(updateVendorSchema.safeParse({ ...validVendor, status: "deleted" }).success).toBe(false);
   });
 });
 
