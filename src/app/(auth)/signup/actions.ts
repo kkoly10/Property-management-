@@ -65,68 +65,78 @@ export async function signupAction(_previousState: ActionState, formData: FormDa
     });
 
     if (error) {
-      if (isExistingAccountError(error)) redirect(SIGNUP_SUCCESS_PATH);
-      return signupFailure("We could not start account setup. Please try again.");
-    }
+      if (!isExistingAccountError(error)) {
+        return signupFailure("We could not start account setup. Please try again.");
+      }
+      // Existing-account attempts deliberately fall through to the SAME neutral completion screen as
+      // a new signup. Do not send a second kind of message here and do not reveal account existence.
+    } else {
+      const tokenHash = data?.properties?.hashed_token;
+      const userId = data?.user?.id;
+      if (!isPlausibleTokenHash(tokenHash) || !userId) {
+        return signupFailure("We could not prepare the confirmation email. Please try again.");
+      }
 
-    const tokenHash = data?.properties?.hashed_token;
-    const userId = data?.user?.id;
-    if (!isPlausibleTokenHash(tokenHash) || !userId) {
-      return signupFailure("We could not prepare the confirmation email. Please try again.");
-    }
+      const origin = originForAudience("operator");
+      if (!origin) {
+        return signupFailure("Crecy email confirmation is not configured yet.");
+      }
 
-    const origin = originForAudience("operator");
-    if (!origin) {
-      return signupFailure("Crecy email confirmation is not configured yet.");
-    }
+      const confirmUrl = new URL("/auth/confirm", origin);
+      confirmUrl.searchParams.set("token_hash", tokenHash);
+      confirmUrl.searchParams.set("type", "signup");
+      confirmUrl.searchParams.set("next", POST_CONFIRM_PATH);
 
-    const confirmUrl = new URL("/auth/confirm", origin);
-    confirmUrl.searchParams.set("token_hash", tokenHash);
-    confirmUrl.searchParams.set("type", "signup");
-    confirmUrl.searchParams.set("next", POST_CONFIRM_PATH);
-
-    const rendered = renderAuthEmail({
-      actionType: "signup",
-      language: "en",
-      confirmUrl: confirmUrl.toString(),
-    });
-    const sender = senderFor("auth_email", "operator");
-    const delivered = await sendViaResend({
-      from: sender.from,
-      to: result.data.email,
-      subject: rendered.subject,
-      text: rendered.body,
-      html: renderEmailHtml({
-        subject: rendered.subject,
-        body: rendered.body,
-        audience: sender.audience,
+      const rendered = renderAuthEmail({
+        actionType: "signup",
         language: "en",
-        preheader: rendered.preheader,
-        paragraphs: rendered.paragraphs,
-        heading: rendered.heading,
-        ctaLabel: rendered.ctaLabel,
-        ctaUrl: rendered.ctaUrl,
-        details: rendered.details,
-        securityNote: rendered.securityNote,
-        unsubscribeUrl: null,
-      }),
-      replyTo: sender.replyTo,
-      tags: [
-        { name: "auth_action", value: "signup" },
-        { name: "audience", value: "operator" },
-      ],
-      // The user id is non-secret and stable for this signup. Provider retries therefore cannot send
-      // two copies of the same confirmation message within Resend's idempotency window.
-      idempotencyKey: `signup-${userId}`,
-    });
+        confirmUrl: confirmUrl.toString(),
+      });
+      const sender = senderFor("auth_email", "operator");
+      const message = {
+        from: sender.from,
+        to: result.data.email,
+        subject: rendered.subject,
+        text: rendered.body,
+        html: renderEmailHtml({
+          subject: rendered.subject,
+          body: rendered.body,
+          audience: sender.audience,
+          language: "en" as const,
+          preheader: rendered.preheader,
+          paragraphs: rendered.paragraphs,
+          heading: rendered.heading,
+          ctaLabel: rendered.ctaLabel,
+          ctaUrl: rendered.ctaUrl,
+          details: rendered.details,
+          securityNote: rendered.securityNote,
+          unsubscribeUrl: null,
+        }),
+        replyTo: sender.replyTo,
+        tags: [
+          { name: "auth_action", value: "signup" },
+          { name: "audience", value: "operator" },
+        ],
+        // The user id is non-secret and stable for this signup. Retrying the provider call therefore
+        // cannot send two copies of the same confirmation message within Resend's idempotency window.
+        idempotencyKey: `signup-${userId}`,
+      };
 
-    if (!delivered.ok) {
-      // A confirmation email that did not leave Crecy is not a completed signup. Best-effort cleanup
-      // prevents a provider/configuration failure from leaving an unconfirmed account that blocks a
-      // later retry. If the cleanup itself fails, the generic error still avoids exposing account
-      // state; support can diagnose it from the request id.
-      await admin.auth.admin.deleteUser(userId).catch(() => undefined);
-      return signupFailure("We could not send the confirmation email. Please try again.");
+      let delivered = await sendViaResend(message);
+      if (!delivered.ok && delivered.retryable) {
+        // One retry is safe because the idempotency key is unchanged. This also covers the ambiguous
+        // "provider accepted but our connection timed out" case without turning it into two emails.
+        delivered = await sendViaResend(message);
+      }
+
+      if (!delivered.ok) {
+        // A confirmation email that did not leave Crecy is not a completed signup. Best-effort cleanup
+        // prevents a provider/configuration failure from leaving an unconfirmed account that blocks a
+        // later retry. If the cleanup itself fails, the generic error still avoids exposing account
+        // state; support can diagnose it from the request id.
+        await admin.auth.admin.deleteUser(userId).catch(() => undefined);
+        return signupFailure("We could not send the confirmation email. Please try again.");
+      }
     }
   } catch {
     return signupFailure("Unable to create the account right now. Please try again.");
