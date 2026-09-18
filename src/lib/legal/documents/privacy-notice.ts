@@ -3,7 +3,7 @@ import type { LegalDocument } from "@/lib/legal/types";
 /**
  * PILOT RELEASE — published for the Crecy controlled pilot on founder approval.
  *
- * This is version 1.0.1, effective 2026-09-18. It corrects 1.0.0 (2026-09-04) in three respects, all of
+ * This is version 1.0.1, effective 2026-09-18. It corrects 1.0.0 (2026-09-04) in four respects, all of
  * them statements of fact rather than commitments:
  *
  *   * the contact address, which was the placeholder `privacy@crecy.example` and is now the real
@@ -17,6 +17,11 @@ import type { LegalDocument } from "@/lib/legal/types";
  *     portal in the launch product, so a vendor cannot see anything. Section 1 still names vendors,
  *     correctly: an operator does enter records ABOUT vendors, which is a different claim from a vendor
  *     having access.
+ *   * section 4 stated flatly that service providers "deliver messages and process payments". Hosting
+ *     is active; the transactional mail relay and Stripe are built but not configured, so those flows
+ *     are not happening yet. They are now described as conditional rather than dropped — dropping them
+ *     would under-disclose real processing the moment either feature is switched on, which is the
+ *     opposite failure and the worse one for a privacy notice.
  *
  * Nothing was added and no commitment changed. Removing a claim about a capability that is not active
  * is not a removal of functionality.
@@ -75,8 +80,9 @@ because losing one would lock a person out of their own records. Category notifi
 ## 4. Who else sees it
 
 Only the people in your organization whose role and property scope permit it, and the resident or owner
-the record is about. We use service providers to host the product, deliver messages and process
-payments; each is bound to handle data only as instructed.
+the record is about. We use service providers to host the product. When messaging or payment features
+are enabled, service providers may also deliver messages and process payments; each is bound to handle
+data only as instructed.
 
 ## 5. How long we keep it
 

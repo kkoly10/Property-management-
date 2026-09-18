@@ -12,7 +12,7 @@ reader to write to an address which does not exist is not a cosmetic problem: se
 section 7 of the Privacy Notice are the only routes a person has to raise a question or exercise a data
 right.
 
-**Claims about capabilities the pilot does not have.** Adversarial review of the 1.0.1 text found three,
+**Claims about capabilities the pilot does not have.** Adversarial review of the 1.0.1 text found four,
 each describing something a reader could reasonably expect and not get:
 
 * Terms §2 — *"presents portals to the residents, owners and vendors you invite."* There is no vendor
@@ -23,6 +23,10 @@ each describing something a reader could reasonably expect and not get:
   notice described an inspection that does not happen.
 * Privacy §4 — *"the resident, owner or vendor the record is about"*, in the section that answers *who
   else sees it*. Naming a vendor there says a vendor can see a record. They cannot.
+* Privacy §4 — *"service providers to host the product, deliver messages and process payments"*, stated
+  as present tense. Hosting is active; the mail relay and Stripe are built but unconfigured, so those
+  flows are not happening yet. See the section below for why they are made conditional rather than
+  removed.
 
 ## What shipped
 
@@ -65,7 +69,7 @@ version cannot become active, cannot be routed to, cannot appear on `/legal` or 
 cannot be picked up by consent resolution — not by convention, but because no resolver reads `ARCHIVE`.
 
 **Consent binding** moves from `operator_terms@1.0.0+privacy_notice@1.0.0#…` to
-`operator_terms@1.0.1+privacy_notice@1.0.1#9a840a08bdbb488b`. Nothing about the mechanism changed: the
+`operator_terms@1.0.1+privacy_notice@1.0.1#0e3afb1d0b81de7b`. Nothing about the mechanism changed: the
 page and the server action both call `resolveOrganizationConsent`, nothing is hardcoded, and the action
 still refuses a submitted version that does not match the one it resolves for itself.
 
@@ -78,13 +82,23 @@ and rewriting it would invent evidence rather than correct it. This release bind
 moment a version was archived out of it. It now says it lists the current version of each document. One
 sentence; the page is otherwise unchanged, as are both document pages.
 
-## Considered and deliberately not changed
+## The third state: conditional, not present and not absent
 
-The same Privacy §4 sentence also says service providers **deliver messages** and **process payments**,
-and neither the mail relay nor Stripe is configured for the pilot. That is a different situation from
-scanning and was left alone on purpose: messaging and payments are built and awaiting configuration,
-not deferred capabilities, and a privacy notice that omitted them would under-disclose real processing
-the moment they are switched on. Scanning is out because it is deliberately not being activated at all.
+The same Privacy §4 sentence originally said service providers **deliver messages** and **process
+payments**, and neither the mail relay nor Stripe is configured for the pilot. Neither of the two
+obvious answers is right. Stating them flatly describes flows that are not happening. Deleting them
+under-discloses real processing the moment either feature is switched on, which is the worse failure
+for a privacy notice — a reader would have been told the list was complete.
+
+So they are stated as conditional:
+
+> We use service providers to host the product. When messaging or payment features are enabled, service
+> providers may also deliver messages and process payments; each is bound to handle data only as
+> instructed.
+
+Hosting is active and stays flat. This is a different situation from scanning, which is removed
+outright because it is deliberately not being activated at all — there is no condition under which the
+pilot inspects an upload, so there is nothing to make conditional.
 
 The archived 1.0.0 files were not touched, including their explanatory comments — a comment is outside
 the hashed object and could safely be reworded, but "leave the historical artifact alone" is the
@@ -95,7 +109,7 @@ simpler rule to keep.
 | Artifact | Content hash (SHA-256) |
 | --- | --- |
 | `operator_terms@1.0.1` (current) | `4500fab7b997db58194b95d58ee189ee0b278de19f9b1ea47b258f177c1dfcdf` |
-| `privacy_notice@1.0.1` (current) | `72e5c6a38cc706bfb592cfa19c579c06246800fb1057df2710165815e1312e01` |
+| `privacy_notice@1.0.1` (current) | `422303ef24e95f03347493f9d5f6748d5237d061dec99c4c692dabac1cf17c4b` |
 | `esign_consent@1.0.0` (unchanged) | `a1f507cd714448e745d13d1b2e2614549fd7ab44560d5d2f3cef28034f8f2dc7` |
 | `operator_terms@1.0.0` (archived, pinned) | `be0bf7fff53879921ddfb81110a8057d565e87c5e9a1b399ed68a675d17269f3` |
 | `privacy_notice@1.0.0` (archived, pinned) | `e3b45572ec322c6e2323c2b99166a2b4354f1df0975b494b01495bb9eb091e81` |

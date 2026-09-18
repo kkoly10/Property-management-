@@ -346,6 +346,22 @@ describe("the published pilot artifacts", () => {
     expect(flat(privacy.body)).toContain("operational records an operator enters about their residents, owners and vendors");
   });
 
+  it("describes messaging and payments as conditional, because neither is switched on", () => {
+    // Three different accuracy failures are possible in one sentence, and the notice has to avoid all
+    // three: claiming a flow that is not happening, dropping a flow that will happen, and losing the
+    // one that is happening now. Hosting is live and stated flatly; the transactional mail relay and
+    // Stripe are built but unconfigured, so those are stated as conditional. Silence about them would
+    // under-disclose real processing the moment either feature is enabled — the worse failure here.
+    const privacy = current("privacy_notice");
+    const whoSeesIt = flat(privacy.body.split(/\n## /).find((section) => section.startsWith("4. Who else sees it")) as string);
+    expect(whoSeesIt).toContain("We use service providers to host the product.");
+    expect(whoSeesIt).toContain(
+      "When messaging or payment features are enabled, service providers may also deliver messages and process payments",
+    );
+    expect(whoSeesIt, "the notice presents messaging and payment flows as already happening")
+      .not.toContain("host the product, deliver messages and process payments");
+  });
+
   it("states its own version and effective date in the text a person reads", () => {
     // The badge on /legal/<slug> comes from the metadata; the "Effective … · Version …" line comes from
     // the body. If they disagree the page shows one version and the document claims another, which is
