@@ -146,12 +146,21 @@ their reply was received when it was not.
 and `CRECY_NOTIFICATION_RELAY_SECRET` = `openssl rand -hex 32`. The worker embeds no mail vendor; it
 POSTs rendered messages to this URL, which is why the vendor stays swappable.
 
-**5. Supabase redirect allow-list — a hard prerequisite, not a nicety.** Invitation delivery calls
-`auth.admin.generateLink`, and GoTrue validates the requested `redirect_to` against
-Authentication → URL Configuration → Redirect URLs. A destination that is not on the list is **not
-rejected** — it is silently replaced with the Site URL. The failure therefore looks like "the link
-works but lands on the wrong page", with nothing in any log to say why. Every acceptance path an
-invitation can name must be on that list before invitations are sent.
+**5. Supabase Site URL and Redirect URLs — still required, but NOT by the invitation flow.** Configure
+them as §1b describes: the ordinary Supabase auth callback (PKCE `?code=` through `/auth/callback`)
+depends on them, and a wrong Site URL still breaks sign-in.
+
+What they no longer govern is invitation delivery. `generateInvitationAuthToken()` calls
+`auth.admin.generateLink({ type: "magiclink", email })` with **no `redirectTo`**, discards
+`action_link`, and keeps only `properties.hashed_token`; the worker then builds Crecy's own
+`/auth/confirm?token_hash=…&next=…`. So GoTrue is never asked to choose a destination for an
+invitation, and no invitation acceptance path needs to be on the Redirect URLs list.
+
+An earlier version of this runbook said the opposite, and called it a hard prerequisite. It described a
+real hazard of the design that PR #60 replaced — GoTrue validates `redirect_to` against that list and
+**silently substitutes the Site URL** on a miss, which presents as "the link works but lands on the
+wrong page" with nothing in any log. Discarding `redirect_to` is what removed it. The invitation
+destination boundary is now Crecy's own `safeRedirectPath`, applied at `/auth/confirm`.
 
 **6. The Send Email Auth Hook — built, deliberately NOT enabled.** `/api/internal/auth/send-email`
 renders Supabase's own authentication mail (sign-in links, password resets, email change, the security
@@ -178,8 +187,9 @@ take **after** the deployed URL has been verified, in this order:
   Turning the hook on with a wrong or missing secret does not degrade to the defaults — it stops
   authentication mail entirely, because Supabase reads the non-2xx as "not sent".
 
-**Reviewing the templates without sending mail:** `/dev/email-preview/<fixture>` renders the nine
-representative messages. It 404s in production and on any unlabeled deployment; see
+**Reviewing the templates without sending mail:** `/dev/email-preview/<fixture>` renders 13 fixtures —
+nine representative messages plus four layout stress cases (a long organization name, Spanish, French,
+and a document for a recipient with no portal). It 404s in production and on any unlabeled deployment; see
 `src/lib/notifications/email-fixtures.ts` for the fixture ids and for why the category messages need
 the origin variables set to render their button.
 
@@ -351,8 +361,8 @@ recorded here so the next person who diffs the schema against the repo is not su
    `CRECY_NOTIFICATION_RELAY_URL`/`_SECRET`. Invitations never arrive, so no resident or owner can be
    onboarded. Two things travel with this one and are easy to forget because neither produces an error:
    Resend **click tracking must be off**, or every authentication link arrives rewritten through a
-   redirector; and each invitation acceptance path must be on the Supabase **redirect allow-list**, or
-   GoTrue silently substitutes the Site URL and the link lands on the wrong page. Reply-To defaults to
+   redirector. (The Supabase redirect allow-list is **not** among them: the invitation flow sends no
+   `redirect_to` — see *Transactional email* step 5.) Reply-To defaults to
    `support@crecyos.com` / `support@crecyliving.com`, **neither of which is known to be a monitored
    inbox** — confirm or override before the first invitation.
 5. **Stripe unconfigured.** Online payments unavailable; manual recording still works, so this is the

@@ -21,9 +21,10 @@ import { renderNotification } from "./templates";
  * That now includes the invitations. They used to carry a ready-made absolute URL in their payload and
  * so rendered identically anywhere; they now carry an opaque TOKEN HASH and the worker assembles the
  * `/auth/confirm` link itself, precisely so that no payload can decide where an invitation points.
- * These are the nine messages worth looking at with human eyes: the three invitations, the three
- * category messages, and the three authentication messages that a recipient is most likely to receive
- * while under time pressure.
+ *
+ * Thirteen fixtures in total. Nine are the messages worth looking at with human eyes — the three
+ * invitations, the three category messages, and the three authentication messages a recipient is most
+ * likely to receive while under time pressure. The other four are the layout stress cases below.
  *
  * They exist for local review only. The route that serves them refuses to run in production.
  */
@@ -104,9 +105,10 @@ const NOTIFICATION_FIXTURES: NotificationFixture[] = [
 ];
 
 /**
- * The stress cases. Not part of the nine representative messages, but the ones a layout actually
- * breaks on: a name with no spaces to wrap at, and the two non-English languages whose words are
- * longer than the English the layout was eyeballed against.
+ * The four stress cases. Not part of the nine representative messages, but the ones a layout actually
+ * breaks on: a very long organization name, the two non-English languages whose words run longer than
+ * the English the layout was eyeballed against, and a document for a recipient with no portal — the
+ * case that must render neither a portal button nor portal copy.
  */
 const STRESS_FIXTURES: NotificationFixture[] = [
   {

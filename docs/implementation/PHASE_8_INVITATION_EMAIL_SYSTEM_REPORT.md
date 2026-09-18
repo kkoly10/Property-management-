@@ -147,7 +147,8 @@ Command-verified, not asserted:
   `p_auth_action_url`, asserts the enriched payload, asserts the credential is scrubbed on each terminal
   transition and retained on `failed`, and asserts the retired RPCs are no longer executable by
   `service_role`.
-* `npx playwright test e2e/email-rendering.spec.ts` — nine fixtures rendered in a real browser at 320px
+* `npx playwright test e2e/email-rendering.spec.ts` — the nine representative fixtures rendered in a
+  real browser at 320px
   and 600px: no horizontal overflow, no remote image or script, a ≥44px call-to-action target, a
   security notification with zero links, and a copyable URL that wraps.
 
