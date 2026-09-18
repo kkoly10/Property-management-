@@ -147,7 +147,7 @@ export function LivingCommunityForm({
                 maxLength={63}
                 disabled={disabled}
                 placeholder="oak-residences"
-                className="border-0 shadow-none focus-visible:ring-0"
+                className="min-w-0 flex-1 border-0 shadow-none focus-visible:ring-0"
               />
               <span className="flex items-center border-l px-3 text-xs text-muted-foreground">.crecyliving.com</span>
             </div>
