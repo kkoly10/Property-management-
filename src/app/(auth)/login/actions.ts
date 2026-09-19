@@ -1,11 +1,18 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { ActionState } from "@/lib/actions/state";
+import { isPlausibleTokenHash } from "@/lib/auth/invitation-link";
 import { safeRedirectPath } from "@/lib/auth/redirect";
 import { AUTH_SURFACE_COPY, authSurfaceFor } from "@/lib/auth/surface-copy";
+import { renderAuthEmail } from "@/lib/notifications/auth-email";
+import { renderEmailHtml } from "@/lib/notifications/html-email";
+import { sendViaResend } from "@/lib/notifications/resend";
+import { senderFor } from "@/lib/notifications/sender";
 import { classifyHost } from "@/lib/runtime/host";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loginSchema, signInLinkSchema } from "@/lib/validation/auth";
 
@@ -18,6 +25,10 @@ import { loginSchema, signInLinkSchema } from "@/lib/validation/auth";
  */
 async function defaultLandingPath(): Promise<string> {
   return AUTH_SURFACE_COPY[authSurfaceFor(classifyHost((await headers()).get("host")))].homePath;
+}
+
+function rateKey(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 export async function loginAction(_previousState: ActionState, formData: FormData): Promise<ActionState> {
@@ -48,17 +59,17 @@ export async function loginAction(_previousState: ActionState, formData: FormDat
 /**
  * Email a one-time sign-in link.
  *
- * Two things this deliberately does NOT do:
+ * This intentionally uses Supabase's admin generateLink + Crecy/Resend instead of signInWithOtp.
+ * signInWithOtp sends Supabase's own PKCE email, whose callback needs the verifier cookie from the
+ * browser that REQUESTED the link. Opening that email from iOS Mail in another browser context loses
+ * the verifier and /auth/callback cannot exchange the code.
  *
- *   * It never reveals whether an account exists. The success message is identical for a known
- *     address, an unknown one, and a rate-limited retry — otherwise this form becomes an account
- *     enumeration oracle, which is worse than the inconvenience it removes.
- *   * It never creates an account (`shouldCreateUser: false`). Sign-up is its own route with its own
- *     terms consent; a sign-in form that quietly provisions accounts would bypass that.
+ * generateLink returns the one-time token hash without sending. Crecy emails a link to /auth/confirm,
+ * which redeems the hash directly with verifyOtp and therefore works even when the message is opened
+ * in a different browser context.
  *
- * The link returns through /auth/callback, carrying `next` so an invitation being accepted survives
- * the round trip. The origin is taken from the request, so a resident on crecyliving.com is sent back
- * to crecyliving.com rather than to the operator console.
+ * The browser response remains identical for an existing account, an unknown address, a throttled
+ * request, or a provider failure so this form cannot be used as an account-enumeration oracle.
  */
 export async function requestSignInLinkAction(_previousState: ActionState, formData: FormData): Promise<ActionState> {
   const result = signInLinkSchema.safeParse({
@@ -77,20 +88,90 @@ export async function requestSignInLinkAction(_previousState: ActionState, formD
 
   try {
     const headerList = await headers();
-    const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
-    const proto = headerList.get("x-forwarded-proto") ?? "https";
-    if (!host) return sent;
+    const rawHost = headerList.get("x-forwarded-host") ?? headerList.get("host");
+    if (!rawHost) return sent;
 
-    const callback = new URL("/auth/callback", `${proto}://${host}`);
-    callback.searchParams.set("next", safeRedirectPath(result.data.next, await defaultLandingPath()));
+    const classification = classifyHost(rawHost);
+    if (classification.kind === "unknown" || classification.kind === "marketing" || classification.kind === "vendor") {
+      return sent;
+    }
 
-    const supabase = await createClient();
-    await supabase.auth.signInWithOtp({
-      email: result.data.email,
-      options: { shouldCreateUser: false, emailRedirectTo: callback.toString() },
+    const surface = authSurfaceFor(classification);
+    const next = safeRedirectPath(result.data.next, AUTH_SURFACE_COPY[surface].homePath);
+
+    const forwarded = headerList.get("x-forwarded-for")?.split(",")[0]?.trim()
+      || headerList.get("x-real-ip")?.trim()
+      || "";
+    const admin = createAdminClient();
+    const { data: throttle, error: throttleError } = await admin.rpc("claim_public_signin_link_attempt", {
+      p_email_hash: rateKey(`email:${result.data.email.trim().toLowerCase()}`),
+      p_ip_hash: forwarded ? rateKey(`ip:${forwarded}`) : null,
     });
+    if (throttleError || (throttle as { allowed?: unknown } | null)?.allowed !== true) return sent;
+
+    const { data, error } = await admin.auth.admin.generateLink({
+      type: "magiclink",
+      email: result.data.email,
+    });
+    const tokenHash = data?.properties?.hashed_token;
+    const userId = data?.user?.id;
+    if (error || !userId || !isPlausibleTokenHash(tokenHash)) return sent;
+
+    const protoHeader = headerList.get("x-forwarded-proto");
+    const proto = protoHeader === "http" || protoHeader === "https" ? protoHeader : "https";
+    const origin = `${proto}://${rawHost}`;
+    let confirmUrl: URL;
+    try {
+      confirmUrl = new URL("/auth/confirm", origin);
+    } catch {
+      return sent;
+    }
+    confirmUrl.searchParams.set("token_hash", tokenHash);
+    confirmUrl.searchParams.set("type", "magiclink");
+    confirmUrl.searchParams.set("next", next);
+
+    const rendered = renderAuthEmail({
+      actionType: "magiclink",
+      language: "en",
+      confirmUrl: confirmUrl.toString(),
+    });
+    const sender = senderFor("auth_email", surface);
+    const message = {
+      from: sender.from,
+      to: result.data.email,
+      subject: rendered.subject,
+      text: rendered.body,
+      html: renderEmailHtml({
+        subject: rendered.subject,
+        body: rendered.body,
+        audience: sender.audience,
+        language: "en" as const,
+        preheader: rendered.preheader,
+        paragraphs: rendered.paragraphs,
+        heading: rendered.heading,
+        ctaLabel: rendered.ctaLabel,
+        ctaUrl: rendered.ctaUrl,
+        details: rendered.details,
+        securityNote: rendered.securityNote,
+        unsubscribeUrl: null,
+      }),
+      replyTo: sender.replyTo,
+      tags: [
+        { name: "auth_action", value: "magiclink" },
+        { name: "audience", value: sender.audience },
+      ],
+      // A fresh request must receive its fresh token, so do not key only on user id. Keep the random
+      // request identity stable across the one provider retry below.
+      idempotencyKey: `signin-link-${userId}-${crypto.randomUUID()}`,
+    };
+
+    const delivered = await sendViaResend(message);
+    if (!delivered.ok && delivered.retryable) {
+      await sendViaResend(message);
+    }
+    // Deliberately ignore the final result in the browser response. Returning "failed" only for known
+    // accounts would reveal account existence.
   } catch {
-    // Swallowed on purpose: a transport failure must not be distinguishable from an unknown address.
     return sent;
   }
 
