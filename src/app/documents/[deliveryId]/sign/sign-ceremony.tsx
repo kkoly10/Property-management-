@@ -84,13 +84,17 @@ export function SignCeremony({
   }
 
   return <div className="space-y-6">
-    <ol className="flex items-center gap-2 text-sm">
+    {/* Wraps and drops the connector rules on a narrow screen. Three numbered steps plus two 24px
+        rules and their margins need 370px, which pushed the signing page past a 320px phone — and
+        this is a resident-facing legal ceremony, so it has to hold together on the smallest device
+        someone might sign from. The rules are decoration; the numbers carry the sequence. */}
+    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
       {steps.map((label, index) => <li key={label} className="flex items-center gap-2">
-        <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${index < step ? "bg-primary text-primary-foreground" : index === step ? "bg-primary/15 text-primary ring-2 ring-primary/30" : "bg-muted text-muted-foreground"}`}>
+        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${index < step ? "bg-primary text-primary-foreground" : index === step ? "bg-primary/15 text-primary ring-2 ring-primary/30" : "bg-muted text-muted-foreground"}`}>
           {index < step ? <CheckCircle2 className="h-4 w-4" /> : index + 1}
         </span>
         <span className={index === step ? "font-medium" : "text-muted-foreground"}>{label}</span>
-        {index < steps.length - 1 ? <span className="mx-1 h-px w-6 bg-border" /> : null}
+        {index < steps.length - 1 ? <span aria-hidden="true" className="mx-1 hidden h-px w-6 bg-border sm:block" /> : null}
       </li>)}
     </ol>
 

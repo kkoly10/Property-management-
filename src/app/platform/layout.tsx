@@ -12,7 +12,9 @@ export default async function PlatformLayout({ children }: { children: React.Rea
     <div className="min-h-screen bg-muted/30">
       <SupportSessionBanner sessions={activeSessions} />
       <header className="border-b bg-card">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
+        {/* Wraps rather than fixing the height: the wordmark, the Platform badge and both tabs on one
+            row need 365px, so at 320px the console pushed itself wider than the screen. */}
+        <div className="mx-auto flex min-h-16 max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 gutter-5 py-3">
           <Link href="/platform" className="flex items-center gap-3">
             <Wordmark />
             <Badge variant="neutral">Platform</Badge>
@@ -25,7 +27,7 @@ export default async function PlatformLayout({ children }: { children: React.Rea
           </nav>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl space-y-6 p-5 sm:py-8">{children}</main>
+      <main className="mx-auto max-w-6xl space-y-6 gutter-5 py-5 sm:py-8">{children}</main>
     </div>
   );
 }

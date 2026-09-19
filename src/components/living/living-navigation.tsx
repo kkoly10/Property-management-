@@ -57,7 +57,11 @@ export function LivingMobileNavigation() {
   return (
     <nav
       aria-label="Resident"
-      className="fixed inset-x-0 bottom-0 z-40 border-t bg-card/96 px-2 pb-[max(.6rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur md:hidden"
+      // The `pb-[max(...)]` here was written for the iPhone home indicator but had never once
+      // resolved above `.6rem`: without `viewport-fit=cover` on the document, every safe-area inset
+      // reports 0px. The viewport export now sets it, so this clears the indicator for real — and
+      // the horizontal padding has to follow, or in landscape the outer tabs sit under the notch.
+      className="fixed inset-x-0 bottom-0 z-40 border-t bg-card/96 pb-[max(.6rem,env(safe-area-inset-bottom))] pl-[calc(.5rem+env(safe-area-inset-left))] pr-[calc(.5rem+env(safe-area-inset-right))] pt-2 backdrop-blur print:hidden md:hidden"
     >
       <div className="mx-auto grid max-w-md grid-cols-5 items-end">
         <Link href="/home" aria-current={pathname === "/home" ? "page" : undefined} className={itemClass(pathname === "/home")}>

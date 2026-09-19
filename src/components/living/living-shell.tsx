@@ -15,7 +15,7 @@ export function LivingShell({
     <SurfaceTheme surface="living" className="min-h-screen bg-[var(--surface-canvas)]">
       <div className="min-h-screen pb-24 md:pb-0">
         <header className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/90">
-          <div className={`mx-auto flex h-16 ${maxWidth} items-center gap-5 px-4 sm:px-6`}>
+          <div className={`mx-auto flex h-16 ${maxWidth} items-center gap-5 gutter-4 sm:gutter-6`}>
             <div className="shrink-0">
               <Wordmark product="Living" className="max-w-[7.7rem] sm:max-w-[8.7rem]" />
             </div>
@@ -48,7 +48,7 @@ export function LivingShell({
           </div>
         </header>
 
-        <main className={`mx-auto ${maxWidth} px-4 py-6 sm:px-6 sm:py-8`}>
+        <main className={`mx-auto ${maxWidth} gutter-4 py-6 sm:gutter-6 sm:py-8`}>
           {children}
         </main>
 
