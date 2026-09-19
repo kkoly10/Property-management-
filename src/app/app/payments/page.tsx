@@ -139,16 +139,27 @@ export default async function PaymentsPage() {
         bodyClassName="p-0"
       >
         {workspace.payments.length ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+          /*
+           * Six columns need 860px. On a 390px phone the register showed one — the resident — and
+           * put the amount just past the right edge, clipped mid-glyph: a $850.00 receipt and a
+           * failed $500.00 attempt were told apart by nothing a thumb could see. The columns below
+           * are dropped by container size rather than viewport, because this register also renders
+           * inside narrower cards elsewhere; what governs it is the space it actually has.
+           *
+           * Dropped, never crushed. Every row links to the payment, which carries the full record,
+           * and the two signals an operator scans for — how much, and did it land — are promoted
+           * into the cells that survive.
+           */
+          <div role="region" aria-label="Recent payments, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+            <table className="w-full border-collapse text-left text-sm @xl:min-w-[860px]">
               <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
                 <tr>
-                  <th className="px-5 py-3 sm:px-6">Resident</th>
-                  <th className="px-4 py-3">Amount</th>
-                  <th className="px-4 py-3">Source</th>
-                  <th className="px-4 py-3">Payment</th>
-                  <th className="px-4 py-3">Reconciliation</th>
-                  <th className="w-12 px-4 py-3"><span className="sr-only">Open</span></th>
+                  <th scope="col" className="px-5 py-3 sm:px-6">Resident</th>
+                  <th scope="col" className="px-4 py-3">Amount</th>
+                  <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Source</th>
+                  <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Payment</th>
+                  <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Reconciliation</th>
+                  <th scope="col" className="w-12 px-4 py-3"><span className="sr-only">Open</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -160,17 +171,27 @@ export default async function PaymentsPage() {
                       </Link>
                       <p className="mt-1 text-xs text-muted-foreground">{payment.propertyName} · Unit {payment.unitCode} · {payment.publicReference}</p>
                     </td>
-                    <td data-financial-value className="px-4 py-4 font-semibold">{money(payment.amountMinor, payment.currencyCode)}</td>
-                    <td className="px-4 py-4">
+                    <td data-financial-value className="px-4 py-4 font-semibold">
+                      {money(payment.amountMinor, payment.currencyCode)}
+                      {/* The state of the payment rides along with the amount once the Payment
+                          column is gone. Exactly one of the two is ever displayed, so a screen
+                          reader is never read the status twice. */}
+                      <span className="mt-1.5 block @xl:hidden">
+                        <Badge variant={payment.status === "succeeded" ? "success" : ["failed", "returned"].includes(payment.status) ? "warning" : "neutral"}>
+                          {label(payment.status)}
+                        </Badge>
+                      </span>
+                    </td>
+                    <td className="hidden px-4 py-4 @xl:table-cell">
                       <p>{sourceLabel(payment.source)}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{payment.receivedAt ? new Date(payment.receivedAt).toLocaleDateString() : "Awaiting provider"}</p>
                     </td>
-                    <td className="px-4 py-4">
+                    <td className="hidden px-4 py-4 @xl:table-cell">
                       <Badge variant={payment.status === "succeeded" ? "success" : ["failed", "returned"].includes(payment.status) ? "warning" : "neutral"}>
                         {label(payment.status)}
                       </Badge>
                     </td>
-                    <td className="px-4 py-4">
+                    <td className="hidden px-4 py-4 @xl:table-cell">
                       {payment.reconciliationStatus
                         ? <Badge variant={reconciliationBadge(payment.reconciliationStatus)}>{label(payment.reconciliationStatus)}</Badge>
                         : <span className="text-muted-foreground">—</span>}

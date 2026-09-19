@@ -40,7 +40,7 @@ export function OwnerShell({
 
         <div className="min-w-0">
           <header className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur print:hidden supports-[backdrop-filter]:bg-card/90">
-            <div className="mx-auto flex h-[4.5rem] max-w-[1380px] items-center gap-4 px-4 sm:px-6 lg:px-8">
+            <div className="mx-auto flex h-[4.5rem] max-w-[1380px] items-center gap-4 gutter-4 sm:gutter-6 lg:gutter-8">
               <div className="shrink-0 lg:hidden">
                 <Wordmark product="Owner" className="max-w-[8rem]" />
               </div>
@@ -65,7 +65,7 @@ export function OwnerShell({
             <div className="lg:hidden"><OwnerNavigation compact /></div>
           </header>
 
-          <main className={cn("mx-auto max-w-[1380px] px-4 py-6 print:max-w-none print:p-0 sm:px-6 sm:py-8 lg:px-8", mainClassName)}>{children}</main>
+          <main className={cn("mx-auto max-w-[1380px] gutter-4 py-6 print:max-w-none print:p-0 sm:gutter-6 sm:py-8 lg:gutter-8", mainClassName)}>{children}</main>
         </div>
       </div>
     </SurfaceTheme>

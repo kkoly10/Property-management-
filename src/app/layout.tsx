@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { Inter } from "next/font/google";
 import { classifyHost, isLivingSurface } from "@/lib/runtime/host";
@@ -16,6 +16,30 @@ function visualSurface(host: string | null) {
   if (classification.kind === "owner") return "owner" as const;
   return "os" as const;
 }
+
+/**
+ * `viewport-fit=cover` is the switch that makes `env(safe-area-inset-*)` mean anything.
+ *
+ * Without it the default is `viewport-fit=auto`: the browser letterboxes the page inside the safe
+ * area itself, so every inset reports `0px` and any `max(x, env(safe-area-inset-bottom))` in the
+ * stylesheet silently collapses to `x`. Crecy Living's bottom tab bar was already written against
+ * those variables and was therefore inert — its padding resolved to a flat `.6rem` and the tab row
+ * sat in the iPhone home-indicator gesture area. Turning `cover` on hands the insets real values and
+ * hands us responsibility for the edges, which is why the shells below pad by the insets.
+ *
+ * Deliberately absent: `maximumScale` and `userScalable`. Pinning either is the usual shortcut for
+ * iOS's zoom-on-focus behaviour, and it fails WCAG 1.4.4 Resize Text for everyone who needs to zoom.
+ * The supported fix is a 16px font on the control, which the input primitives already carry.
+ *
+ * This is the static `viewport` object rather than `generateViewport` on purpose. A per-surface
+ * `themeColor` would need `headers()`, and viewport cannot be streamed — a request-time viewport
+ * blocks the document. Surface colour stays with the web manifest, where it costs nothing.
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
