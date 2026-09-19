@@ -130,15 +130,19 @@ export default async function OwnerHomePage() {
           >
             <div id="statements" className="scroll-mt-28">
               {recentStatements.length ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[680px] border-collapse text-left text-sm">
+                /* An owner opening this on a phone saw the property and the period, and not one of
+                   the three figures they came for. Narrow containers keep the payable — the number
+                   that says what is coming to them — and fold income and net position underneath
+                   the property, each still labelled in words. */
+                <div role="region" aria-label="Recent statements, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+                  <table className="w-full border-collapse text-left text-sm @xl:min-w-[680px]">
                     <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
                       <tr>
-                        <th className="px-5 py-3 sm:px-6">Property / period</th>
-                        <th className="px-4 py-3">Income</th>
-                        <th className="px-4 py-3">Net position</th>
-                        <th className="px-4 py-3">Owner payable</th>
-                        <th className="w-12 px-4 py-3"><span className="sr-only">Open</span></th>
+                        <th scope="col" className="px-5 py-3 sm:px-6">Property / period</th>
+                        <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Income</th>
+                        <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Net position</th>
+                        <th scope="col" className="px-4 py-3">Owner payable</th>
+                        <th scope="col" className="w-12 px-4 py-3"><span className="sr-only">Open</span></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -151,9 +155,14 @@ export default async function OwnerHomePage() {
                             <div className="mt-1 text-xs text-muted-foreground">
                               {period(item)} · {item.currencyCode} · v{item.versionNumber}
                             </div>
+                            <div className="mt-1.5 text-xs text-muted-foreground @xl:hidden">
+                              Income <span data-financial-value className="font-medium text-foreground">{money(item.incomeMinor, item.currencyCode)}</span>
+                              {" · "}
+                              Net <span data-financial-value className="font-medium text-[var(--finance-accent)]">{money(item.netOwnerPositionMinor, item.currencyCode)}</span>
+                            </div>
                           </td>
-                          <td data-financial-value className="px-4 py-4 font-medium">{money(item.incomeMinor, item.currencyCode)}</td>
-                          <td data-financial-value className="px-4 py-4 font-semibold text-[var(--finance-accent)]">{money(item.netOwnerPositionMinor, item.currencyCode)}</td>
+                          <td data-financial-value className="hidden px-4 py-4 font-medium @xl:table-cell">{money(item.incomeMinor, item.currencyCode)}</td>
+                          <td data-financial-value className="hidden px-4 py-4 font-semibold text-[var(--finance-accent)] @xl:table-cell">{money(item.netOwnerPositionMinor, item.currencyCode)}</td>
                           <td data-financial-value className="px-4 py-4 font-medium">{money(item.ownerPayableMinor, item.currencyCode)}</td>
                           <td className="px-4 py-4 text-right">
                             <Link href={`/owner/statements/${item.statementSnapshotId}`} aria-label={`Open statement for ${item.propertyName}`} className="inline-flex text-muted-foreground transition-colors hover:text-primary">

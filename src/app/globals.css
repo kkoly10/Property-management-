@@ -135,6 +135,50 @@
   --radius-xl: calc(var(--radius) * 1.2);
 }
 
+/**
+ * Page gutters that survive a notch.
+ *
+ * `viewport-fit=cover` (src/app/layout.tsx) stops the browser letterboxing the page inside the safe
+ * area and lets it paint to the physical screen edge. That is what gives `env(safe-area-inset-*)`
+ * real values — and it hands us the job the browser used to do. In landscape on a notched phone the
+ * left or right inset is around 44px, so a plain `px-4` would run the first character of every line
+ * under the sensor housing.
+ *
+ * These are ordinary gutters with the inset ADDED, not `max()`-ed: the device inset measures the
+ * distance to the safe boundary, and sitting flush against that boundary is not a margin. On every
+ * screen with no insets — all desktops, phones in portrait — each variable is `0px` and the computed
+ * padding is byte-identical to the `px-*` utility it replaces, which is why swapping them in is not
+ * a visual change.
+ *
+ * They exist as utilities rather than inline arbitrary values because the breakpoints are the whole
+ * problem: a 390x844 phone is 844px wide in landscape, so an inset written only at the base
+ * breakpoint is discarded by `sm:px-6` exactly when the notch appears.
+ */
+@utility gutter-4 {
+  padding-left: calc(1rem + env(safe-area-inset-left));
+  padding-right: calc(1rem + env(safe-area-inset-right));
+}
+
+@utility gutter-5 {
+  padding-left: calc(1.25rem + env(safe-area-inset-left));
+  padding-right: calc(1.25rem + env(safe-area-inset-right));
+}
+
+@utility gutter-6 {
+  padding-left: calc(1.5rem + env(safe-area-inset-left));
+  padding-right: calc(1.5rem + env(safe-area-inset-right));
+}
+
+@utility gutter-7 {
+  padding-left: calc(1.75rem + env(safe-area-inset-left));
+  padding-right: calc(1.75rem + env(safe-area-inset-right));
+}
+
+@utility gutter-8 {
+  padding-left: calc(2rem + env(safe-area-inset-left));
+  padding-right: calc(2rem + env(safe-area-inset-right));
+}
+
 * {
   border-color: var(--border);
 }

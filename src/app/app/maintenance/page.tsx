@@ -182,16 +182,20 @@ export default async function OperatorMaintenancePage() {
         bodyClassName="p-0"
       >
         {workspace.items.length ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+          /* Six columns at 860px left a phone showing only the request title, with the property,
+             the official priority and the work-order state all past the right edge. Narrow
+             containers keep the title, the work-order state and the link, and fold the property and
+             the priority into the title cell so nothing an operator triages on is lost. */
+          <div role="region" aria-label="Maintenance requests, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+            <table className="w-full border-collapse text-left text-sm @xl:min-w-[860px]">
               <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
                 <tr>
-                  <th className="px-5 py-3 sm:px-6">Request</th>
-                  <th className="px-4 py-3">Property</th>
-                  <th className="px-4 py-3">Requested</th>
-                  <th className="px-4 py-3">Official</th>
-                  <th className="px-4 py-3">Work order</th>
-                  <th className="w-12 px-4 py-3"><span className="sr-only">Open</span></th>
+                  <th scope="col" className="px-5 py-3 sm:px-6">Request</th>
+                  <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Property</th>
+                  <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Requested</th>
+                  <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Official</th>
+                  <th scope="col" className="px-4 py-3">Work order</th>
+                  <th scope="col" className="w-12 px-4 py-3"><span className="sr-only">Open</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -202,13 +206,17 @@ export default async function OperatorMaintenancePage() {
                         {item.title}
                       </Link>
                       <p className="mt-1 text-xs text-muted-foreground">{item.publicReference} · {label(item.category)}</p>
+                      {/* Shown only while the Property and Official columns are collapsed, so the
+                          same facts are never announced twice. */}
+                      <p className="mt-1 text-xs text-muted-foreground @xl:hidden">{item.propertyName} · Unit {item.unitCode}</p>
+                      <p className="mt-1 text-xs font-medium text-foreground @xl:hidden">Priority: {label(item.officialPriority)}</p>
                     </td>
-                    <td className="px-4 py-4">
+                    <td className="hidden px-4 py-4 @xl:table-cell">
                       <p className="font-medium">{item.propertyName}</p>
                       <p className="mt-1 text-xs text-muted-foreground">Unit {item.unitCode}</p>
                     </td>
-                    <td className="px-4 py-4 text-muted-foreground">{item.priorityRequested ? label(item.priorityRequested) : "Not set"}</td>
-                    <td className="px-4 py-4">
+                    <td className="hidden px-4 py-4 text-muted-foreground @xl:table-cell">{item.priorityRequested ? label(item.priorityRequested) : "Not set"}</td>
+                    <td className="hidden px-4 py-4 @xl:table-cell">
                       <span className="font-semibold">{label(item.officialPriority)}</span>
                     </td>
                     <td className="px-4 py-4">

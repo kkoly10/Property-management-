@@ -8,6 +8,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { OrganizationSwitcher } from "@/components/app/organization-switcher";
+import { MobileNavigation } from "@/components/app/mobile-navigation";
 import { PrimaryNavigation } from "@/components/app/primary-navigation";
 import { GlobalSearch } from "@/components/app/global-search";
 import { Wordmark } from "@/components/brand/wordmark";
@@ -80,10 +81,14 @@ export function AppShell({
       </aside>
 
       <div className="min-w-0">
+        {/* One row on every screen. It used to stack the wordmark above the search field and then
+            carry the thirteen-section scrolling rail beneath both, which measured 156px on a 390px
+            phone — 18% of an iPhone 14 viewport and 23% of an SE, consumed before any content.
+            Moving navigation to the bottom bar leaves a single 72px row. */}
         <header className="sticky top-0 z-30 border-b bg-card/96 backdrop-blur supports-[backdrop-filter]:bg-card/90">
-          <div className="flex min-h-[4.5rem] flex-col items-stretch gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4 sm:py-0 lg:px-7 xl:px-8">
-            <div className="shrink-0 self-start sm:self-auto lg:hidden">
-              <Wordmark className="max-w-[7.5rem]" />
+          <div className="flex min-h-[4.5rem] items-center gap-3 gutter-4 py-3 sm:gap-4 lg:gutter-7 lg:py-0 xl:gutter-8">
+            <div className="shrink-0 lg:hidden">
+              <Wordmark className="max-w-[6.25rem] sm:max-w-[7.5rem]" />
             </div>
 
             <div className="hidden shrink-0 items-center gap-2 text-sm font-semibold tracking-[-0.01em] text-foreground xl:flex">
@@ -114,12 +119,27 @@ export function AppShell({
             </div>
           </div>
 
-          <div className="border-t lg:hidden">
-            <PrimaryNavigation compact />
-          </div>
         </header>
 
-        <main className="min-w-0 max-w-full px-4 py-6 sm:px-6 lg:px-7 lg:py-7 xl:px-8">{children}</main>
+        <main className="min-w-0 max-w-full gutter-4 py-6 sm:gutter-6 lg:gutter-7 lg:py-7 xl:gutter-8">{children}</main>
+
+        {/* Everything the `lg` sidebar holds — the thirteen sections, the five account destinations
+            and the organization switcher — reaches a phone through here. Below `lg` this is the
+            only operator navigation that exists, which is why it carries the switcher rather than
+            leaving multi-organization operators stranded in whichever context they last used on a
+            desktop. The switcher is built on the server and handed down, so its server action is
+            unchanged; `variant="sheet"` only keeps its test ids distinct from the sidebar copy. */}
+        <MobileNavigation
+          organizationSwitcher={
+            <OrganizationSwitcher
+              organizations={organizations}
+              activeOrganizationId={activeOrganizationId}
+              activeLabel={organizationName}
+              disabled={switcherDisabled}
+              variant="sheet"
+            />
+          }
+        />
       </div>
     </div>
   );

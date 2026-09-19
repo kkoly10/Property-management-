@@ -223,14 +223,16 @@ export default async function PropertyWorkspacePage({
           >
             <div id="units">
               {workspace.units.length ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[680px] border-collapse text-left text-sm">
+                /* Narrow containers keep the unit and its occupancy state, and fold the
+                   specification and the household under the unit code. */
+                <div role="region" aria-label="Units, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+                  <table className="w-full border-collapse text-left text-sm @xl:min-w-[680px]">
                     <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
                       <tr>
-                        <th className="px-5 py-3 sm:px-6">Unit</th>
-                        <th className="px-4 py-3">Details</th>
-                        <th className="px-4 py-3">Household</th>
-                        <th className="px-4 py-3">Status</th>
+                        <th scope="col" className="px-5 py-3 sm:px-6">Unit</th>
+                        <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Details</th>
+                        <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Household</th>
+                        <th scope="col" className="px-4 py-3">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -245,9 +247,13 @@ export default async function PropertyWorkspacePage({
 
                         return (
                           <tr key={unit.id} className="transition-colors hover:bg-[var(--brand-subtle)]">
-                            <td className="px-5 py-4 font-semibold sm:px-6">Unit {unit.unitCode}</td>
-                            <td className="px-4 py-4 text-muted-foreground">{details}</td>
-                            <td className="px-4 py-4">{occupancy?.householdName ?? <span className="text-muted-foreground">Vacant</span>}</td>
+                            <td className="px-5 py-4 font-semibold sm:px-6">
+                              Unit {unit.unitCode}
+                              <p className="mt-1 text-xs font-normal text-muted-foreground @xl:hidden">{details}</p>
+                              <p className="mt-1 text-xs font-normal @xl:hidden">{occupancy?.householdName ?? <span className="text-muted-foreground">Vacant</span>}</p>
+                            </td>
+                            <td className="hidden px-4 py-4 text-muted-foreground @xl:table-cell">{details}</td>
+                            <td className="hidden px-4 py-4 @xl:table-cell">{occupancy?.householdName ?? <span className="text-muted-foreground">Vacant</span>}</td>
                             <td className="px-4 py-4">
                               <Badge variant={occupancy ? "info" : unit.status === "active" ? "success" : "neutral"}>
                                 {occupancy ? "occupied" : unit.status.replaceAll("_", " ")}

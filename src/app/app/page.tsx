@@ -372,15 +372,20 @@ function PropertyPerformance({
       bodyClassName="p-0"
     >
       {dashboard.propertyPerformance.length ? (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[680px] border-collapse text-left text-sm">
+        /* Overdue is the number this table exists for, so it is the one that stays when the
+           container narrows; occupancy and open work fold under the property name. Preview data
+           happens not to populate this table, so nothing in the demo harness exercises it — which is
+           exactly why it is fixed alongside the registers that do, rather than left to be discovered
+           by the first operator with real portfolio data and a phone. */
+        <div role="region" aria-label="Property performance, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+          <table className="w-full border-collapse text-left text-sm @xl:min-w-[680px]">
             <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
               <tr>
-                <th className="px-5 py-3 sm:px-6">Property</th>
-                <th className="px-4 py-3">Occupancy</th>
-                <th className="px-4 py-3">Overdue</th>
-                <th className="px-4 py-3">Open work</th>
-                <th className="w-12 px-4 py-3"><span className="sr-only">Open</span></th>
+                <th scope="col" className="px-5 py-3 sm:px-6">Property</th>
+                <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Occupancy</th>
+                <th scope="col" className="px-4 py-3">Overdue</th>
+                <th scope="col" className="hidden px-4 py-3 @xl:table-cell">Open work</th>
+                <th scope="col" className="w-12 px-4 py-3"><span className="sr-only">Open</span></th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -399,8 +404,12 @@ function PropertyPerformance({
                         {property.propertyName}
                       </Link>
                       <div className="mt-1 text-xs text-muted-foreground">{property.currencyCode}</div>
+                      <div className="mt-1 text-xs text-muted-foreground @xl:hidden">
+                        {propertyRestricted || propertyOccupancy == null ? "Occupancy restricted" : `${propertyOccupancy}% occupied`}
+                        {property.openWorkOrders == null ? "" : ` · ${property.openWorkOrders} open`}
+                      </div>
                     </td>
-                    <td className="px-4 py-4">
+                    <td className="hidden px-4 py-4 @xl:table-cell">
                       {propertyRestricted ? (
                         <span className="text-muted-foreground">Restricted</span>
                       ) : totalUnits === 0 ? (
@@ -423,7 +432,7 @@ function PropertyPerformance({
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-4">
+                    <td className="hidden px-4 py-4 @xl:table-cell">
                       {property.openWorkOrders == null
                         ? <span className="text-muted-foreground">Restricted</span>
                         : <span className="font-medium">{property.openWorkOrders}</span>}

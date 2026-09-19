@@ -19,12 +19,12 @@ import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type NavigationItem = { label: string; href: string; icon: LucideIcon };
-type NavigationGroup = { label: string; items: NavigationItem[] };
+export type NavigationItem = { label: string; href: string; icon: LucideIcon };
+export type NavigationGroup = { label: string; items: NavigationItem[] };
 
-const overview: NavigationItem = { label: "Overview", href: "/app", icon: CircleGauge };
+export const overview: NavigationItem = { label: "Overview", href: "/app", icon: CircleGauge };
 
-const groups: NavigationGroup[] = [
+export const groups: NavigationGroup[] = [
   {
     label: "Portfolio",
     items: [
@@ -59,9 +59,7 @@ const groups: NavigationGroup[] = [
   },
 ];
 
-const mobileItems: NavigationItem[] = [overview, ...groups.flatMap((group) => group.items)];
-
-function isActive(pathname: string, href: string) {
+export function isActive(pathname: string, href: string) {
   return href === "/app" ? pathname === href : pathname.startsWith(href);
 }
 
@@ -69,33 +67,13 @@ function NavigationLink({
   label,
   href,
   icon: Icon,
-  compact = false,
 }: {
   label: string;
   href: string;
   icon: LucideIcon;
-  compact?: boolean;
 }) {
   const pathname = usePathname();
   const active = isActive(pathname, href);
-
-  if (compact) {
-    return (
-      <Link
-        href={href}
-        aria-current={active ? "page" : undefined}
-        className={cn(
-          "flex shrink-0 items-center gap-2 border-b-2 px-3 py-3 text-sm font-medium transition-colors",
-          active
-            ? "border-primary text-foreground"
-            : "border-transparent text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <Icon aria-hidden="true" className="h-4 w-4" />
-        {label}
-      </Link>
-    );
-  }
 
   return (
     <Link
@@ -115,17 +93,7 @@ function NavigationLink({
   );
 }
 
-export function PrimaryNavigation({ compact = false }: { compact?: boolean }) {
-  if (compact) {
-    return (
-      <nav aria-label="Operator navigation" className="overflow-x-auto">
-        <div className="flex min-w-max px-1">
-          {mobileItems.map((item) => <NavigationLink key={item.href} {...item} compact />)}
-        </div>
-      </nav>
-    );
-  }
-
+export function PrimaryNavigation() {
   return (
     <nav aria-label="Primary" className="flex-1 overflow-y-auto px-3 pb-4">
       <div className="mb-4">
