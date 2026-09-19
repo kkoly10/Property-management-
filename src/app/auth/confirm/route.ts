@@ -7,13 +7,13 @@ import { safeRedirectPath } from "@/lib/auth/redirect";
  *
  * ── Why this exists next to /auth/callback rather than replacing it ──────────────────────────────
  *
- * `/auth/callback` handles the PKCE `?code=` exchange and is used by every link Supabase itself
- * redirects through — including the invitation links minted with `generateLink`, which return through
- * GoTrue's own `/auth/v1/verify` endpoint first. That path is untouched.
+ * `/auth/callback` handles the PKCE `?code=` exchange for flows Supabase itself redirects through.
+ * Those exchanges require the originating browser's verifier cookie.
  *
- * The Send Email Auth Hook is different: it hands US a `token_hash` and expects the link in the email
- * to point at an endpoint of ours that redeems it. That is this route. Both exist because they redeem
- * two different things; collapsing them would break one of the two.
+ * Crecy-rendered access mail — invitations, login magic links, signup confirmation and the future Send
+ * Email Auth Hook — carries a `token_hash` instead. It points at this route, which redeems the hash
+ * directly with `verifyOtp`, so the email can be opened safely in a different browser context. Both
+ * routes remain because they redeem different credential types.
  *
  * ── The rules, each of which is a real failure mode ──────────────────────────────────────────────
  *
