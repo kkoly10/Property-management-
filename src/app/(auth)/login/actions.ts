@@ -165,9 +165,9 @@ export async function requestSignInLinkAction(_previousState: ActionState, formD
       idempotencyKey: `signin-link-${userId}-${crypto.randomUUID()}`,
     };
 
-    let delivered = await sendViaResend(message);
+    const delivered = await sendViaResend(message);
     if (!delivered.ok && delivered.retryable) {
-      delivered = await sendViaResend(message);
+      await sendViaResend(message);
     }
     // Deliberately ignore the final result in the browser response. Returning "failed" only for known
     // accounts would reveal account existence.
