@@ -200,6 +200,8 @@ test.describe("indexing policy", () => {
     for (const prefix of ["/app", "/owner", "/platform", "/settings", "/home", "/login", "/signup", "/api"]) {
       expect(body, `${prefix} is not disallowed`).toContain(`Disallow: ${prefix}\n`);
     }
+    expect(body).toContain("Disallow: /l/\n");
+    expect(body).not.toContain("Disallow: /l\n");
     for (const route of ["/product", "/landlords", "/pricing", "/crecy-living", "/security", "/pilot"]) {
       expect(body).not.toContain(`Disallow: ${route}`);
     }
@@ -213,7 +215,7 @@ test.describe("indexing policy", () => {
     for (const route of ["/product", "/landlords", "/pricing", "/crecy-living", "/security", "/pilot", "/legal"]) {
       expect(body, `${route} is missing from the sitemap`).toContain(`${route}<`);
     }
-    for (const route of ["/app", "/settings", "/platform", "/home<"]) {
+    for (const route of ["/app", "/settings", "/platform", "/home<", "/l/"]) {
       expect(body, `${route} should not be in the sitemap`).not.toContain(`${route}<`);
     }
   });

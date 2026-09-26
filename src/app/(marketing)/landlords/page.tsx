@@ -85,7 +85,7 @@ export default function LandlordsPage() {
             </h2>
             <p className="max-w-lg text-base leading-7 text-white/65">
               Crecy is useful even when the renter came from somewhere else. Start with the relationship
-              you already have; public listing and application tools are a separate expansion.
+              you already have, or create an unlisted Crecy page and bring your own traffic to it.
             </p>
           </div>
           <div className="mt-14 divide-y divide-white/15 border-y border-white/15">
@@ -150,12 +150,12 @@ export default function LandlordsPage() {
           <div>
             <p className="text-sm font-semibold text-primary">Current release boundary</p>
             <h2 className="mt-4 max-w-3xl text-[clamp(2.6rem,4.5vw,4.6rem)] font-normal leading-[0.97] tracking-[-0.055em] text-balance">
-              Start with the renter you already found.
+              Bring your own renter. Bring your own traffic.
             </h2>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground">
-              Crecy is not promising marketplace traffic in this release. The self-managing workflow is for
-              a rental you already operate or a renter you found yourself. Shareable Crecy listings,
-              inquiries, tours and applications are the next expansion.
+              Crecy is not promising marketplace traffic in this release. The self-managing workflow works
+              with a renter you already found, and an unlisted shareable page lets you bring prospects from
+              your own channels. Crecy discovery, inquiries, tours and applications remain separate expansion work.
             </p>
           </div>
           <div className="rounded-[1.5rem] border bg-card p-6 sm:p-7">

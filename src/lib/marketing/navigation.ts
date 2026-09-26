@@ -40,6 +40,14 @@ export const PRIVATE_PREFIXES = [
 ];
 
 /**
+ * Public-to-the-link routes that must stay out of search indexing.
+ *
+ * `/l/` intentionally carries the trailing slash. Robots matching is prefix-based, so `/l` would also
+ * swallow the real public `/landlords` page. There is no bare `/l` page; every share URL is `/l/:publicId`.
+ */
+export const UNINDEXED_PUBLIC_PREFIXES = ["/l/"];
+
+/**
  * Prefixes that require a session, enforced in `src/proxy.ts`.
  *
  * This is deliberately a SUBSET of PRIVATE_PREFIXES rather than the same list: `/login`, `/signup` and

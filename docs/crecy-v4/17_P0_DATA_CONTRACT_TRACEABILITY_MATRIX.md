@@ -46,3 +46,13 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 | Capability | Primary persistence | Command/query | Authorization | Required event/tests |
 |---|---|---|---|---|
 | Homeowner acquisition + workspace handoff | existing auth users, organizations, memberships; no new table | existing signup confirmation + `list_operator_organizations` + `selectOrganization` | public marketing/signup; organization choice is revalidated against the signed-in user's live memberships | marketing route/navigation/sitemap/cache tests; signup intent survives new/existing-account email; self-managing creation is preselected; no implicit multi-organization selection |
+
+## Homeowner B1 — shared-listing traceability
+
+| Capability | Primary tables | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Save listing draft | `rental_listings`, `rental_listing_photos`, exact `document_versions` | `SaveRentalListing` | authenticated self-managing workspace + current `property.manage` on exact unit/property | `rental_listing.saved`; stale version, durable retry, cross-unit/unclean photo, outsider, professional-workspace denial |
+| Publish/pause/close | `rental_listings` | `SetRentalListingStatus` | same scoped manager boundary | `rental_listing.status_changed`; no-photo, short-summary, discovery-disabled, paused/closed public denial, replay |
+| Rotate share URL | `rental_listings.public_id` | `RotateRentalListingLink` | same scoped manager boundary | `rental_listing.link_rotated`; old id returns no public DTO; replay returns one new id |
+| Public unlisted listing | sanitized `rental_listings` snapshot + attached clean photo versions | service-only `GetPublicRentalListing` + short-lived server-signed media URLs | anonymous browser receives no table/RPC grant; server exposes published+unlisted DTO only | street/postal absence, unknown/draft/paused/closed id 404/no row, exact photo version, noindex/nofollow |
+| Listing photo lifecycle | existing documents/versions + scan jobs; `rental_listing_photos` attachment | existing upload/finalize/scan commands + listing selection | unit-parent image grant, scanner-clean exact version, same org/property/unit; delivery trigger blocks recipient delivery | MIME/parent rejection, quarantine rejection, direct delivery rejection, document-register exclusion |

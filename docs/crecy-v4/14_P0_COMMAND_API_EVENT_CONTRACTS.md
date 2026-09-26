@@ -692,3 +692,11 @@ screen states, security tests, and traceability approved under FD-HR-001–005.
 ## Homeowner A3/A4 — existing signed rental
 See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
 upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
+
+## Homeowner B1 — shared-listing command contract
+
+- `SaveRentalListing(organizationId, unitId, expectedVersion, details, idempotencyKey)` is self-managing-only, property-scoped, version checked and durably idempotent. It snapshots only approved advertising fields and exact clean photo versions. Saving changes to a live listing returns that record to `draft`; a closed historical listing is never edited, and a later relisting starts a new record. Event: `rental_listing.saved`.
+- `SetRentalListingStatus(organizationId, listingId, expectedVersion, status, idempotencyKey)` permits `published`, `paused`, or terminal `closed`. Publish refuses discoverable visibility and requires a description plus scanner-clean media. Event: `rental_listing.status_changed`.
+- `RotateRentalListingLink(organizationId, listingId, expectedVersion, idempotencyKey)` replaces the public UUID without changing the private listing id. Event: `rental_listing.link_rotated`.
+- `GetPublicRentalListing(publicId)` is service-role-only. It returns a sanitized published/unlisted DTO; the server converts only its explicitly selected scanner-clean photo paths to short-lived signed URLs.
+- `rental_listing_photo` is advertising media. It may not enter `document_deliveries`.

@@ -47,6 +47,7 @@ const SEGMENT_FIXTURES: Record<string, string> = {
   "[statementId]": "preview-statement",
   "[organizationId]": "20000000-0000-4000-8000-000000000002",
   "[documentId]": "preview-document",
+  "[publicId]": "81000000-0000-4000-8000-000000000081",
 };
 
 function collectPageFiles(dir: string, found: string[] = []): string[] {

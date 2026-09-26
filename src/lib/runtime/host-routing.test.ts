@@ -72,6 +72,31 @@ describe("host routing", () => {
     expect(routeForHost("crecyliving.com", "/login")).toEqual({ type: "continue" });
   });
 
+  it("keeps share links on the dedicated rentals host and nowhere else", () => {
+    expect(classifyHost("rent.crecyos.com")).toEqual({ kind: "rentals" });
+    expect(routeForHost("rent.crecyos.com", "/")).toEqual({
+      type: "redirect", location: "https://crecyos.com/landlords", permanent: false,
+    });
+    expect(routeForHost("rent.crecyos.com", "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+      .toEqual({ type: "continue" });
+    expect(routeForHost("crecyos.com", "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+      .toEqual({
+        type: "redirect",
+        location: "https://rent.crecyos.com/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        permanent: false,
+      });
+    expect(routeForHost("app.crecyos.com", "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+      .toEqual({
+        type: "redirect",
+        location: "https://rent.crecyos.com/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        permanent: false,
+      });
+    expect(routeForHost("rent.crecyos.com", "/app")).toEqual({
+      type: "redirect", location: "https://app.crecyos.com/app", permanent: false,
+    });
+    expect(routeForHost("rent.crecyos.com", "/not-a-rental-surface")).toEqual({ type: "reject" });
+  });
+
   it("canonicalizes a marketing path reached on a product host back to marketing", () => {
     expect(routeForHost("app.crecyos.com", "/pricing"))
       .toEqual({ type: "redirect", location: "https://crecyos.com/pricing", permanent: false });
@@ -101,6 +126,17 @@ describe("host routing", () => {
       expect(routeForHost(host, "/"), host).toEqual({ type: "continue" });
       expect(routeForHost(host, "/app"), host).toEqual({ type: "continue" });
     }
+  });
+
+  it("serves a rental share page without constructing a session client and without shared caching", async () => {
+    const response = await proxy(new NextRequest(new URL(
+      "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "https://rent.crecyos.com",
+    )));
+    expect(response.status).toBe(200);
+    expect(created.count).toBe(0);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
   });
 
   it("canonicalizes marketing /login to the app host WITHOUT constructing a session client", async () => {

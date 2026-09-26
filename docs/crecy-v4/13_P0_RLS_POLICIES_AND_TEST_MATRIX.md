@@ -583,6 +583,23 @@ create policy usage_records_admin_read on public.usage_records for select to aut
 create policy billing_invoices_admin_read on public.billing_invoices for select to authenticated using ((select private.has_org_permission(organization_id,'organization.manage')));
 create policy billing_invoice_lines_parent_read on public.billing_invoice_lines for select to authenticated using (exists(select 1 from public.billing_invoices i where i.id=invoice_id));
 
+-- Homeowner shared listings remain operator-private at the base-table layer. Anonymous visitors use
+-- only the sanitized service-role DTO; the host/public UUID grants no database role.
+create policy rental_listings_operator_read on public.rental_listings for select to authenticated using (
+  (select private.has_property_access(property_id,'property.read'))
+  or (select private.has_property_access(property_id,'property.manage'))
+);
+create policy rental_listing_photos_operator_read on public.rental_listing_photos for select to authenticated using (
+  exists (
+    select 1 from public.rental_listings l
+    where l.id=listing_id and l.organization_id=rental_listing_photos.organization_id
+      and (
+        (select private.has_property_access(l.property_id,'property.read'))
+        or (select private.has_property_access(l.property_id,'property.manage'))
+      )
+  )
+);
+
 
 -- Sanitized relationship projections. These views intentionally select a limited column set and filter with relationship helper functions.
 create or replace view reporting.owner_lease_summaries with (security_barrier=true) as
@@ -726,3 +743,14 @@ See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activa
 upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
 
 | HR-L01 | Private saved rental setup | No anon/authenticated table privileges; scoped read/save/activate RPCs require current lease and document permission and exact actor/org/unit. |
+
+## Homeowner B1 — unlisted shared listing
+
+| ID | Boundary | Required proof |
+|---|---|---|
+| HR-L02 | Listing base rows | `rental_listings` and `rental_listing_photos` are unreadable to anon; authenticated reads require effective property read/manage scope; direct business-table writes stay revoked. |
+| HR-L03 | Public projection | `get_public_rental_listing` is service-role only and returns only a published unlisted advertising snapshot. Street, postal, organization, tenant, accounting and private-document fields are absent. |
+| HR-L04 | Listing media | `rental_listing_photo` upload grants require a unit parent and PNG/JPEG MIME; selected versions must be scanner-clean and belong to the exact listing unit/property. |
+| HR-L05 | Recipient isolation | Listing photos are filtered from the operator document register and a database trigger rejects every insertion into `document_deliveries` for listing-photo versions. |
+| HR-L06 | Publication lifecycle | Draft/paused/closed rows do not resolve publicly; publish requires unlisted visibility, summary and at least one clean photo; discoverable publication is rejected. |
+| HR-L07 | Link rotation | Rotating a share UUID makes the old public identifier stop resolving; retry returns the same newly minted identifier. |

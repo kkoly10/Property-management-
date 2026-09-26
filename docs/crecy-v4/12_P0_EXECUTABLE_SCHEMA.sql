@@ -1593,3 +1593,102 @@ alter table public.leases add constraint leases_signed_version_org_fk
   references public.document_versions(organization_id,id) on delete restrict;
 create index leases_signed_version_idx on public.leases(signed_document_version_id)
   where signed_document_version_id is not null;
+
+
+-- FD-HR-002–005 Batch B1: private listing persistence. Public reads are a sanitized server DTO.
+create table public.rental_listings (
+  id uuid primary key default gen_random_uuid(),
+  public_id uuid not null default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  property_id uuid not null references public.properties(id) on delete restrict,
+  unit_id uuid not null references public.units(id) on delete restrict,
+  title text not null check (length(trim(title)) between 1 and 160),
+  summary text not null default '' check (length(summary) <= 3000),
+  rent_amount_minor bigint not null check (rent_amount_minor >= 0 and rent_amount_minor <= 9007199254740991),
+  currency_code char(3) not null check (currency_code in ('USD','CAD','MXN')),
+  available_on date not null,
+  unit_type text, bedrooms numeric(4,1), bathrooms numeric(4,1),
+  locality text, subdivision_code text,
+  country_code char(2) not null check (country_code in ('US','CA','MX')),
+  lease_term_text text not null default '' check (length(lease_term_text) <= 500),
+  pets_text text not null default '' check (length(pets_text) <= 500),
+  utilities_text text not null default '' check (length(utilities_text) <= 1000),
+  parking_text text not null default '' check (length(parking_text) <= 1000),
+  status text not null default 'draft' check (status in ('draft','published','paused','closed')),
+  visibility text not null default 'unlisted' check (visibility in ('unlisted','discoverable')),
+  published_at timestamptz, closed_at timestamptz,
+  version integer not null default 1 check (version > 0),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete restrict,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references auth.users(id) on delete restrict,
+  unique(public_id), unique(organization_id,id),
+  foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict,
+  foreign key (organization_id,property_id,unit_id) references public.units(organization_id,property_id,id) on delete restrict,
+  check (bedrooms is null or bedrooms >= 0),
+  check (bathrooms is null or bathrooms >= 0)
+);
+create index rental_listings_property_idx on public.rental_listings(property_id,status);
+create index rental_listings_public_status_idx on public.rental_listings(public_id,status);
+create unique index rental_listings_open_unit_unique on public.rental_listings(organization_id,unit_id) where status<>'closed';
+
+create table public.rental_listing_photos (
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  listing_id uuid not null,
+  document_version_id uuid not null,
+  sort_order smallint not null check (sort_order between 0 and 19),
+  alt_text text not null default '' check (length(alt_text) <= 240),
+  created_at timestamptz not null default now(),
+  primary key(listing_id,document_version_id),
+  unique(listing_id,sort_order),
+  unique(organization_id,listing_id,document_version_id),
+  foreign key (organization_id,listing_id) references public.rental_listings(organization_id,id) on delete cascade,
+  foreign key (organization_id,document_version_id) references public.document_versions(organization_id,id) on delete restrict
+);
+create index rental_listing_photos_version_idx on public.rental_listing_photos(document_version_id);
+alter table public.rental_listings enable row level security;
+alter table public.rental_listing_photos enable row level security;
+grant select on public.rental_listings,public.rental_listing_photos to authenticated;
+revoke insert,update,delete on public.rental_listings,public.rental_listing_photos from anon,authenticated;
+revoke all on public.rental_listings,public.rental_listing_photos from anon;
+
+-- Listing-photo uploads are unit-scoped images even when the caller bypasses the HTTP validator.
+create or replace function private.enforce_rental_listing_photo_grant()
+returns trigger language plpgsql set search_path='' as $$
+begin
+  if new.document_type='rental_listing_photo' then
+    if new.parent_resource_type<>'unit' then
+      raise exception using errcode='23514',message='LISTING_PHOTO_UNIT_REQUIRED';
+    end if;
+    if new.requested_mime_type not in ('image/png','image/jpeg') then
+      raise exception using errcode='23514',message='LISTING_PHOTO_MIME_REQUIRED';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke all on function private.enforce_rental_listing_photo_grant() from public,anon,authenticated;
+create trigger enforce_rental_listing_photo_grant
+before insert on private.upload_grants
+for each row execute function private.enforce_rental_listing_photo_grant();
+
+-- Listing media is advertising media, not a recipient-facing operational document.
+create or replace function private.prevent_rental_listing_photo_delivery()
+returns trigger language plpgsql set search_path='' as $$
+begin
+  if exists (
+    select 1 from public.document_versions dv
+    join public.documents d on d.id=dv.document_id and d.organization_id=dv.organization_id
+    where dv.id=new.document_version_id
+      and dv.organization_id=new.organization_id
+      and d.document_type='rental_listing_photo'
+  ) then
+    raise exception using errcode='23514',message='LISTING_PHOTO_NOT_DELIVERABLE';
+  end if;
+  return new;
+end;
+$$;
+revoke all on function private.prevent_rental_listing_photo_delivery() from public,anon,authenticated;
+create trigger prevent_rental_listing_photo_delivery
+before insert on public.document_deliveries
+for each row execute function private.prevent_rental_listing_photo_delivery();

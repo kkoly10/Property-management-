@@ -395,3 +395,13 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
   a new self-managing workspace. It never selects one organization merely because several exist.
 - **Creation handoff:** `/onboarding/organization?path=self_managing` preselects the self-managing
   customer path but keeps the choice visible and uses the same legal-consent boundary as every workspace.
+
+## Homeowner B1 — landlord-shared listing
+
+- **Management route:** `/app/rentals/:unitId/listing` belongs to the active self-managing workspace. Saving creates/updates a private draft; it never publishes implicitly.
+- **Media:** the landlord uploads PNG/JPEG photos through the existing private document upload + malware-scan pipeline. Pending/rejected photos cannot be selected for publication.
+- **Publish state:** `draft → published ↔ paused → closed`; editing a published/paused listing saves the changed snapshot back as `draft`. Closed is terminal for that record, while a later relisting creates a fresh draft/public id. Publish remains `unlisted`; marketplace discovery is not enabled.
+- **Share URL:** `rent.crecyos.com/l/:publicId`. “Unlisted” means absent from Crecy discovery and search indexing, not secret; anyone holding the URL can view it.
+- **Public content:** title, summary, rent, availability, space snapshot, coarse city/region/country, lease/pets/utilities/parking and selected clean photos. Street/postal and management/tenant records stay private.
+- **Recovery:** stale edits return a version conflict; uncertain save/publish/pause/close/link-rotation operations retain and retry the same body/idempotency key while editing is locked; share-link rotation invalidates the old public id.
+- **B1 boundary:** no Crecy inquiry, tour, application, screening or marketplace-search flow is claimed by this screen.
