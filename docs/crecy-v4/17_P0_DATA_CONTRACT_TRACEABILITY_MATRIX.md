@@ -39,3 +39,10 @@ screen states, security tests, and traceability approved under FD-HR-001–005.
 ## Homeowner A3/A4 — existing signed rental
 See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
 upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
+
+
+## Homeowner public-entry trace — September 26, 2026
+
+| Capability | Primary persistence | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Homeowner acquisition + workspace handoff | existing auth users, organizations, memberships; no new table | existing signup confirmation + `list_operator_organizations` + `selectOrganization` | public marketing/signup; organization choice is revalidated against the signed-in user's live memberships | marketing route/navigation/sitemap/cache tests; signup intent survives new/existing-account email; self-managing creation is preselected; no implicit multi-organization selection |

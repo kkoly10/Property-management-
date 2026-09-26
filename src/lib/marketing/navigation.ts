@@ -6,6 +6,7 @@ export type MarketingRoute = { href: string; label: string; description: string 
 
 export const MARKETING_ROUTES: MarketingRoute[] = [
   { href: "/product", label: "Product", description: "How Crecy handles portfolio, leasing, rent, maintenance, documents and owner visibility." },
+  { href: "/landlords", label: "Landlords", description: "A simpler Crecy workspace for people who manage their own home, basement, room or rental." },
   { href: "/pricing", label: "Pricing", description: "Plans, included units and payment disclosure for the United States, Canada and Mexico." },
   { href: "/crecy-living", label: "Crecy Living", description: "The resident experience: balance, payments, receipts, maintenance and documents." },
   { href: "/security", label: "Security", description: "How Crecy isolates tenants, scopes access and records what happened." },

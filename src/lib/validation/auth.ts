@@ -3,6 +3,7 @@ import { z } from "zod";
 export const signupSchema = z.object({
   email: z.email("Enter a valid email address."),
   password: z.string().min(10, "Use at least 10 characters."),
+  customerPath: z.enum(["property_manager", "self_managing"]).default("property_manager"),
 });
 
 export const loginSchema = z.object({

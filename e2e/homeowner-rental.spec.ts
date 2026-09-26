@@ -25,3 +25,19 @@ test("the homeowner empty state links to setup without publishing a listing", as
   await expect(page).toHaveURL(/\/app\/rentals\/new$/);
   await expect(page.getByText("Your address stays private", { exact: false })).toBeVisible();
 });
+
+test("landlord entry never guesses a workspace in preview mode", async ({ page }) => {
+  await page.goto("/onboarding/landlord");
+  await expect(page.getByRole("heading", { name: "Continue to your rental workspace" })).toBeVisible();
+  await expect(page.getByText("Landlord entry preview")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Create self-managing workspace" })).toHaveAttribute(
+    "href",
+    "/onboarding/organization?path=self_managing",
+  );
+});
+
+test("landlord onboarding preselects the self-managing path", async ({ page }) => {
+  await page.goto("/onboarding/organization?path=self_managing");
+  await expect(page.getByRole("heading", { name: "Create your rental workspace" })).toBeVisible();
+  await expect(page.locator("#customerPath")).toHaveValue("self_managing");
+});

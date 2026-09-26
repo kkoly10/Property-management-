@@ -11,10 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { initialActionState } from "@/lib/actions/state";
 
-export function SignupForm() {
+export function SignupForm({ customerPath = "property_manager" }: { customerPath?: "property_manager" | "self_managing" }) {
   const [state, action] = useActionState(signupAction, initialActionState);
   return (
     <form action={action} className="space-y-5" noValidate>
+      <input type="hidden" name="customerPath" value={customerPath} />
       {state.status === "error" ? (
         <Alert variant="destructive">
           <AlertCircle aria-hidden="true" className="h-5 w-5" />
@@ -23,8 +24,16 @@ export function SignupForm() {
         </Alert>
       ) : null}
       <div>
-        <Label htmlFor="email">Work email</Label>
-        <Input id="email" name="email" type="email" autoComplete="email" className="mt-2" placeholder="you@company.com" required />
+        <Label htmlFor="email">{customerPath === "self_managing" ? "Email" : "Work email"}</Label>
+        <Input
+          id="email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          className="mt-2"
+          placeholder={customerPath === "self_managing" ? "you@example.com" : "you@company.com"}
+          required
+        />
         <FieldError messages={state.fieldErrors?.email} />
       </div>
       <div>
@@ -33,7 +42,15 @@ export function SignupForm() {
         <FieldError messages={state.fieldErrors?.password} />
       </div>
       <SubmitButton className="w-full">Create account</SubmitButton>
-      <p className="text-center text-sm text-muted-foreground">Already have access? <Link href="/login" className="font-semibold text-primary hover:underline">Sign in</Link></p>
+      <p className="text-center text-sm text-muted-foreground">
+        Already have access?{" "}
+        <Link
+          href={customerPath === "self_managing" ? "/login?next=%2Fonboarding%2Flandlord" : "/login"}
+          className="font-semibold text-primary hover:underline"
+        >
+          Sign in
+        </Link>
+      </p>
     </form>
   );
 }

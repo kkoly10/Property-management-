@@ -382,3 +382,16 @@ screen states, security tests, and traceability approved under FD-HR-001–005.
 ## Homeowner A3/A4 — existing signed rental
 See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
 upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
+
+
+## Homeowner public entry — September 26, 2026
+
+- **Public route:** `/landlords` explains the self-managing workflow without promising listing traffic,
+  screening, legal certification, or marketplace availability.
+- **Signup intent:** `/signup?path=self_managing` changes presentation and the post-auth destination only.
+  The query value grants no permission and creates no organization.
+- **Authenticated resolver:** `/onboarding/landlord` enters an already-active self-managing workspace,
+  offers explicit selection among the caller's existing self-managing memberships, or offers creation of
+  a new self-managing workspace. It never selects one organization merely because several exist.
+- **Creation handoff:** `/onboarding/organization?path=self_managing` preselects the self-managing
+  customer path but keeps the choice visible and uses the same legal-consent boundary as every workspace.

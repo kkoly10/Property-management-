@@ -15,6 +15,17 @@ import { originForAudience } from "@/lib/runtime/host";
 
 const SIGNUP_SUCCESS_PATH = "/signup?check_email=1";
 
+function onboardingDestination(customerPath: "property_manager" | "self_managing", existingAccount = false) {
+  if (customerPath === "self_managing") return "/onboarding/landlord";
+  return existingAccount ? "/app" : "/onboarding/organization";
+}
+
+function signupSuccessPath(customerPath: "property_manager" | "self_managing") {
+  return customerPath === "self_managing"
+    ? "/signup?check_email=1&path=self_managing"
+    : SIGNUP_SUCCESS_PATH;
+}
+
 function authErrorCode(error: unknown): string {
   if (!error || typeof error !== "object" || !("code" in error)) return "";
   const code = (error as { code?: unknown }).code;
@@ -123,7 +134,11 @@ async function sendAuthLink(input: {
 }
 
 export async function signupAction(_previousState: ActionState, formData: FormData): Promise<ActionState> {
-  const result = signupSchema.safeParse({ email: formData.get("email"), password: formData.get("password") });
+  const result = signupSchema.safeParse({
+    email: formData.get("email"),
+    password: formData.get("password"),
+    customerPath: formData.get("customerPath") ?? undefined,
+  });
 
   if (!result.success) {
     return { status: "error", message: "Check the highlighted fields.", fieldErrors: result.error.flatten().fieldErrors };
@@ -156,14 +171,14 @@ export async function signupAction(_previousState: ActionState, formData: FormDa
       const tokenHash = signIn.data?.properties?.hashed_token;
       const userId = signIn.data?.user?.id;
       if (!signIn.error && isPlausibleTokenHash(tokenHash) && userId) {
-        // /app is the canonical existing-operator landing point. Its layout redirects a signed-in user
-        // with no membership to /onboarding/organization, while an onboarded user reaches their
-        // workspace.
+        // Preserve the acquisition intent without creating or selecting an organization implicitly.
+        // Professional signups return to /app; a self-managing signup lands on the landlord resolver,
+        // which either enters an explicitly selected rental workspace or offers workspace creation.
         await sendAuthLink({
           email: result.data.email,
           actionType: "magiclink",
           tokenHash,
-          next: "/app",
+          next: onboardingDestination(result.data.customerPath, true),
           idempotencyKey: `signup-existing-${userId}`,
         });
       }
@@ -182,7 +197,7 @@ export async function signupAction(_previousState: ActionState, formData: FormDa
         email: result.data.email,
         actionType: "signup",
         tokenHash,
-        next: "/onboarding/organization",
+        next: onboardingDestination(result.data.customerPath),
         idempotencyKey: `signup-${userId}`,
       });
 
@@ -198,5 +213,5 @@ export async function signupAction(_previousState: ActionState, formData: FormDa
     return signupFailure("Unable to create the account right now. Please try again.");
   }
 
-  redirect(SIGNUP_SUCCESS_PATH);
+  redirect(signupSuccessPath(result.data.customerPath));
 }
