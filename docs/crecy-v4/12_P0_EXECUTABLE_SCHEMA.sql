@@ -1560,3 +1560,36 @@ grant select on public.profiles,public.organizations,public.operating_entities,p
 revoke all on public.owner_remittance_records from public,anon,authenticated;
 
 commit;
+
+
+-- ADR-HR-2026-09-25 A3/A4 persistence; implementation contracts in HOMEOWNER_EXISTING_RENTAL_CONTRACT.md.
+create table private.homeowner_lease_setups (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  unit_id uuid not null,
+  actor_user_id uuid not null references auth.users(id) on delete restrict,
+  revision integer not null check (revision > 0),
+  draft jsonb not null check (jsonb_typeof(draft)='object' and pg_column_size(draft)<=32768),
+  status text not null default 'draft' check (status in ('draft','activated')),
+  last_save_key uuid not null,
+  last_save_hash text not null,
+  result jsonb,
+  activated_revision integer,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (organization_id,actor_user_id,unit_id),
+  foreign key (organization_id,unit_id) references public.units(organization_id,id) on delete restrict,
+  check ((status='draft' and result is null and activated_revision is null)
+    or (status='activated' and result is not null and activated_revision=revision))
+);
+alter table private.homeowner_lease_setups enable row level security;
+revoke all on private.homeowner_lease_setups from public,anon,authenticated;
+create index homeowner_lease_setup_unit_idx on private.homeowner_lease_setups(unit_id);
+create index homeowner_lease_setup_actor_idx on private.homeowner_lease_setups(actor_user_id);
+
+alter table public.leases add column if not exists signed_document_version_id uuid;
+alter table public.leases add constraint leases_signed_version_org_fk
+  foreign key (organization_id,signed_document_version_id)
+  references public.document_versions(organization_id,id) on delete restrict;
+create index leases_signed_version_idx on public.leases(signed_document_version_id)
+  where signed_document_version_id is not null;

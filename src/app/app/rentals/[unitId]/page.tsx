@@ -30,7 +30,7 @@ export default async function RentalPage({ params }: { params: Promise<{ unitId:
       <p className="mt-2 text-sm text-muted-foreground">Private rental record · {property.time_zone}</p></header>
     <section className="rounded-xl border bg-card p-6"><h2 className="text-xl font-semibold">{occupied ? "Manage your rental" : "Do you already have a signed agreement?"}</h2>
       <p className="mt-3 leading-7 text-muted-foreground">{occupied ? "Your existing renter relationship is connected to the management tools." : "Record the agreement and renter through Crecy’s existing tenancy workflow. You will review the opening balance and first rent charge before activation."}</p>
-      <div className="mt-5 flex flex-wrap gap-3">{preview ? <Button disabled>Connect your workspace to continue</Button> : <><Button asChild><Link href={occupied ? "/app/residents" : `/app/leases/record?propertyId=${property.id}&unitId=${unit.id}`}>{occupied ? "View renters and invitations" : "Add my existing renter"}</Link></Button>
+      <div className="mt-5 flex flex-wrap gap-3">{preview ? <Button disabled>Connect your workspace to continue</Button> : <><Button asChild><Link href={occupied ? "/app/residents" : `/app/rentals/${unit.id}/setup`}>{occupied ? "View renters and invitations" : "Add my existing renter"}</Link></Button>
         <Button variant="outline" asChild><Link href={`/app/properties/${property.id}`}>Property details</Link></Button></>}</div>
       {!occupied && <p className="mt-4 text-sm text-muted-foreground">Not signed yet? Your space is saved. Listing and new-agreement intake are not enabled in this release.</p>}
     </section>

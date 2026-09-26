@@ -719,3 +719,10 @@ projection or direct authenticated write is added. `create_homeowner_rental` ind
 requires active, unscoped property-management permission in the explicit self-managing
 organization. See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` and the executable negative
 cases in `scripts/validate-homeowner-rental.mjs`.
+
+
+## Homeowner A3/A4 — existing signed rental
+See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
+upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
+
+| HR-L01 | Private saved rental setup | No anon/authenticated table privileges; scoped read/save/activate RPCs require current lease and document permission and exact actor/org/unit. |

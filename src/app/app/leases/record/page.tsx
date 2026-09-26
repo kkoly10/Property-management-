@@ -1,14 +1,21 @@
+import { redirect } from "next/navigation";
+import { z } from "zod";
 import Link from "next/link";
 import { ArrowLeft, CircleAlert, FileSignature } from "lucide-react";
 import { ExistingLeaseForm } from "@/app/app/leases/record/existing-lease-form";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getExistingLeaseOptions } from "@/lib/data/leasing";
-import { getActiveOrganizationId } from "@/lib/organization/context";
+import { getActiveOrganizationId, getOrganizationContext } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
 export default async function RecordExistingLeasePage({ searchParams }: { searchParams: Promise<{ propertyId?: string; unitId?: string }> }) {
+  const context = await getOrganizationContext();
+  if (context.state === "active" && context.active.customerPath === "self_managing") {
+    const target = await searchParams;
+    redirect(target.unitId && z.uuid().safeParse(target.unitId).success ? `/app/rentals/${target.unitId}/setup` : "/app/rentals");
+  }
   const organizationId = await getActiveOrganizationId();
   const [options, query] = await Promise.all([getExistingLeaseOptions(organizationId), searchParams]);
   return (

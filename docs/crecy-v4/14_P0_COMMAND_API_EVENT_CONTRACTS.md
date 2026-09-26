@@ -687,3 +687,8 @@ Store the exact command lifecycle in `private.idempotency_records`: `{organizati
 
 See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` for the additive command, persistence,
 screen states, security tests, and traceability approved under FD-HR-001–005.
+
+
+## Homeowner A3/A4 — existing signed rental
+See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
+upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.

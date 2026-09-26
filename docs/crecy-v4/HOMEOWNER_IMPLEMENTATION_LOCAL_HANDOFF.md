@@ -1,5 +1,9 @@
 # Homeowner implementation — local A1/A2 handoff
 
+> 2026-09-26 continuation: the signed-rental A3/A4 implementation is now recorded in
+> `HOMEOWNER_SIGNED_RENTAL_LOCAL_HANDOFF.md`. The original checkpoint below remains historical.
+
+
 ## Checkout and release boundary
 Worktree: `/Users/komlankouhikocrecyolympe/Developer/crecy-homeowner-rental`.
 Branch: `feat/homeowner-rental-batch-a`.

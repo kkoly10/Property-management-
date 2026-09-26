@@ -301,8 +301,15 @@ export async function runRecurringChargeGeneration(
   supabase: Client,
   input: { limit: number },
 ): Promise<JobOutcome> {
+  const evaluatedAt = new Date().toISOString();
+  const { data: started, error: startError } = await supabase.rpc("start_due_homeowner_tenancies", {
+    p_at: evaluatedAt, p_limit: input.limit,
+  });
+  if (startError || !started) {
+    return { ok: false, status: 502, error: "Scheduled homeowner rentals could not be started. No charge batch was attempted." };
+  }
   const { data: due, error: dueError } = await supabase.rpc("list_due_charge_schedule_batches", {
-    p_at: new Date().toISOString(),
+    p_at: evaluatedAt,
     p_limit: input.limit,
   });
   if (dueError || !due) {
@@ -346,6 +353,8 @@ export async function runRecurringChargeGeneration(
       evaluatedAt: evaluated.evaluatedAt,
       zonesDue: batches.length,
       generatedCharges: generated,
+      startedHomeownerTenancies: (started as { started?: number }).started ?? 0,
+      tenancyStartLimitReached: (started as { limitReached?: boolean }).limitReached === true,
       replayedBatches: replayed,
       failedBatches: failures,
       invalidTimeZones: evaluated.invalidTimeZones ?? [],
