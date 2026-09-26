@@ -681,3 +681,9 @@ Provider events cannot move a terminal state backward without an explicit correc
 ## 8. Idempotency persistence
 
 Store the exact command lifecycle in `private.idempotency_records`: `{organization_id, actor_user_id, route, idempotency_key, request_hash, state, response_status, response_body, resource_type, resource_id, created_at, completed_at, expires_at}`. Same key + same request returns prior result; same key + different request returns `IDEMPOTENCY_CONFLICT`.
+
+
+## Homeowner expansion — September 25, 2026
+
+See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` for the additive command, persistence,
+screen states, security tests, and traceability approved under FD-HR-001–005.

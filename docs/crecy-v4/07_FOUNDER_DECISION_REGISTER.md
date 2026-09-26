@@ -97,3 +97,19 @@ The following do not block coding or staging. They block only the affected produ
 ## G. Change control
 
 A change to tenancy, ledger, permissions, connected-account responsibility, price/entitlement, country posture, or P0 scope requires a dated ADR and migration/rollout impact assessment.
+
+## H. Homeowner/rental expansion — approved September 25, 2026
+
+See `ADR_HR_2026_09_25_HOMEOWNER_RENTALS.md`. This is a narrow dated extension, not
+retroactive removal of the historical pilot exclusions or launch certification.
+
+| ID | Approved decision |
+|---|---|
+| FD-HR-001 | Simplified self-managing presentation inside the existing operator workspace; organization-scoped, never a new global authorization role. |
+| FD-HR-002 | Add `rent.crecyos.com` for shared/public rental listings and prospective renters; all FD-037 existing domains retain their purposes. |
+| FD-HR-003 | Prioritize existing-renter management and landlord-shared links without Crecy supplying traffic or promising leads. |
+| FD-HR-004 | Permit listing/inquiry/tour/application/signing integration as the next expansion; discovery remains later. This narrowly supersedes FD-006's public-acquisition exclusion, not other marketplace/vendor/rating exclusions. |
+| FD-HR-005 | Reuse the existing tenancy, financial, document and resident foundations; all unrelated legal, provider, pricing, country and permission gates remain binding. |
+
+Implementation remains local until explicit release approval. A public domain selection does
+not authorize DNS changes, deployment, production migrations, real messages, or charges.

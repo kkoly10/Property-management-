@@ -40,12 +40,14 @@ export function AppShell({
   organizations,
   activeOrganizationId,
   switcherDisabled,
+  experience = "property_manager",
   children,
 }: {
   organizationName: string;
   organizations: OperatorOrganization[];
   activeOrganizationId: string | null;
   switcherDisabled?: boolean;
+  experience?: "self_managing" | "property_manager";
   children: React.ReactNode;
 }) {
   return (
@@ -63,7 +65,7 @@ export function AppShell({
         />
 
         <div className="flex min-h-0 flex-1 flex-col pt-4">
-          <PrimaryNavigation />
+          <PrimaryNavigation experience={experience} />
         </div>
 
         <div className="border-t px-3 py-3">
@@ -93,7 +95,7 @@ export function AppShell({
 
             <div className="hidden shrink-0 items-center gap-2 text-sm font-semibold tracking-[-0.01em] text-foreground xl:flex">
               <LayoutDashboard aria-hidden="true" className="h-4 w-4 text-primary" />
-              <span>Operator Dashboard</span>
+              <span>{experience === "self_managing" ? "My rental workspace" : "Operator Dashboard"}</span>
             </div>
 
             <div className="min-w-0 flex-1">
@@ -130,6 +132,7 @@ export function AppShell({
             desktop. The switcher is built on the server and handed down, so its server action is
             unchanged; `variant="sheet"` only keeps its test ids distinct from the sidebar copy. */}
         <MobileNavigation
+          experience={experience}
           organizationSwitcher={
             <OrganizationSwitcher
               organizations={organizations}

@@ -28,3 +28,9 @@
 ## Completion rule
 
 Codex or Claude must update this matrix when any command, table, screen, or event is added. Missing traceability is a release-blocking specification defect.
+
+
+## Homeowner expansion — September 25, 2026
+
+See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` for the additive command, persistence,
+screen states, security tests, and traceability approved under FD-HR-001–005.

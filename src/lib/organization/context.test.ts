@@ -43,8 +43,8 @@ describe("normalizeOperatorOrganizations", () => {
         { organizationId: "b" },
       ],
     })).toEqual([
-      { organizationId: "a", displayName: "Atlas", slug: "atlas", roleCode: "org_owner" },
-      { organizationId: "b", displayName: "Untitled organization", slug: "", roleCode: "" },
+      { organizationId: "a", displayName: "Atlas", slug: "atlas", roleCode: "org_owner", customerPath: "property_manager" },
+      { organizationId: "b", displayName: "Untitled organization", slug: "", roleCode: "", customerPath: "property_manager" },
     ]);
   });
 

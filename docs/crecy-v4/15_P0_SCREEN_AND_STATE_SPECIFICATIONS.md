@@ -371,3 +371,9 @@ For each P0 journey test:
 - Suppressible categories are exactly the non-NULL values of `private.notification_template_category`: payments, maintenance, messages, documents, announcements. Access and security mail (invitations) maps to a NULL category, is never suppressible, and never carries a `List-Unsubscribe` header, because opting out of the message that grants access would leave the recipient unable to accept an invitation. Preference surfaces build their toggles from that category list rather than restating it, so no toggle for access mail can exist.
 - `List-Unsubscribe` is offered only for category mail AND only where the recipient's own portal is known, at that audience's canonical origin. Where a template's recipient may be more than one audience the header is withheld rather than guessed: a link to a portal the recipient has no account on fails at the sign-in wall instead of at a 404, which is not an improvement.
 - Relationship users never receive raw operator tables when a sanitized projection is specified. Owner lease/maintenance and vendor assignment pages use the v4.1 reporting projections.
+
+
+## Homeowner expansion — September 25, 2026
+
+See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` for the additive command, persistence,
+screen states, security tests, and traceability approved under FD-HR-001–005.

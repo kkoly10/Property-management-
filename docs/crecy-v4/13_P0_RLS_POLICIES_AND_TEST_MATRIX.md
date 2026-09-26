@@ -710,3 +710,12 @@ Uploads use a server-created upload grant containing organization, parent resour
 Use pgTAP or SQL integration tests in CI plus authenticated Supabase client tests. Every test creates at least two organizations, two properties per organization, and each relationship role. Tests must use actual JWT/session contexts, not only call helper functions directly.
 
 No RLS phase is complete until negative tests pass. A successful read test alone is insufficient.
+
+
+## Homeowner expansion — September 25, 2026
+
+`units.rental_details` uses the existing unit SELECT policy and grants. No public listing
+projection or direct authenticated write is added. `create_homeowner_rental` independently
+requires active, unscoped property-management permission in the explicit self-managing
+organization. See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` and the executable negative
+cases in `scripts/validate-homeowner-rental.mjs`.

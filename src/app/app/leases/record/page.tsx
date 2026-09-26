@@ -8,7 +8,7 @@ import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
-export default async function RecordExistingLeasePage({ searchParams }: { searchParams: Promise<{ propertyId?: string }> }) {
+export default async function RecordExistingLeasePage({ searchParams }: { searchParams: Promise<{ propertyId?: string; unitId?: string }> }) {
   const organizationId = await getActiveOrganizationId();
   const [options, query] = await Promise.all([getExistingLeaseOptions(organizationId), searchParams]);
   return (
@@ -18,7 +18,7 @@ export default async function RecordExistingLeasePage({ searchParams }: { search
       {options.mode === "setup" ? <Alert variant="info"><CircleAlert className="h-5 w-5" /><AlertTitle>Workflow preview</AlertTitle><AlertDescription>Connect Supabase to activate the sample tenancy. Draft fields still demonstrate the complete operator flow.</AlertDescription></Alert> : null}
       {options.mode === "error" ? <Alert variant="destructive"><CircleAlert className="h-5 w-5" /><AlertTitle>Lease options unavailable</AlertTitle><AlertDescription>Refresh and try again. Request {options.requestId}.</AlertDescription></Alert> : null}
       {options.mode === "ready" && !options.properties.length ? <Alert><CircleAlert className="h-5 w-5" /><AlertTitle>Create a property first</AlertTitle><AlertDescription>The lease workflow needs an active property, unit, and scanned-clean signed document.</AlertDescription></Alert> : null}
-      <ExistingLeaseForm properties={options.properties} units={options.units} documents={options.documents} initialPropertyId={query.propertyId} disabled={options.mode !== "ready" || !options.properties.length} />
+      <ExistingLeaseForm properties={options.properties} units={options.units} documents={options.documents} initialPropertyId={query.propertyId} initialUnitId={query.unitId} disabled={options.mode !== "ready" || !options.properties.length} />
     </div>
   );
 }

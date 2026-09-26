@@ -269,6 +269,9 @@ create table public.units (
   bedrooms numeric(4,1) check (bedrooms is null or bedrooms >= 0),
   bathrooms numeric(4,1) check (bathrooms is null or bathrooms >= 0),
   square_feet integer check (square_feet is null or square_feet >= 0),
+  -- ADR-HR-2026-09-25: private descriptors; existing unit RLS applies.
+  rental_details jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(rental_details)='object' and pg_column_size(rental_details)<=8192),
   operational_status public.unit_operational_status not null default 'active',
   archived_at timestamptz,
   created_at timestamptz not null default now(),

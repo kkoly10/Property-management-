@@ -1,3 +1,5 @@
+import { RentalOverview } from "@/components/app/rental-overview";
+import { getRentalWorkspace } from "@/lib/data/homeowner-rentals";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -24,7 +26,7 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { parseDashboardFilters, type DashboardFilters } from "@/lib/dashboard-filters";
 import { getDashboardState, type DashboardState } from "@/lib/data/dashboard";
-import { getActiveOrganizationId } from "@/lib/organization/context";
+import { getActiveOrganizationId, getOrganizationContext } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +69,10 @@ function workspaceHref(path: string, filters: DashboardFilters) {
 }
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  const context = await getOrganizationContext();
+  if (context.state === "active" && context.active.customerPath === "self_managing") {
+    return <RentalOverview workspace={await getRentalWorkspace()} />;
+  }
   const parsed = parseDashboardFilters(await searchParams);
   const organizationId = await getActiveOrganizationId();
   const dashboard = await getDashboardState(organizationId, parsed.filters);

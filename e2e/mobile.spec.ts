@@ -33,6 +33,7 @@ const ROUTE_FIXTURES: Record<string, string> = {
   "/app/owner-statements/[ownerEntityId]": "d1000000-0000-4000-8000-000000000001",
 };
 const SEGMENT_FIXTURES: Record<string, string> = {
+  "[unitId]": "80000000-0000-4000-8000-000000000008",
   "[importJobId]": "preview-import",
   "[requestId]": "a0000000-0000-4000-8000-000000000001",
   "[conversationId]": "f0000000-0000-4000-8000-000000000001",

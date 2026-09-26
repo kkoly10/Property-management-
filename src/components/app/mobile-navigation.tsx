@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { groups, isActive, overview, type NavigationItem } from "@/components/app/primary-navigation";
+import { isActive, overview, navigationFor, type WorkspaceExperience, type NavigationItem } from "@/components/app/primary-navigation";
 import { cn } from "@/lib/utils";
 
 /**
@@ -72,18 +72,18 @@ const UTILITIES: { label: string; href: string; icon: LucideIcon }[] = [
   { label: "Help and security", href: "/security", icon: CircleHelp },
 ];
 
-const SECONDARY = groups
-  .map((group) => ({
-    label: group.label,
-    items: group.items.filter((item) => !PRIMARY.some((primary) => primary.href === item.href)),
-  }))
-  .filter((group) => group.items.length > 0);
-
-export function MobileNavigation({ organizationSwitcher }: { organizationSwitcher?: React.ReactNode }) {
+export function MobileNavigation({ organizationSwitcher, experience = "property_manager" }: { organizationSwitcher?: React.ReactNode; experience?: WorkspaceExperience }) {
+  const navigation = navigationFor(experience);
+  const primary = experience === "self_managing"
+    ? [navigation.overview, ...navigation.groups[0].items.filter((item) => ["/app/rentals", "/app/payments", "/app/maintenance"].includes(item.href))]
+    : PRIMARY;
+  const secondary = navigation.groups.map((group) => ({ ...group,
+    items: group.items.filter((item) => !primary.some((candidate) => candidate.href === item.href)),
+  })).filter((group) => group.items.length > 0);
   const pathname = usePathname();
 
-  const activePrimary = PRIMARY.find((item) => isActive(pathname, item.href));
-  const activeSecondary = SECONDARY.flatMap((group) => group.items).find((item) => isActive(pathname, item.href));
+  const activePrimary = primary.find((item) => isActive(pathname, item.href));
+  const activeSecondary = secondary.flatMap((group) => group.items).find((item) => isActive(pathname, item.href));
   const moreLabel = activePrimary ? "More" : activeSecondary?.label ?? "More";
 
   const tabClass = (active: boolean) => cn(
@@ -104,7 +104,7 @@ export function MobileNavigation({ organizationSwitcher }: { organizationSwitche
         className="fixed inset-x-0 bottom-0 z-40 border-t bg-card/96 pb-[max(.5rem,env(safe-area-inset-bottom))] pl-[calc(.5rem+env(safe-area-inset-left))] pr-[calc(.5rem+env(safe-area-inset-right))] pt-1.5 backdrop-blur print:hidden lg:hidden"
       >
         <div className="mx-auto flex max-w-md items-stretch">
-          {PRIMARY.map(({ label, href, icon: Icon }) => {
+          {primary.map(({ label, href, icon: Icon }) => {
             const active = isActive(pathname, href);
             return (
               <Link key={href} href={href} aria-current={active ? "page" : undefined} className={tabClass(active)}>
@@ -139,7 +139,7 @@ export function MobileNavigation({ organizationSwitcher }: { organizationSwitche
                 <div className="space-y-5 gutter-5 py-4">
                   {organizationSwitcher}
 
-                  {SECONDARY.map((group) => (
+                  {secondary.map((group) => (
                     <section key={group.label} aria-label={group.label}>
                       <h3 className="px-1 text-[0.72rem] font-semibold tracking-[0.015em] text-muted-foreground/75">{group.label}</h3>
                       <div className="mt-1.5 overflow-hidden rounded-xl border bg-card">
