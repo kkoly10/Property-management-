@@ -1692,3 +1692,79 @@ revoke all on function private.prevent_rental_listing_photo_delivery() from publ
 create trigger prevent_rental_listing_photo_delivery
 before insert on public.document_deliveries
 for each row execute function private.prevent_rental_listing_photo_delivery();
+
+
+-- FD-HR-002–005 Batch B2: verified questions from landlord-shared listings.
+create table public.rental_inquiries (
+  id uuid primary key default gen_random_uuid(),
+  public_reference text not null unique,
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  listing_id uuid not null,
+  property_id uuid not null references public.properties(id) on delete restrict,
+  unit_id uuid not null references public.units(id) on delete restrict,
+  first_name text not null check (length(trim(first_name)) between 1 and 80),
+  last_name text not null check (length(trim(last_name)) between 1 and 80),
+  email citext not null check (length(trim(email::text)) between 3 and 320),
+  question text not null check (length(trim(question)) between 10 and 2000),
+  source text not null default 'shared_link' check (source='shared_link'),
+  status text not null default 'pending_verification'
+    check (status in ('pending_verification','open','closed','expired')),
+  verified_at timestamptz,
+  closed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  version integer not null default 1 check (version>0),
+  unique(organization_id,id),
+  foreign key (organization_id,listing_id)
+    references public.rental_listings(organization_id,id) on delete restrict,
+  foreign key (organization_id,property_id)
+    references public.properties(organization_id,id) on delete restrict,
+  foreign key (organization_id,property_id,unit_id)
+    references public.units(organization_id,property_id,id) on delete restrict,
+  check (
+    (status='pending_verification' and verified_at is null and closed_at is null)
+    or (status='open' and verified_at is not null and closed_at is null)
+    or (status='closed' and verified_at is not null and closed_at is not null)
+    or (status='expired' and verified_at is null and closed_at is null)
+  )
+);
+create index rental_inquiries_unit_status_idx
+  on public.rental_inquiries(organization_id,unit_id,status,created_at desc);
+create index rental_inquiries_listing_email_idx
+  on public.rental_inquiries(listing_id,email,created_at desc);
+
+create table private.rental_inquiry_verifications (
+  inquiry_id uuid primary key,
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  token_hash text not null unique check (token_hash ~ '^[0-9a-f]{64}$'),
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  notification_job_id uuid references private.notification_jobs(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  foreign key (organization_id,inquiry_id)
+    references public.rental_inquiries(organization_id,id) on delete cascade,
+  check (expires_at>created_at),
+  check (consumed_at is null or consumed_at>=created_at)
+);
+create index rental_inquiry_verifications_expiry_idx
+  on private.rental_inquiry_verifications(expires_at) where consumed_at is null;
+
+create table private.rental_inquiry_attempts (
+  id uuid primary key default gen_random_uuid(),
+  listing_id uuid not null references public.rental_listings(id) on delete cascade,
+  email_hash text not null check (email_hash ~ '^[0-9a-f]{64}$'),
+  network_hash text check (network_hash is null or network_hash ~ '^[0-9a-f]{64}$'),
+  attempted_at timestamptz not null default now()
+);
+create index rental_inquiry_attempts_email_idx
+  on private.rental_inquiry_attempts(listing_id,email_hash,attempted_at desc);
+create index rental_inquiry_attempts_network_idx
+  on private.rental_inquiry_attempts(network_hash,attempted_at desc)
+  where network_hash is not null;
+
+alter table public.rental_inquiries enable row level security;
+grant select on public.rental_inquiries to authenticated;
+revoke insert,update,delete on public.rental_inquiries from anon,authenticated;
+revoke all on public.rental_inquiries from anon;
+revoke all on private.rental_inquiry_verifications,private.rental_inquiry_attempts
+  from public,anon,authenticated,service_role;

@@ -700,3 +700,16 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 - `RotateRentalListingLink(organizationId, listingId, expectedVersion, idempotencyKey)` replaces the public UUID without changing the private listing id. Event: `rental_listing.link_rotated`.
 - `GetPublicRentalListing(publicId)` is service-role-only. It returns a sanitized published/unlisted DTO; the server converts only its explicitly selected scanner-clean photo paths to short-lived signed URLs.
 - `rental_listing_photo` is advertising media. It may not enter `document_deliveries`.
+
+
+## Homeowner B2 — verified rental inquiries (September 26, 2026)
+
+- `SubmitPublicRentalInquiry` is service-role-only behind the public HTTP validator. It derives
+  organization/property/unit from the published unlisted `public_id`; none are accepted from the visitor.
+- `VerifyPublicRentalInquiry` consumes an opaque email-verification token only on POST. GET renders the
+  verification surface and never changes inquiry state.
+- `CloseRentalInquiry` requires an authenticated current operator with `lease.manage` or
+  `property.manage` on the exact property and an expected inquiry version.
+- Submit and close are durably idempotent. Public submit namespaces its stored idempotency key to the
+  listing/email actor scope so the legacy NULL-user uniqueness key cannot collide across visitors.
+- Events: `rental_inquiry.pending_verification`, `rental_inquiry.verified`, `rental_inquiry.closed`.

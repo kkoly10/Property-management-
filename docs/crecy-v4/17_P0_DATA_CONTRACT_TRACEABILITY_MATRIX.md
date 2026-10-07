@@ -56,3 +56,10 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 | Rotate share URL | `rental_listings.public_id` | `RotateRentalListingLink` | same scoped manager boundary | `rental_listing.link_rotated`; old id returns no public DTO; replay returns one new id |
 | Public unlisted listing | sanitized `rental_listings` snapshot + attached clean photo versions | service-only `GetPublicRentalListing` + short-lived server-signed media URLs | anonymous browser receives no table/RPC grant; server exposes published+unlisted DTO only | street/postal absence, unknown/draft/paused/closed id 404/no row, exact photo version, noindex/nofollow |
 | Listing photo lifecycle | existing documents/versions + scan jobs; `rental_listing_photos` attachment | existing upload/finalize/scan commands + listing selection | unit-parent image grant, scanner-clean exact version, same org/property/unit; delivery trigger blocks recipient delivery | MIME/parent rejection, quarantine rejection, direct delivery rejection, document-register exclusion |
+
+
+## Homeowner B2 trace — verified inquiries
+
+| Capability | Primary tables | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Verified rental question intake | `rental_inquiries`, `private.rental_inquiry_verifications`, `private.rental_inquiry_attempts`, `private.notification_jobs` | `SubmitPublicRentalInquiry`, `VerifyPublicRentalInquiry`, `CloseRentalInquiry` | public submit/verify only through validated service route; landlord read/close requires exact-property `lease.manage` or `property.manage`; no anon base-table grant | pending hidden, wrong/expired token, token replay, normalized-email and keyed-network rate limits, terminal token scrub, wrong-property/outsider denial, direct-write denial, paused listing denial, close replay |

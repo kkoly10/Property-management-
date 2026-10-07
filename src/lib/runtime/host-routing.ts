@@ -24,7 +24,7 @@ export type RoutingDecision =
 const APP_SURFACE_PREFIXES = [
   "/app", "/onboarding", "/settings", "/platform", "/login", "/signup", "/auth", "/invitations",
 ];
-const RENTAL_PUBLIC_PREFIXES = ["/l"];
+const RENTAL_PUBLIC_PREFIXES = ["/l", "/inquiries/verify"];
 
 function underPrefix(pathname: string, prefixes: readonly string[]): boolean {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));

@@ -38,6 +38,7 @@ export type MailAudience = LinkAudience;
  * they manage preferences", read `RECIPIENT_AUDIENCE` — the two maps disagree on purpose.
  */
 export const TEMPLATE_AUDIENCE: Record<string, MailAudience> = {
+  rental_inquiry_verification: "operator",
   staff_invitation: "operator",
   resident_invitation: "resident",
   owner_invitation: "owner",
@@ -156,6 +157,7 @@ export function senderFor(templateCode: string, audienceOverride?: MailAudience 
  * later. A test asserts every template has an entry here, so a new one cannot default silently.
  */
 const RECIPIENT_AUDIENCE: Record<string, MailAudience | null> = {
+  rental_inquiry_verification: null,
   staff_invitation: "operator",
   resident_invitation: "resident",
   owner_invitation: "owner",

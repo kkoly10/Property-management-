@@ -157,6 +157,23 @@ export function appOrigin(): string {
   return configured.replace(/\/+$/, "");
 }
 
+/** Canonical rentals origin for share/prospect links. */
+export function rentalsOrigin(): string {
+  const configured = process.env.NEXT_PUBLIC_RENTALS_ORIGIN?.trim();
+  if (configured && !configured.includes("replace_me") && /^https?:\/\//i.test(configured)) {
+    return configured.replace(/\/+$/, "");
+  }
+  const app = appOrigin();
+  if (app) {
+    try {
+      if (classifyHost(new URL(app).host).kind === "development") return app;
+    } catch {
+      return "";
+    }
+  }
+  return `https://${hostConfig().rentals}`;
+}
+
 /**
  * True when this deployment's operator origin is a local/preview host.
  *

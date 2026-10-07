@@ -24,7 +24,10 @@ export default async function RentalListingManagementPage({
   const shareOrigin = `https://${hostConfig().rentals}`;
   return (
     <div className="mx-auto max-w-5xl space-y-8">
-      <Link href={`/app/rentals/${unitId}`} className="text-sm font-medium text-primary">Back to my rental</Link>
+      <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm font-medium text-primary">
+        <Link href={`/app/rentals/${unitId}`}>Back to my rental</Link>
+        <Link href={`/app/rentals/${unitId}/inquiries`}>View verified questions</Link>
+      </div>
       <header className="max-w-3xl">
         <p className="text-sm font-semibold text-primary">Shareable rental listing</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">Find a renter without waiting for marketplace traffic</h1>

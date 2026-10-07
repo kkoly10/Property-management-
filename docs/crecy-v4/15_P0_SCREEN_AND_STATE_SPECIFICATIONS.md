@@ -405,3 +405,15 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 - **Public content:** title, summary, rent, availability, space snapshot, coarse city/region/country, lease/pets/utilities/parking and selected clean photos. Street/postal and management/tenant records stay private.
 - **Recovery:** stale edits return a version conflict; uncertain save/publish/pause/close/link-rotation operations retain and retry the same body/idempotency key while editing is locked; share-link rotation invalidates the old public id.
 - **B1 boundary:** no Crecy inquiry, tour, application, screening or marketplace-search flow is claimed by this screen.
+
+
+## Homeowner B2 — verified question intake
+
+- `/l/:publicId` adds contact-only question intake: first name, last name, email and a bounded rental
+  question. It does not collect screening, protected-class, credit, income or identity-document data.
+- `/inquiries/verify` reads its credential from the URL fragment only after explicit user action, then
+  removes the fragment before POSTing verification.
+- `/app/rentals/:unitId/inquiries` shows only verified `open|closed` inquiries. The screen exposes no
+  ranking, approval, rejection or score control.
+- Public submit success tells the visitor to check email and does not promise availability, reservation,
+  landlord response, application acceptance or approval.

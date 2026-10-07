@@ -1,4 +1,4 @@
-import { originForAudience, type LinkAudience } from "@/lib/runtime/host";
+import { originForAudience, rentalsOrigin, type LinkAudience } from "@/lib/runtime/host";
 import { EMAIL_CHROME } from "@/lib/notifications/email-brand";
 import "server-only";
 
@@ -125,6 +125,15 @@ function roleLabel(value: unknown, language: NotificationLanguage): string {
 function link(path: string, audience: LinkAudience): string {
   const origin = originForAudience(audience);
   return origin ? `${origin}${path}` : path;
+}
+
+function inquiryVerificationLink(p: Record<string, unknown>): string {
+  const token = typeof p.verificationToken === "string" ? p.verificationToken.trim().toLowerCase() : "";
+  const origin = rentalsOrigin();
+  if (!origin || !/^[0-9a-f]{64}$/.test(token)) {
+    return origin ? `${origin}/inquiries/verify` : "/inquiries/verify";
+  }
+  return `${origin}/inquiries/verify#token=${encodeURIComponent(token)}`;
 }
 
 /**
@@ -259,6 +268,42 @@ const ORG_FALLBACK: Record<NotificationLanguage, string> = {
 };
 
 const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> = {
+  rental_inquiry_verification: {
+    en: (p) => compose({
+      subject: `Verify your question about ${text(p.listingTitle, "this rental")}`,
+      heading: "Verify your email before your question is shared",
+      paragraphs: [
+        `Crecy received a question about ${text(p.listingTitle, "this rental")}.`,
+        "Verify this email address to send the question to the landlord. Verification does not reserve the rental or approve an application.",
+      ],
+      ctaLabel: "Verify my email",
+      ctaUrl: inquiryVerificationLink(p),
+      securityNote: "This link expires in 60 minutes. If you did not send this question, ignore this message.",
+    }, "en"),
+    es: (p) => compose({
+      subject: `Verifica tu pregunta sobre ${text(p.listingTitle, "este alquiler")}`,
+      heading: "Verifica tu correo antes de enviar tu pregunta",
+      paragraphs: [
+        `Crecy recibió una pregunta sobre ${text(p.listingTitle, "este alquiler")}.`,
+        "Verifica este correo para enviar la pregunta al propietario. La verificación no reserva el alquiler ni aprueba una solicitud.",
+      ],
+      ctaLabel: "Verificar mi correo",
+      ctaUrl: inquiryVerificationLink(p),
+      securityNote: "Este enlace vence en 60 minutos. Si no enviaste esta pregunta, ignora este mensaje.",
+    }, "es"),
+    fr: (p) => compose({
+      subject: `Vérifiez votre question concernant ${text(p.listingTitle, "cette location")}`,
+      heading: "Vérifiez votre adresse e-mail avant l'envoi",
+      paragraphs: [
+        `Crecy a reçu une question concernant ${text(p.listingTitle, "cette location")}.`,
+        "Vérifiez cette adresse e-mail pour envoyer la question au propriétaire. La vérification ne réserve pas le logement et n'approuve aucune demande.",
+      ],
+      ctaLabel: "Vérifier mon e-mail",
+      ctaUrl: inquiryVerificationLink(p),
+      securityNote: "Ce lien expire dans 60 minutes. Si vous n'avez pas envoyé cette question, ignorez ce message.",
+    }, "fr"),
+  },
+
   staff_invitation: {
     en: (p) => {
       const org = text(p.organizationName, ORG_FALLBACK.en);

@@ -599,6 +599,12 @@ create policy rental_listing_photos_operator_read on public.rental_listing_photo
       )
   )
 );
+create policy rental_inquiries_verified_operator_read on public.rental_inquiries for select to authenticated using (
+  status in ('open','closed') and (
+    (select private.has_property_access(property_id,'lease.manage'))
+    or (select private.has_property_access(property_id,'property.manage'))
+  )
+);
 
 
 -- Sanitized relationship projections. These views intentionally select a limited column set and filter with relationship helper functions.
@@ -704,6 +710,7 @@ Uploads use a server-created upload grant containing organization, parent resour
 | RLS-031 | Authenticated user | Read or mutate another user’s notification preferences | 0 rows for reads; direct writes denied |
 | RLS-032 | Operator, scoped member, expired member, outsider | Query the operator command center across property, book, finance, or date boundaries | Only effective assigned properties and permitted domain aggregates; cross-book denied; expired/outsider denied; no PII or private provider/audit detail |
 | RLS-033 | Operator, property-scoped member, relationship user, expired member, outsider | Search names and public references across properties and operational domains | At most 24 stable server-selected rows from effective assigned properties and independently permitted domains; relationship/expired/outsider denied; contact data, maintenance access/detail, payment reasons, owner contacts, and provider identifiers omitted |
+| RLS-034 | Anonymous visitor, pending prospect, wrong-property operator, resident, outsider | Read or mutate rental-inquiry contact PII; verify by GET; close another property's inquiry | Anonymous/pending base rows denied; only verified open/closed inquiries are readable with current `lease.manage` or `property.manage` on the exact property; verification is POST-only through the service route; wrong-property/unrelated actors get 0 rows and direct writes are denied |
 
 ## 6. Financial/database invariant tests
 

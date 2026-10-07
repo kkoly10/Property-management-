@@ -3,6 +3,7 @@ import { CalendarDays, CarFront, CircleDollarSign, DoorOpen, PawPrint, UtilityPo
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getPublicRentalListing } from "@/lib/data/rental-listings";
+import { RentalInquiryForm } from "./inquiry-form";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -88,7 +89,17 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
             <p className="mt-5 whitespace-pre-wrap text-sm leading-7 text-foreground/85">{listing.summary}</p>
             <div className="mt-6 rounded-xl bg-muted/55 p-4 text-sm leading-6 text-muted-foreground">
               This landlord shared the page directly. Crecy marketplace discovery is not enabled for this listing.
-              Continue using the contact channel where you received the link.
+              You can send a verified question below without creating a renter account.
+            </div>
+          </div>
+          <div className="mt-4 rounded-[1.5rem] border bg-white p-6">
+            <p className="text-sm font-semibold text-primary">Ask about this rental</p>
+            <h2 className="mt-2 text-xl font-semibold tracking-[-0.025em]">Send the landlord a verified question</h2>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Your question appears in the landlord&apos;s Crecy workspace only after you verify your email.
+            </p>
+            <div className="mt-5">
+              <RentalInquiryForm publicId={listing.publicId} />
             </div>
           </div>
         </aside>
