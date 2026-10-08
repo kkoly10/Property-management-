@@ -91,6 +91,7 @@ export async function getRentalListingWorkspace(unitId: string): Promise<RentalL
 export type PublicRentalListing = {
   publicId: string; title: string; summary: string; rentAmountMinor: number; currencyCode: string;
   availableOn: string; unitType: string | null; bedrooms: number | null; bathrooms: number | null;
+  timeZone: string;
   location: { locality: string | null; subdivisionCode: string | null; countryCode: string };
   leaseTermText: string; petsText: string; utilitiesText: string; parkingText: string;
   publishedAt: string | null; preview: boolean;
@@ -107,7 +108,8 @@ export async function getPublicRentalListing(publicId: string): Promise<PublicRe
     return {
       publicId, title: "Private basement apartment", summary: "A representative share-link preview for a self-managed rental with a private entrance and driveway parking.",
       rentAmountMinor: 135000, currencyCode: "USD", availableOn: "2026-10-01", unitType: "basement",
-      bedrooms: 1, bathrooms: 1, location: { locality: "Example City", subdivisionCode: "VA", countryCode: "US" },
+      bedrooms: 1, bathrooms: 1, timeZone: "America/New_York",
+      location: { locality: "Example City", subdivisionCode: "VA", countryCode: "US" },
       leaseTermText: "12-month lease preferred", petsText: "Ask about pets",
       utilitiesText: "Water included; other utilities follow the rental agreement.", parkingText: "One driveway space.",
       publishedAt: "2026-09-26T00:00:00Z", preview: true,
@@ -127,7 +129,9 @@ export async function getPublicRentalListing(publicId: string): Promise<PublicRe
       publicId: raw.publicId, title: raw.title, summary: raw.summary,
       rentAmountMinor: Number(raw.rentAmountMinor), currencyCode: raw.currencyCode, availableOn: raw.availableOn,
       unitType: raw.unitType ?? null, bedrooms: raw.bedrooms == null ? null : Number(raw.bedrooms),
-      bathrooms: raw.bathrooms == null ? null : Number(raw.bathrooms), location: raw.location,
+      bathrooms: raw.bathrooms == null ? null : Number(raw.bathrooms),
+      timeZone: raw.timeZone,
+      location: raw.location,
       leaseTermText: raw.leaseTermText, petsText: raw.petsText, utilitiesText: raw.utilitiesText,
       parkingText: raw.parkingText, publishedAt: raw.publishedAt, preview: false, photos,
     };

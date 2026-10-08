@@ -605,6 +605,23 @@ create policy rental_inquiries_verified_operator_read on public.rental_inquiries
     or (select private.has_property_access(property_id,'property.manage'))
   )
 );
+create policy rental_tour_requests_verified_operator_read on public.rental_tour_requests for select to authenticated using (
+  status in ('requested','confirmed') and (
+    (select private.has_property_access(property_id,'lease.manage'))
+    or (select private.has_property_access(property_id,'property.manage'))
+  )
+);
+create policy rental_tour_preferences_parent_read on public.rental_tour_preferences for select to authenticated using (
+  exists (
+    select 1 from public.rental_tour_requests r
+    where r.id=tour_request_id and r.organization_id=rental_tour_preferences.organization_id
+      and r.status in ('requested','confirmed')
+      and (
+        (select private.has_property_access(r.property_id,'lease.manage'))
+        or (select private.has_property_access(r.property_id,'property.manage'))
+      )
+  )
+);
 
 
 -- Sanitized relationship projections. These views intentionally select a limited column set and filter with relationship helper functions.
@@ -711,6 +728,7 @@ Uploads use a server-created upload grant containing organization, parent resour
 | RLS-032 | Operator, scoped member, expired member, outsider | Query the operator command center across property, book, finance, or date boundaries | Only effective assigned properties and permitted domain aggregates; cross-book denied; expired/outsider denied; no PII or private provider/audit detail |
 | RLS-033 | Operator, property-scoped member, relationship user, expired member, outsider | Search names and public references across properties and operational domains | At most 24 stable server-selected rows from effective assigned properties and independently permitted domains; relationship/expired/outsider denied; contact data, maintenance access/detail, payment reasons, owner contacts, and provider identifiers omitted |
 | RLS-034 | Anonymous visitor, pending prospect, wrong-property operator, resident, outsider | Read or mutate rental-inquiry contact PII; verify by GET; close another property's inquiry | Anonymous/pending base rows denied; only verified open/closed inquiries are readable with current `lease.manage` or `property.manage` on the exact property; verification is POST-only through the service route; wrong-property/unrelated actors get 0 rows and direct writes are denied |
+| RLS-035 | Anonymous visitor, pending tour requester, wrong-property operator, resident, outsider | Read or mutate tour contact/time preferences; confirm another property's tour | Anonymous/pending base rows denied; only verified requested/confirmed tours and their preferences are readable with current `lease.manage` or `property.manage` on the exact property; direct writes are denied and confirmation is command-only |
 
 ## 6. Financial/database invariant tests
 

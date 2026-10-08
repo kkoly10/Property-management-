@@ -8,10 +8,11 @@ for (const width of [390, 1440]) {
   test(`public verified-question intake fits ${width}px without marketplace claims`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/l/${PUBLIC_ID}`);
-    await expect(page.getByRole("heading", { name: "Send the landlord a verified question" })).toBeVisible();
-    await expect(page.getByLabel("First name")).toBeVisible();
-    await expect(page.getByLabel("Email")).toBeVisible();
-    await expect(page.getByLabel("Question about this rental")).toBeVisible();
+    const questionCard = page.getByRole("heading", { name: "Send the landlord a verified question" }).locator("..");
+    await expect(questionCard.getByRole("heading", { name: "Send the landlord a verified question" })).toBeVisible();
+    await expect(questionCard.getByLabel("First name")).toBeVisible();
+    await expect(questionCard.getByLabel("Email")).toBeVisible();
+    await expect(questionCard.getByLabel("Question about this rental")).toBeVisible();
     await expect(page.getByText(/marketplace discovery is not enabled/i)).toBeVisible();
     expect(await page.evaluate(() =>
       document.documentElement.scrollWidth - document.documentElement.clientWidth,

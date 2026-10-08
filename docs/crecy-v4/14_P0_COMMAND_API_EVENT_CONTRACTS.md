@@ -713,3 +713,11 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 - Submit and close are durably idempotent. Public submit namespaces its stored idempotency key to the
   listing/email actor scope so the legacy NULL-user uniqueness key cannot collide across visitors.
 - Events: `rental_inquiry.pending_verification`, `rental_inquiry.verified`, `rental_inquiry.closed`.
+
+## Homeowner B3 — verified rental tours (October 7, 2026)
+
+- **Submit:** `POST /api/v1/rental-tours` accepts contact identity plus 1–3 preferred local date/times for a currently published unlisted listing. The public route derives listing/property/unit scope; the browser never supplies an organization or property id.
+- **Verify:** `POST /api/v1/rental-tours/verify` consumes a hashed, expiring email-verification credential only after explicit visitor action. Opening the verification page does not mutate state.
+- **Confirm:** `POST /api/v1/rental-tours/confirm` requires a current scoped operator, optimistic version, one of the visitor's exact submitted preferences, and a private meeting location. Confirmation schedules a 30-minute tour and queues the verified visitor's confirmation email.
+- **Time rules:** visitor-local fields are interpreted in the rental property's IANA time zone, round-trip validated through UTC, and rejected when duplicated, in the past, beyond the allowed horizon, or inside a daylight-saving gap.
+- **Boundary:** tour confirmation is logistics only. It does not rank, qualify, approve, reserve, or create an application or tenancy.

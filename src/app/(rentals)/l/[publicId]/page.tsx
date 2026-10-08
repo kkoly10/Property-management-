@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getPublicRentalListing } from "@/lib/data/rental-listings";
 import { RentalInquiryForm } from "./inquiry-form";
+import { RentalTourForm } from "./tour-form";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -89,7 +90,7 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
             <p className="mt-5 whitespace-pre-wrap text-sm leading-7 text-foreground/85">{listing.summary}</p>
             <div className="mt-6 rounded-xl bg-muted/55 p-4 text-sm leading-6 text-muted-foreground">
               This landlord shared the page directly. Crecy marketplace discovery is not enabled for this listing.
-              You can send a verified question below without creating a renter account.
+              You can send a verified question or request a tour below without creating a renter account.
             </div>
           </div>
           <div className="mt-4 rounded-[1.5rem] border bg-white p-6">
@@ -100,6 +101,16 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
             </p>
             <div className="mt-5">
               <RentalInquiryForm publicId={listing.publicId} />
+            </div>
+          </div>
+          <div className="mt-4 rounded-[1.5rem] border bg-white p-6">
+            <p className="text-sm font-semibold text-primary">See the rental</p>
+            <h2 className="mt-2 text-xl font-semibold tracking-[-0.025em]">Request a verified tour</h2>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Suggest up to three times. The landlord confirms one separately after your email is verified.
+            </p>
+            <div className="mt-5">
+              <RentalTourForm publicId={listing.publicId} timeZone={listing.timeZone} />
             </div>
           </div>
         </aside>

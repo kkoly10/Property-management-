@@ -199,9 +199,10 @@ describe("indexing policy", () => {
   });
 
   it("keeps unlisted rental/prospect pages unindexed without swallowing /landlords", () => {
-    expect(UNINDEXED_PUBLIC_PREFIXES).toEqual(["/l/", "/inquiries/verify"]);
+    expect(UNINDEXED_PUBLIC_PREFIXES).toEqual(["/l/", "/inquiries/verify", "/tours/verify"]);
     expect(disallow).toContain("/l/");
     expect(disallow).toContain("/inquiries/verify");
+    expect(disallow).toContain("/tours/verify");
     expect("/landlords".startsWith("/l/")).toBe(false);
   });
 

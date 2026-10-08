@@ -63,3 +63,10 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 | Capability | Primary tables | Command/query | Authorization | Required event/tests |
 |---|---|---|---|---|
 | Verified rental question intake | `rental_inquiries`, `private.rental_inquiry_verifications`, `private.rental_inquiry_attempts`, `private.notification_jobs` | `SubmitPublicRentalInquiry`, `VerifyPublicRentalInquiry`, `CloseRentalInquiry` | public submit/verify only through validated service route; landlord read/close requires exact-property `lease.manage` or `property.manage`; no anon base-table grant | pending hidden, wrong/expired token, token replay, normalized-email and keyed-network rate limits, terminal token scrub, wrong-property/outsider denial, direct-write denial, paused listing denial, close replay |
+
+## Homeowner B3 trace — verified tour requests
+
+| Capability | Primary tables | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Verified tour intake | `rental_tour_requests`, `rental_tour_preferences`, private verification/attempt rows, notification jobs | `SubmitPublicRentalTour`, `VerifyPublicRentalTour` | public submit/verify only through validated service route; listing must remain published+unlisted | pending hidden, wrong/expired token, verification replay, property-time-zone conversion, duplicate/DST-gap denial, normalized-email and keyed-network rate limits, terminal token scrub, paused-listing denial |
+| Tour confirmation | same tour request/preferences + notification jobs | `ConfirmRentalTour` | authenticated exact-property `lease.manage` or `property.manage`; optimistic version; one submitted preference only | confirmation event + notification; replay, wrong-property/outsider/direct-write denial, overlap denial, private meeting-location boundary |

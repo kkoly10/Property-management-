@@ -417,3 +417,12 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
   ranking, approval, rejection or score control.
 - Public submit success tells the visitor to check email and does not promise availability, reservation,
   landlord response, application acceptance or approval.
+
+## Homeowner B3 — verified tour requests
+
+- **Public listing:** `/l/:publicId` includes a separate “Request a verified tour” card. The visitor enters contact details and up to three preferred times; the page states the rental time zone and that verification does not confirm a tour.
+- **Verification:** `/tours/verify` reads the token from the URL fragment, removes the fragment, and waits for an explicit “Verify my email” action before POSTing.
+- **Landlord queue:** `/app/rentals/:unitId/tours` shows only email-verified requests, their submitted preferences in the property time zone, and confirmation controls.
+- **Private location:** the landlord meeting location is never copied into the public listing. It is disclosed only to the verified visitor after one time is confirmed.
+- **States:** `pending_verification → requested → confirmed`; invalid/expired verification never enters the landlord queue. Confirmation is retry-safe and a second confirmed tour cannot overlap the same unit/time window.
+- **Language boundary:** no screen contains applicant scoring, qualification, approval, rejection, reservation, or marketplace-discovery claims.

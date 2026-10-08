@@ -1,7 +1,11 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { getOrganizationContext, type OperatorOrganization } from "@/lib/organization/context";
-export type RentalProperty = { id: string; name: string; address_line1: string; locality: string | null; country_code: string; time_zone: string; accounting_book_id: string };
+export type RentalProperty = {
+  id: string; name: string; address_line1: string; locality: string | null;
+  subdivision_code: string | null; postal_code: string | null;
+  country_code: string; time_zone: string; accounting_book_id: string;
+};
 export type RentalBook = { id: string; name: string; functional_currency_code: string };
 export type RentalUnit = { id: string; property_id: string; unit_code: string; unit_type: string | null; bedrooms: number | null; bathrooms: number | null; rental_details: Record<string, unknown> };
 export type RentalWorkspace = {
@@ -20,7 +24,7 @@ export async function getRentalWorkspace(): Promise<RentalWorkspace> {
     if (authError || !auth.user) return { ...empty, mode: "unavailable" };
     const org = context.active.organizationId;
     const results = await Promise.all([
-      supabase.from("properties").select("id,name,address_line1,locality,country_code,time_zone,accounting_book_id").eq("organization_id", org).is("archived_at", null).neq("status", "archived").order("name"),
+      supabase.from("properties").select("id,name,address_line1,locality,subdivision_code,postal_code,country_code,time_zone,accounting_book_id").eq("organization_id", org).is("archived_at", null).neq("status", "archived").order("name"),
       supabase.from("accounting_books").select("id,name,functional_currency_code").eq("organization_id", org).eq("status", "open").order("name"),
       supabase.from("units").select("id,property_id,unit_code,unit_type,bedrooms,bathrooms,rental_details").eq("organization_id", org).is("archived_at", null).eq("operational_status", "active").order("unit_code"),
       supabase.from("tenancies").select("unit_id").eq("organization_id", org).in("status", ["active", "scheduled", "notice_given", "move_out_in_progress"]),

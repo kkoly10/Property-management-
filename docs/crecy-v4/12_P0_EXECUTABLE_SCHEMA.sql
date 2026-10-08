@@ -1768,3 +1768,109 @@ revoke insert,update,delete on public.rental_inquiries from anon,authenticated;
 revoke all on public.rental_inquiries from anon;
 revoke all on private.rental_inquiry_verifications,private.rental_inquiry_attempts
   from public,anon,authenticated,service_role;
+
+
+-- FD-HR-002–005 Batch B3: verified tour requests from landlord-shared listings.
+create table public.rental_tour_requests (
+  id uuid primary key default gen_random_uuid(),
+  public_reference text not null unique,
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  listing_id uuid not null,
+  property_id uuid not null references public.properties(id) on delete restrict,
+  unit_id uuid not null references public.units(id) on delete restrict,
+  first_name text not null check (length(trim(first_name)) between 1 and 80),
+  last_name text not null check (length(trim(last_name)) between 1 and 80),
+  email citext not null check (length(trim(email::text)) between 3 and 320),
+  property_time_zone text not null check (length(trim(property_time_zone)) between 1 and 80),
+  source text not null default 'shared_link' check (source='shared_link'),
+  status text not null default 'pending_verification'
+    check (status in ('pending_verification','requested','confirmed','expired')),
+  verified_at timestamptz,
+  confirmed_preference_position smallint check (confirmed_preference_position between 0 and 2),
+  confirmed_start_at timestamptz,
+  confirmed_end_at timestamptz,
+  confirmed_at timestamptz,
+  confirmed_meeting_location text check (
+    confirmed_meeting_location is null or length(trim(confirmed_meeting_location)) between 3 and 500
+  ),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  version integer not null default 1 check (version>0),
+  unique(organization_id,id),
+  foreign key (organization_id,listing_id)
+    references public.rental_listings(organization_id,id) on delete restrict,
+  foreign key (organization_id,property_id)
+    references public.properties(organization_id,id) on delete restrict,
+  foreign key (organization_id,property_id,unit_id)
+    references public.units(organization_id,property_id,id) on delete restrict,
+  check (
+    (status='pending_verification' and verified_at is null and confirmed_at is null)
+    or (status='requested' and verified_at is not null and confirmed_at is null)
+    or (
+      status='confirmed' and verified_at is not null and confirmed_at is not null
+      and confirmed_preference_position is not null
+      and confirmed_start_at is not null and confirmed_end_at is not null
+      and confirmed_meeting_location is not null
+      and confirmed_end_at=confirmed_start_at+interval '30 minutes'
+    )
+    or (status='expired' and verified_at is null and confirmed_at is null)
+  )
+);
+create index rental_tour_requests_unit_status_idx
+  on public.rental_tour_requests(organization_id,unit_id,status,created_at desc);
+create index rental_tour_requests_listing_email_idx
+  on public.rental_tour_requests(listing_id,email,created_at desc);
+
+create table public.rental_tour_preferences (
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  tour_request_id uuid not null,
+  position smallint not null check (position between 0 and 2),
+  local_start timestamp without time zone not null,
+  starts_at timestamptz not null,
+  ends_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  primary key(tour_request_id,position),
+  unique(organization_id,tour_request_id,position),
+  foreign key (organization_id,tour_request_id)
+    references public.rental_tour_requests(organization_id,id) on delete cascade,
+  check (ends_at=starts_at+interval '30 minutes')
+);
+create index rental_tour_preferences_start_idx
+  on public.rental_tour_preferences(starts_at,tour_request_id);
+
+create table private.rental_tour_verifications (
+  tour_request_id uuid primary key,
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  token_hash text not null unique check (token_hash ~ '^[0-9a-f]{64}$'),
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  notification_job_id uuid references private.notification_jobs(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  foreign key (organization_id,tour_request_id)
+    references public.rental_tour_requests(organization_id,id) on delete cascade,
+  check (expires_at>created_at),
+  check (consumed_at is null or consumed_at>=created_at)
+);
+create index rental_tour_verifications_expiry_idx
+  on private.rental_tour_verifications(expires_at) where consumed_at is null;
+
+create table private.rental_tour_attempts (
+  id uuid primary key default gen_random_uuid(),
+  listing_id uuid not null references public.rental_listings(id) on delete cascade,
+  email_hash text not null check (email_hash ~ '^[0-9a-f]{64}$'),
+  network_hash text check (network_hash is null or network_hash ~ '^[0-9a-f]{64}$'),
+  attempted_at timestamptz not null default now()
+);
+create index rental_tour_attempts_email_idx
+  on private.rental_tour_attempts(listing_id,email_hash,attempted_at desc);
+create index rental_tour_attempts_network_idx
+  on private.rental_tour_attempts(network_hash,attempted_at desc) where network_hash is not null;
+
+alter table public.rental_tour_requests enable row level security;
+alter table public.rental_tour_preferences enable row level security;
+grant select on public.rental_tour_requests,public.rental_tour_preferences to authenticated;
+revoke insert,update,delete on public.rental_tour_requests,public.rental_tour_preferences
+  from anon,authenticated;
+revoke all on public.rental_tour_requests,public.rental_tour_preferences from anon;
+revoke all on private.rental_tour_verifications,private.rental_tour_attempts
+  from public,anon,authenticated,service_role;

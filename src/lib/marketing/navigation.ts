@@ -45,7 +45,7 @@ export const PRIVATE_PREFIXES = [
  * `/l/` intentionally carries the trailing slash. Robots matching is prefix-based, so `/l` would also
  * swallow the real public `/landlords` page. There is no bare `/l` page; every share URL is `/l/:publicId`.
  */
-export const UNINDEXED_PUBLIC_PREFIXES = ["/l/", "/inquiries/verify"];
+export const UNINDEXED_PUBLIC_PREFIXES = ["/l/", "/inquiries/verify", "/tours/verify"];
 
 /**
  * Prefixes that require a session, enforced in `src/proxy.ts`.

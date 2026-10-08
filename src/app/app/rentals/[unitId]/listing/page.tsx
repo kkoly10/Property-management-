@@ -27,6 +27,7 @@ export default async function RentalListingManagementPage({
       <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm font-medium text-primary">
         <Link href={`/app/rentals/${unitId}`}>Back to my rental</Link>
         <Link href={`/app/rentals/${unitId}/inquiries`}>View verified questions</Link>
+        <Link href={`/app/rentals/${unitId}/tours`}>View tour requests</Link>
       </div>
       <header className="max-w-3xl">
         <p className="text-sm font-semibold text-primary">Shareable rental listing</p>
