@@ -1874,3 +1874,74 @@ revoke insert,update,delete on public.rental_tour_requests,public.rental_tour_pr
 revoke all on public.rental_tour_requests,public.rental_tour_preferences from anon;
 revoke all on private.rental_tour_verifications,private.rental_tour_attempts
   from public,anon,authenticated,service_role;
+
+-- FD-HR-002–005 Batch B4: verified minimal rental applications and conversion anchor.
+create table public.rental_applications (
+  id uuid primary key default gen_random_uuid(),
+  public_reference text not null unique,
+  organization_id uuid not null references public.organizations(id) on delete restrict,
+  listing_id uuid not null, property_id uuid not null, unit_id uuid not null,
+  first_name text not null check (length(trim(first_name)) between 1 and 80),
+  last_name text not null check (length(trim(last_name)) between 1 and 80),
+  email citext not null check (length(trim(email::text)) between 3 and 320),
+  desired_move_in_on date not null,
+  lease_term_text text not null default '' check (length(lease_term_text)<=300),
+  applicant_note text not null default '' check (length(applicant_note)<=2000),
+  listing_title_snapshot text not null check (length(trim(listing_title_snapshot)) between 1 and 160),
+  listing_rent_amount_minor bigint not null check (listing_rent_amount_minor>=0 and listing_rent_amount_minor<=9007199254740991),
+  currency_code char(3) not null check (currency_code in ('USD','CAD','MXN')),
+  listing_available_on date not null, source text not null default 'shared_link' check (source='shared_link'),
+  status text not null default 'pending_verification'
+    check (status in ('pending_verification','submitted','lease_preparation','withdrawn','closed','expired','converted')),
+  verified_at timestamptz, lease_prepared_at timestamptz, withdrawn_at timestamptz, closed_at timestamptz, converted_at timestamptz,
+  converted_household_id uuid references public.households(id) on delete restrict,
+  converted_tenancy_id uuid references public.tenancies(id) on delete restrict,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  version integer not null default 1 check (version>0), unique(organization_id,id),
+  foreign key (organization_id,listing_id) references public.rental_listings(organization_id,id) on delete restrict,
+  foreign key (organization_id,property_id) references public.properties(organization_id,id) on delete restrict,
+  foreign key (organization_id,property_id,unit_id) references public.units(organization_id,property_id,id) on delete restrict
+);create index rental_applications_unit_status_idx on public.rental_applications(organization_id,unit_id,status,created_at desc);
+create unique index rental_applications_one_preparation_per_unit
+  on public.rental_applications(organization_id,unit_id) where status='lease_preparation';
+
+create table private.rental_application_verifications (
+  application_id uuid primary key, organization_id uuid not null references public.organizations(id) on delete restrict,
+  token_hash text not null unique check (token_hash ~ '^[0-9a-f]{64}$'),
+  expires_at timestamptz not null, consumed_at timestamptz,
+  notification_job_id uuid references private.notification_jobs(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  foreign key (organization_id,application_id) references public.rental_applications(organization_id,id) on delete cascade
+);
+create table private.rental_application_access (
+  application_id uuid primary key, organization_id uuid not null references public.organizations(id) on delete restrict,
+  token_hash text not null unique check (token_hash ~ '^[0-9a-f]{64}$'),
+  expires_at timestamptz not null, created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  foreign key (organization_id,application_id) references public.rental_applications(organization_id,id) on delete cascade
+);
+create table private.rental_application_attempts (
+  id uuid primary key default gen_random_uuid(),
+  listing_id uuid not null references public.rental_listings(id) on delete cascade,
+  email_hash text not null check (email_hash ~ '^[0-9a-f]{64}$'),
+  network_hash text check (network_hash is null or network_hash ~ '^[0-9a-f]{64}$'),
+  attempted_at timestamptz not null default now()
+);
+alter table private.homeowner_lease_setups add column source_rental_application_id uuid
+  references public.rental_applications(id) on delete restrict;
+create unique index homeowner_lease_setups_source_application_unique
+  on private.homeowner_lease_setups(source_rental_application_id) where source_rental_application_id is not null;alter table public.rental_applications add constraint rental_applications_state_consistent check (
+  (status='pending_verification' and verified_at is null and lease_prepared_at is null and withdrawn_at is null and closed_at is null and converted_at is null)
+  or (status='submitted' and verified_at is not null and lease_prepared_at is null and withdrawn_at is null and closed_at is null and converted_at is null)
+  or (status='lease_preparation' and verified_at is not null and lease_prepared_at is not null and withdrawn_at is null and closed_at is null and converted_at is null)
+  or (status='withdrawn' and verified_at is not null and withdrawn_at is not null and closed_at is null and converted_at is null)
+  or (status='closed' and verified_at is not null and closed_at is not null and converted_at is null)
+  or (status='expired' and verified_at is null and converted_at is null)
+  or (status='converted' and verified_at is not null and lease_prepared_at is not null and converted_at is not null
+      and converted_household_id is not null and converted_tenancy_id is not null)
+);
+alter table public.rental_applications enable row level security;
+grant select on public.rental_applications to authenticated;
+revoke insert,update,delete on public.rental_applications from anon,authenticated;
+revoke all on public.rental_applications from anon;
+revoke all on private.rental_application_verifications,private.rental_application_access,private.rental_application_attempts
+  from public,anon,authenticated,service_role;

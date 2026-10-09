@@ -40,6 +40,7 @@ approval, screening, ranking, qualification, or a promise that the rental will r
 - Raw token exists only in the queued private notification payload and is scrubbed on terminal job states.
 - Token expires after 60 minutes; replay after success is idempotent.
 - Public submit uses neutral responses, normalized-email limits and a keyed network hash; raw network addresses are not stored.
+- Production intake requires a valid IPv4/IPv6 `X-Forwarded-For` edge source; missing/malformed values fail closed without an `X-Real-IP` fallback. This is source-format hardening, not attestation of the deployed proxy chain.
 - Same request replay is checked before rate accounting and queues one verification message.
 - Public idempotency storage is namespaced by listing/email actor scope to avoid legacy null-user collisions.
 

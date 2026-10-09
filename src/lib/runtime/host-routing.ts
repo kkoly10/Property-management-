@@ -24,7 +24,16 @@ export type RoutingDecision =
 const APP_SURFACE_PREFIXES = [
   "/app", "/onboarding", "/settings", "/platform", "/login", "/signup", "/auth", "/invitations",
 ];
-const RENTAL_PUBLIC_PREFIXES = ["/l", "/inquiries/verify", "/tours/verify"];
+const RENTAL_PUBLIC_PREFIXES = ["/l", "/inquiries/verify", "/tours/verify", "/applications"];
+// Application capability endpoints must not be issued on an operator, owner,
+// resident or marketing origin. Operator decisions belong on the app host.
+const RENTAL_APPLICATION_PUBLIC_APIS = new Set([
+  "/api/v1/rental-applications", "/api/v1/rental-applications/verify",
+  "/api/v1/rental-applications/status", "/api/v1/rental-applications/withdraw",
+]);
+const RENTAL_APPLICATION_OPERATOR_APIS = new Set([
+  "/api/v1/rental-applications/prepare", "/api/v1/rental-applications/close",
+]);
 
 function underPrefix(pathname: string, prefixes: readonly string[]): boolean {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -43,7 +52,21 @@ export function routeForHost(rawHost: string | null | undefined, pathname: strin
   const hostname = normalizeHostname(rawHost);
   const { marketing, rentals } = hostConfig();
 
-  // Infrastructure paths are host-agnostic. Redirecting them would break webhooks and crawlers.
+  // B4 has origin-scoped public capability cookies. Never serve applicant
+  // verification/status/withdrawal on an operator or other sibling origin.
+  // Keep operator-only lease decisions on app.crecyos.com instead.
+  if (RENTAL_APPLICATION_PUBLIC_APIS.has(pathname)) {
+    return classification.kind === "rentals" || classification.kind === "development"
+      ? { type: "continue" } : { type: "reject" };
+  }
+  if (RENTAL_APPLICATION_OPERATOR_APIS.has(pathname)) {
+    return classification.kind === "app" || classification.kind === "development"
+      ? { type: "continue" } : { type: "reject" };
+  }
+  // A future application endpoint must be explicitly assigned an origin first;
+  // never inherit the broadly host-agnostic webhook/API fallback by accident.
+  if (pathname.startsWith("/api/v1/rental-applications/")) return { type: "reject" };
+  // All other infrastructure paths remain host-agnostic for webhooks/crawlers.
   if (pathname.startsWith("/api/") || pathname === "/robots.txt" || pathname === "/sitemap.xml") {
     return classification.kind === "unknown" ? { type: "reject" } : { type: "continue" };
   }

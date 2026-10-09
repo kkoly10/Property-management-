@@ -107,7 +107,17 @@ test.describe("every page fits a phone", () => {
 
   for (const route of ALL_ROUTES) {
     test(`${route} fits 390px and zooms no input`, async ({ page }) => {
-      const response = await page.goto(route, { waitUntil: "networkidle" });
+      // The applicant status screen does an explicit, private access check on mount.
+      // Requiring networkidle here stalls on the client fetch in the preview harness.
+      // Assert its settled, fail-closed UI instead of masking the state behind a timeout.
+      const isApplicantStatus = route === "/applications";
+      const response = await page.goto(route, {
+        waitUntil: isApplicantStatus ? "domcontentloaded" : "networkidle",
+      });
+      if (isApplicantStatus) {
+        await expect(page.getByRole("heading", { name: "Application status" })).toBeVisible();
+        await expect(page.getByText("Application access is unavailable")).toBeVisible();
+      }
       // A route that errors has no layout to measure, so an overflow assertion on it would pass
       // vacuously. Both invitation-acceptance screens used to 500 here for exactly that reason.
       expect(response?.status(), `${route} did not render`).toBeLessThan(400);

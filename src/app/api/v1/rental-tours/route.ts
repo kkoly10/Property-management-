@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { submitRentalTourSchema } from "@/lib/validation/rental-tour";
@@ -17,10 +18,12 @@ function reply(error: string, status: number) {
 function networkHash(request: Request): string | null | "unavailable" {
   const secret = process.env.RENTAL_INQUIRY_RATE_LIMIT_SECRET?.trim();
   if (!secret || secret.includes("replace_me") || secret.length < 32) return "unavailable";
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    || request.headers.get("x-real-ip")?.trim()
-    || "";
-  if (!forwarded) return null;
+  // Accept only a syntactically valid edge-normalized source IP. A caller's
+  // X-Real-IP must never silently replace missing proxy metadata in production.
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "";
+  if (isIP(forwarded) === 0) {
+    return process.env.NODE_ENV === "production" ? "unavailable" : null;
+  }
   return createHmac("sha256", secret).update(`rental-tour-ip:${forwarded}`).digest("hex");
 }
 

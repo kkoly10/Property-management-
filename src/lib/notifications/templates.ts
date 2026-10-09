@@ -136,6 +136,15 @@ function inquiryVerificationLink(p: Record<string, unknown>): string {
   return `${origin}/inquiries/verify#token=${encodeURIComponent(token)}`;
 }
 
+function applicationVerificationLink(p: Record<string, unknown>): string {
+  const token = typeof p.verificationToken === "string" ? p.verificationToken.trim().toLowerCase() : "";
+  const origin = rentalsOrigin();
+  if (!origin || !/^[0-9a-f]{64}$/.test(token)) {
+    return origin ? `${origin}/applications/verify` : "/applications/verify";
+  }
+  return `${origin}/applications/verify#token=${encodeURIComponent(token)}`;
+}
+
 function tourVerificationLink(p: Record<string, unknown>): string {
   const token = typeof p.verificationToken === "string" ? p.verificationToken.trim().toLowerCase() : "";
   const origin = rentalsOrigin();
@@ -292,6 +301,29 @@ const ORG_FALLBACK: Record<NotificationLanguage, string> = {
 };
 
 const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> = {
+  rental_application_verification: {
+    en: (p) => compose({
+      subject: "Verify your rental application",
+      heading: "Verify your email",
+      paragraphs: ["Verify this email address to share your rental application with the landlord. Verification does not approve your application."],
+      ctaLabel: "Verify my application", ctaUrl: applicationVerificationLink(p),
+      securityNote: "This link expires in 60 minutes. Ignore it if you did not apply.",
+    }, "en"),
+    es: (p) => compose({
+      subject: "Verifica tu solicitud de alquiler",
+      heading: "Verifica tu correo electrónico",
+      paragraphs: ["Verifica tu correo para enviar tu solicitud al propietario. Esta verificación no aprueba tu solicitud."],
+      ctaLabel: "Verificar mi solicitud", ctaUrl: applicationVerificationLink(p),
+      securityNote: "Este enlace vence en 60 minutos. Si no solicitaste el alquiler, ignóralo.",
+    }, "es"),
+    fr: (p) => compose({
+      subject: "Vérifiez votre candidature de location",
+      heading: "Vérifiez votre adresse e-mail",
+      paragraphs: ["Vérifiez cette adresse pour envoyer votre candidature au propriétaire. Cela ne constitue pas une approbation."],
+      ctaLabel: "Vérifier ma candidature", ctaUrl: applicationVerificationLink(p),
+      securityNote: "Ce lien expire dans 60 minutes. Si ce n'était pas vous, ignorez cet e-mail.",
+    }, "fr"),
+  },
   rental_tour_verification: {
     en: (p) => compose({
       subject: `Verify your tour request for ${text(p.listingTitle, "this rental")}`,

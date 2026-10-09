@@ -28,6 +28,7 @@ export default async function RentalListingManagementPage({
         <Link href={`/app/rentals/${unitId}`}>Back to my rental</Link>
         <Link href={`/app/rentals/${unitId}/inquiries`}>View verified questions</Link>
         <Link href={`/app/rentals/${unitId}/tours`}>View tour requests</Link>
+        <Link href={`/app/rentals/${unitId}/applications`}>View verified applications</Link>
       </div>
       <header className="max-w-3xl">
         <p className="text-sm font-semibold text-primary">Shareable rental listing</p>

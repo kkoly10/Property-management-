@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { submitRentalInquirySchema } from "@/lib/validation/rental-inquiry";
@@ -15,10 +16,12 @@ function reply(error: string, status: number) {
 function networkHash(request: Request): string | null | "unavailable" {
   const secret = process.env.RENTAL_INQUIRY_RATE_LIMIT_SECRET?.trim();
   if (!secret || secret.includes("replace_me") || secret.length < 32) return "unavailable";
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    || request.headers.get("x-real-ip")?.trim()
-    || "";
-  if (!forwarded) return null;
+  // The rentals intake abuse budget trusts only the normalized edge source.
+  // Never accept an upstream-controlled X-Real-IP fallback or an invalid IP.
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "";
+  if (isIP(forwarded) === 0) {
+    return process.env.NODE_ENV === "production" ? "unavailable" : null;
+  }
   return createHmac("sha256", secret).update(`rental-inquiry-ip:${forwarded}`).digest("hex");
 }
 

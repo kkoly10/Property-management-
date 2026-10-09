@@ -32,6 +32,9 @@ export default async function RentalPage({ params }: { params: Promise<{ unitId:
       <p className="mt-3 leading-7 text-muted-foreground">{occupied ? "Your existing renter relationship is connected to the management tools." : "Record the agreement and renter through Crecy’s existing tenancy workflow. You will review the opening balance and first rent charge before activation."}</p>
       <div className="mt-5 flex flex-wrap gap-3">{preview ? <><Button disabled>Connect your workspace to continue</Button><Button variant="outline" asChild><Link href={`/app/rentals/${unit.id}/listing`}>Preview shareable listing setup</Link></Button></> : <><Button asChild><Link href={occupied ? "/app/residents" : `/app/rentals/${unit.id}/setup`}>{occupied ? "View renters and invitations" : "Add my existing renter"}</Link></Button>
         {!occupied ? <Button variant="outline" asChild><Link href={`/app/rentals/${unit.id}/listing`}>Create shareable listing</Link></Button> : null}
+        <Button variant="outline" asChild><Link href={`/app/rentals/${unit.id}/applications`}>Verified applications</Link></Button>
+        <Button variant="outline" asChild><Link href={`/app/rentals/${unit.id}/tours`}>Tour requests</Link></Button>
+        <Button variant="outline" asChild><Link href={`/app/rentals/${unit.id}/inquiries`}>Rental questions</Link></Button>
         <Button variant="outline" asChild><Link href={`/app/properties/${property.id}`}>Property details</Link></Button></>}</div>
       {!occupied && <p className="mt-4 text-sm text-muted-foreground">Not signed yet? You can share an unlisted Crecy page yourself. Crecy marketplace discovery is not enabled in this release.</p>}
     </section>

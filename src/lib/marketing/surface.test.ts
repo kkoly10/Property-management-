@@ -199,7 +199,7 @@ describe("indexing policy", () => {
   });
 
   it("keeps unlisted rental/prospect pages unindexed without swallowing /landlords", () => {
-    expect(UNINDEXED_PUBLIC_PREFIXES).toEqual(["/l/", "/inquiries/verify", "/tours/verify"]);
+    expect(UNINDEXED_PUBLIC_PREFIXES).toEqual(["/l/", "/inquiries/verify", "/tours/verify", "/applications"]);
     expect(disallow).toContain("/l/");
     expect(disallow).toContain("/inquiries/verify");
     expect(disallow).toContain("/tours/verify");

@@ -97,6 +97,33 @@ describe("host routing", () => {
     expect(routeForHost("rent.crecyos.com", "/not-a-rental-surface")).toEqual({ type: "reject" });
   });
 
+  it("scopes applicant capability endpoints to rentals and lease decisions to the operator host", () => {
+    const publicPaths = [
+      "/api/v1/rental-applications", "/api/v1/rental-applications/verify",
+      "/api/v1/rental-applications/status", "/api/v1/rental-applications/withdraw",
+    ];
+    const operatorPaths = [
+      "/api/v1/rental-applications/prepare", "/api/v1/rental-applications/close",
+    ];
+    const otherHosts = ["app.crecyos.com", "owner.crecyos.com", "crecyos.com",
+      "crecyliving.com", "lakewood.crecyliving.com"];
+    for (const path of publicPaths) {
+      expect(routeForHost("rent.crecyos.com", path), path).toEqual({ type: "continue" });
+      for (const host of otherHosts) {
+        expect(routeForHost(host, path), `${host}${path}`).toEqual({ type: "reject" });
+      }
+      expect(routeForHost("localhost:3100", path)).toEqual({ type: "continue" });
+    }
+    for (const path of operatorPaths) {
+      expect(routeForHost("app.crecyos.com", path), path).toEqual({ type: "continue" });
+      expect(routeForHost("rent.crecyos.com", path), path).toEqual({ type: "reject" });
+      expect(routeForHost("owner.crecyos.com", path), path).toEqual({ type: "reject" });
+      expect(routeForHost("localhost:3100", path)).toEqual({ type: "continue" });
+    }
+    // Preserve other infrastructure endpoints: unrelated webhook routes still work.
+    expect(routeForHost("crecyos.com", "/api/internal/notifications/relay")).toEqual({ type: "continue" });
+  });
+
   it("canonicalizes a marketing path reached on a product host back to marketing", () => {
     expect(routeForHost("app.crecyos.com", "/pricing"))
       .toEqual({ type: "redirect", location: "https://crecyos.com/pricing", permanent: false });

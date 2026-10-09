@@ -40,6 +40,7 @@ or marketplace discovery is implemented.
 ## Abuse controls
 - Public create is service-role-only behind a validated HTTP endpoint.
 - DB rate limits use hashed normalized email and a server-supplied hashed network signal; raw IP is not stored.
+- The server requires a syntactically valid IPv4/IPv6 source from the edge-normalized `X-Forwarded-For` header in production. A missing/malformed source fails closed (503), even if `X-Real-IP` is supplied; localhost/demo testing can omit it. This defense does not establish the actual deployed proxy trust chain.
 - Per listing/email: at most 5 submissions in 24 hours. Per network signal: at most 20 per hour.
 - Idempotent replay is checked before rate accounting, so a lost response cannot spend the rate budget twice.
 - Invalid fields return validation errors; accepted/rate-limited create responses remain neutral enough not to

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getPublicRentalListing } from "@/lib/data/rental-listings";
 import { RentalInquiryForm } from "./inquiry-form";
 import { RentalTourForm } from "./tour-form";
+import { RentalApplicationForm } from "./application-form";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -15,6 +16,14 @@ function money(amountMinor: number, currencyCode: string) {
 }
 function locationText(location: { locality: string | null; subdivisionCode: string | null; countryCode: string }) {
   return [location.locality, location.subdivisionCode, location.countryCode].filter(Boolean).join(", ");
+}
+function localDateAfterDays(timeZone: string, dayOffset: number) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date()).filter((part) => part.type !== "literal")
+    .map((part) => [part.type, part.value]));
+  return new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + dayOffset))
+    .toISOString().slice(0, 10);
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ publicId: string }> }): Promise<Metadata> {
@@ -34,6 +43,8 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
   const listing = await getPublicRentalListing(publicId);
   if (!listing) notFound();
   const location = locationText(listing.location);
+  const minimumMoveInOn = [listing.availableOn, localDateAfterDays(listing.timeZone, 1)].sort().at(-1) ?? listing.availableOn;
+  const maximumMoveInOn = localDateAfterDays(listing.timeZone, 365);
 
   return (
     <div className="mx-auto max-w-[1180px] px-5 py-8 sm:py-12 lg:px-8">
@@ -90,7 +101,7 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
             <p className="mt-5 whitespace-pre-wrap text-sm leading-7 text-foreground/85">{listing.summary}</p>
             <div className="mt-6 rounded-xl bg-muted/55 p-4 text-sm leading-6 text-muted-foreground">
               This landlord shared the page directly. Crecy marketplace discovery is not enabled for this listing.
-              You can send a verified question or request a tour below without creating a renter account.
+              You can ask a question, request a tour, or apply below without creating a renter account.
             </div>
           </div>
           <div className="mt-4 rounded-[1.5rem] border bg-white p-6">
@@ -111,6 +122,15 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
             </p>
             <div className="mt-5">
               <RentalTourForm publicId={listing.publicId} timeZone={listing.timeZone} />
+            </div>
+          </div>
+          <div className="mt-4 rounded-[1.5rem] border bg-white p-6">
+            <h2 className="text-xl font-semibold">Apply for this rental</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Verify your email to submit a minimal application. No screening or fees are collected here.
+            </p>
+            <div className="mt-5">
+              <RentalApplicationForm publicId={listing.publicId} availableOn={minimumMoveInOn} latestMoveInOn={maximumMoveInOn} />
             </div>
           </div>
         </aside>

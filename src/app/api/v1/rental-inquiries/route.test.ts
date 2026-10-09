@@ -10,13 +10,14 @@ import { POST } from "./route";
 
 const publicId = "81000000-0000-4000-8000-000000000081";
 const secret = "inquiry-test-secret-that-is-at-least-32-characters-long";
-function request(ip = "203.0.113.9") {
+function request(ip: string | null = "203.0.113.9", realIp?: string) {
   return new Request("https://rent.crecyos.com/api/v1/rental-inquiries", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "idempotency-key": "inquiry-route-test-key",
-      "x-forwarded-for": ip,
+      ...(ip === null ? {} : { "x-forwarded-for": ip }),
+      ...(realIp ? { "x-real-ip": realIp } : {}),
     },
     body: JSON.stringify({
       publicId,
@@ -49,6 +50,28 @@ describe("public rental inquiry route", () => {
       p_email: "jamie@example.com",
     }));
     expect(JSON.stringify(mocks.rpc.mock.calls[0][1])).not.toContain("203.0.113.9");
+  });
+
+  it.each([
+    [null, "198.51.100.23"],
+    ["unknown", "198.51.100.23"],
+    ["198.51.100.2;spoofed", "198.51.100.23"],
+  ])("fails closed in production for an invalid forwarded source (%s), even with X-Real-IP", async (forwarded, realIp) => {
+    vi.stubEnv("NODE_ENV", "production");
+    const response = await POST(request(forwarded, realIp));
+    expect(response.status).toBe(503);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("hashes a valid IPv6 edge source without retaining the raw IP", async () => {
+    const source = "2001:db8::1234";
+    const response = await POST(request(source, "198.51.100.23"));
+    expect(response.status).toBe(202);
+    expect(mocks.rpc).toHaveBeenCalledWith("submit_public_rental_inquiry", expect.objectContaining({
+      p_network_hash: createHmac("sha256", secret)
+        .update(`rental-inquiry-ip:${source}`).digest("hex"),
+    }));
+    expect(JSON.stringify(mocks.rpc.mock.calls[0][1])).not.toContain(source);
   });
 
   it("fails closed when the server-only rate key is not configured", async () => {

@@ -622,6 +622,12 @@ create policy rental_tour_preferences_parent_read on public.rental_tour_preferen
       )
   )
 );
+create policy rental_applications_verified_operator_read on public.rental_applications for select to authenticated using (
+  status not in ('pending_verification','expired') and (
+    (select private.has_property_access(property_id,'lease.manage'))
+    or (select private.has_property_access(property_id,'property.manage'))
+  )
+);
 
 
 -- Sanitized relationship projections. These views intentionally select a limited column set and filter with relationship helper functions.
