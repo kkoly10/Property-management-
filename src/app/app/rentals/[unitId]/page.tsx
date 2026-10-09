@@ -36,7 +36,7 @@ export default async function RentalPage({ params }: { params: Promise<{ unitId:
         <Button variant="outline" asChild><Link href={`/app/rentals/${unit.id}/tours`}>Tour requests</Link></Button>
         <Button variant="outline" asChild><Link href={`/app/rentals/${unit.id}/inquiries`}>Rental questions</Link></Button>
         <Button variant="outline" asChild><Link href={`/app/properties/${property.id}`}>Property details</Link></Button></>}</div>
-      {!occupied && <p className="mt-4 text-sm text-muted-foreground">Not signed yet? You can share an unlisted Crecy page yourself. Crecy marketplace discovery is not enabled in this release.</p>}
+      {!occupied && <p className="mt-4 text-sm text-muted-foreground">Not signed yet? Publish an unlisted Crecy page you can share yourself, then optionally add that published listing to Crecy discovery.</p>}
     </section>
     <section><h2 className="text-xl font-semibold">What is private or shared</h2><dl className="mt-4 grid gap-4 sm:grid-cols-2">{["entrance", "kitchen", "bathroom", "laundry"].map((key) => <div key={key} className="border-b pb-3"><dt className="capitalize text-muted-foreground">{key}</dt><dd className="mt-1 font-medium">{typeof details[key] === "string" ? String(details[key]).replace("none", "Not provided") : "Not recorded"}</dd></div>)}</dl>
       {["utilitiesNotes", "parkingNotes"].map((key) => typeof details[key] === "string" && details[key] ? <div key={key} className="mt-5"><h3 className="font-medium">{key === "utilitiesNotes" ? "Utilities" : "Parking"}</h3><p className="mt-2 whitespace-pre-wrap break-words text-muted-foreground">{String(details[key])}</p></div> : null)}</section>

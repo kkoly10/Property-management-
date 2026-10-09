@@ -148,14 +148,15 @@ export default function LandlordsPage() {
       <Section tone="surface" className="!py-20 lg:!py-28">
         <div className="grid items-center gap-12 lg:grid-cols-[1fr_0.9fr] lg:gap-20">
           <div>
-            <p className="text-sm font-semibold text-primary">Current release boundary</p>
+            <p className="text-sm font-semibold text-primary">No marketplace dependency</p>
             <h2 className="mt-4 max-w-3xl text-[clamp(2.6rem,4.5vw,4.6rem)] font-normal leading-[0.97] tracking-[-0.055em] text-balance">
-              Bring your own renter. Bring your own traffic.
+              Bring your own renter—or add the listing to Crecy discovery.
             </h2>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground">
-              Crecy is not promising marketplace traffic in this release. The self-managing workflow works
-              with a renter you already found, and an unlisted shareable page lets you bring prospects from
-              your own channels. Crecy discovery, inquiries, tours and applications remain separate expansion work.
+              Crecy works even if every renter comes from your own network, Facebook, a yard sign or another
+              channel. A published listing starts as an unlisted share link; when you want another source of
+              leads, you can explicitly add it to Crecy discovery. Both paths feed the same verified questions,
+              tour requests and applications.
             </p>
           </div>
           <div className="rounded-[1.5rem] border bg-card p-6 sm:p-7">

@@ -70,3 +70,12 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 |---|---|---|---|---|
 | Verified tour intake | `rental_tour_requests`, `rental_tour_preferences`, private verification/attempt rows, notification jobs | `SubmitPublicRentalTour`, `VerifyPublicRentalTour` | public submit/verify only through validated service route; listing must remain published+unlisted | pending hidden, wrong/expired token, verification replay, property-time-zone conversion, duplicate/DST-gap denial, normalized-email and keyed-network rate limits, terminal token scrub, paused-listing denial |
 | Tour confirmation | same tour request/preferences + notification jobs | `ConfirmRentalTour` | authenticated exact-property `lease.manage` or `property.manage`; optimistic version; one submitted preference only | confirmation event + notification; replay, wrong-property/outsider/direct-write denial, overlap denial, private meeting-location boundary |
+
+## Homeowner B5 discovery trace — October 9, 2026
+
+| Capability | Primary persistence | Command/query | Authorization | Required evidence |
+|---|---|---|---|---|
+| Discovery opt-in/out | `rental_listings.visibility`, `discovered_at` | `set_rental_listing_visibility` | current self-managing operator + exact `property.manage`; versioned/idempotent | explicit opt-in, outsider/stale denial, audit/outbox |
+| Fail-safe unlisting | same listing row | trigger on status + existing save command | database invariant beneath app routes | edit/pause/close clear discovery; republish stays unlisted |
+| Public marketplace browse | no new marketplace table | `search_public_rental_listings` | service-role server DTO only | published+discoverable only, clean media, coarse location, bounded filters, stable keyset cursor |
+| Listing detail from search | existing listing/public DTO | `get_public_rental_listing` | service-role server DTO only | same B2/B3/B4 inquiry/tour/application surface; no duplicate lead pipeline |

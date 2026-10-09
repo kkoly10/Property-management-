@@ -5,8 +5,8 @@ Status: additive implementation contract under FD-HR-002–005. Local-only until
 ## Outcome
 A visitor holding a published unlisted rental link can send a question to the landlord. The question
 does not enter the landlord workflow until the visitor proves control of the submitted email address.
-B2 is contact intake only: no screening, scoring, ranking, application decision, eligibility inference
-or marketplace discovery is implemented.
+B2 itself is contact intake only: no screening, scoring, ranking, application decision or eligibility inference
+is introduced by this slice. B5 later adds optional marketplace discovery over the same inquiry pipeline.
 
 ## Public flow
 1. Published `/l/:publicId` shows an inquiry form.

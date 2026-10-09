@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { rentalListingDetailsSchema, rentalListingStatusSchema, saveRentalListingSchema } from "./rental-listing";
+import {
+  rentalDiscoverySearchSchema,
+  rentalListingDetailsSchema,
+  rentalListingStatusSchema,
+  rentalListingVisibilitySchema,
+  saveRentalListingSchema,
+} from "./rental-listing";
 
 const id = "10000000-0000-4000-8000-000000000001";
 const details = {
@@ -16,7 +22,7 @@ const details = {
 };
 
 describe("shared rental listing validation", () => {
-  it("accepts only the unlisted/shareable visibility in this release", () => {
+  it("keeps save/publish unlisted while discovery uses a separate explicit command", () => {
     expect(rentalListingDetailsSchema.safeParse(details).success).toBe(true);
     expect(rentalListingDetailsSchema.safeParse({ ...details, visibility: "discoverable" }).success).toBe(false);
   });
@@ -30,5 +36,30 @@ describe("shared rental listing validation", () => {
     expect(saveRentalListingSchema.safeParse({ organizationId: id, unitId: id, expectedVersion: -1, details }).success).toBe(false);
     expect(rentalListingStatusSchema.safeParse({ organizationId: id, listingId: id, expectedVersion: 1, status: "published" }).success).toBe(true);
     expect(rentalListingStatusSchema.safeParse({ organizationId: id, listingId: id, expectedVersion: 1, status: "discoverable" }).success).toBe(false);
+  });
+});
+
+describe("rental discovery validation", () => {
+  it("requires an explicit scoped visibility command", () => {
+    expect(rentalListingVisibilitySchema.safeParse({
+      organizationId: id, listingId: id, expectedVersion: 2, visibility: "discoverable",
+    }).success).toBe(true);
+    expect(rentalListingVisibilitySchema.safeParse({
+      organizationId: id, listingId: id, expectedVersion: 0, visibility: "discoverable",
+    }).success).toBe(false);
+  });
+
+  it("bounds discovery filters and requires a complete cursor", () => {
+    expect(rentalDiscoverySearchSchema.safeParse({
+      country: "US", locality: "Fairfax", minRentMinor: 100000, maxRentMinor: 200000,
+      minBedrooms: 1, limit: 12,
+    }).success).toBe(true);
+    expect(rentalDiscoverySearchSchema.safeParse({
+      minRentMinor: 200000, maxRentMinor: 100000, limit: 12,
+    }).success).toBe(false);
+    expect(rentalDiscoverySearchSchema.safeParse({
+      afterDiscoveredAt: "2026-10-09T20:00:00Z", limit: 12,
+    }).success).toBe(false);
+    expect(rentalDiscoverySearchSchema.safeParse({ limit: 25 }).success).toBe(false);
   });
 });

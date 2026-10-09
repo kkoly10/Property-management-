@@ -400,11 +400,11 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 
 - **Management route:** `/app/rentals/:unitId/listing` belongs to the active self-managing workspace. Saving creates/updates a private draft; it never publishes implicitly.
 - **Media:** the landlord uploads PNG/JPEG photos through the existing private document upload + malware-scan pipeline. Pending/rejected photos cannot be selected for publication.
-- **Publish state:** `draft → published ↔ paused → closed`; editing a published/paused listing saves the changed snapshot back as `draft`. Closed is terminal for that record, while a later relisting creates a fresh draft/public id. Publish remains `unlisted`; marketplace discovery is not enabled.
+- **Publish state:** `draft → published ↔ paused → closed`; editing a published/paused listing saves the changed snapshot back as `draft`. Closed is terminal for that record, while a later relisting creates a fresh draft/public id. Initial publish remains `unlisted`; B5 discovery is a separate explicit post-publish action.
 - **Share URL:** `rent.crecyos.com/l/:publicId`. “Unlisted” means absent from Crecy discovery and search indexing, not secret; anyone holding the URL can view it.
 - **Public content:** title, summary, rent, availability, space snapshot, coarse city/region/country, lease/pets/utilities/parking and selected clean photos. Street/postal and management/tenant records stay private.
 - **Recovery:** stale edits return a version conflict; uncertain save/publish/pause/close/link-rotation operations retain and retry the same body/idempotency key while editing is locked; share-link rotation invalidates the old public id.
-- **B1 boundary:** no Crecy inquiry, tour, application, screening or marketplace-search flow is claimed by this screen.
+- **B1 baseline:** the original shared-listing slice introduced no inquiry, tour, application, screening or marketplace-search flow. B2–B5 add those capabilities later without replacing the same listing record.
 
 
 ## Homeowner B2 — verified question intake
@@ -426,3 +426,12 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 - **Private location:** the landlord meeting location is never copied into the public listing. It is disclosed only to the verified visitor after one time is confirmed.
 - **States:** `pending_verification → requested → confirmed`; invalid/expired verification never enters the landlord queue. Confirmation is retry-safe and a second confirmed tour cannot overlap the same unit/time window.
 - **Language boundary:** no screen contains applicant scoring, qualification, approval, rejection, reservation, or marketplace-discovery claims.
+
+## Homeowner B5 — marketplace discovery
+
+- **Browse route:** `rent.crecyos.com/search` is a public/session-independent no-store surface. In local/preview mode it remains reachable on the shared development origin.
+- **Discovery cards:** show only approved advertising data: hero photo, title, coarse city/region/country, rent, availability and space summary. Cards link to the existing `/l/:publicId` detail page.
+- **Filters:** country, state/province, city, rent range, minimum bedrooms, space type and available-by date. Invalid filters fail closed without querying rental data.
+- **Landlord control:** a published listing shows either `Add to Crecy discovery` or `Remove from discovery`. Share publication and marketplace discovery are visibly separate states.
+- **Fail-safe state:** editing, pausing or closing removes discovery. Republishing returns to unlisted/shareable; the landlord must opt into discovery again.
+- **Indexing:** search and listing detail remain noindex in this local implementation. Search-engine indexing is a production marketplace-release decision, not implied by B5 functionality.

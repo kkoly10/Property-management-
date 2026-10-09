@@ -13,7 +13,7 @@ for (const width of [390, 1440]) {
     await expect(questionCard.getByLabel("First name")).toBeVisible();
     await expect(questionCard.getByLabel("Email")).toBeVisible();
     await expect(questionCard.getByLabel("Question about this rental")).toBeVisible();
-    await expect(page.getByText(/marketplace discovery is not enabled/i)).toBeVisible();
+    await expect(page.getByText(/not included in Crecy search/i)).toBeVisible();
     expect(await page.evaluate(() =>
       document.documentElement.scrollWidth - document.documentElement.clientWidth,
     )).toBeLessThanOrEqual(1);

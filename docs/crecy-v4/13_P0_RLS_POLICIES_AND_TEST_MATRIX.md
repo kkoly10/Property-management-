@@ -780,8 +780,17 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 | ID | Boundary | Required proof |
 |---|---|---|
 | HR-L02 | Listing base rows | `rental_listings` and `rental_listing_photos` are unreadable to anon; authenticated reads require effective property read/manage scope; direct business-table writes stay revoked. |
-| HR-L03 | Public projection | `get_public_rental_listing` is service-role only and returns only a published unlisted advertising snapshot. Street, postal, organization, tenant, accounting and private-document fields are absent. |
+| HR-L03 | Public projection | `get_public_rental_listing` is service-role only and returns only a published advertising snapshot whose visibility is explicitly `unlisted` or `discoverable`. Street, postal, organization, tenant, accounting and private-document fields are absent. |
 | HR-L04 | Listing media | `rental_listing_photo` upload grants require a unit parent and PNG/JPEG MIME; selected versions must be scanner-clean and belong to the exact listing unit/property. |
 | HR-L05 | Recipient isolation | Listing photos are filtered from the operator document register and a database trigger rejects every insertion into `document_deliveries` for listing-photo versions. |
-| HR-L06 | Publication lifecycle | Draft/paused/closed rows do not resolve publicly; publish requires unlisted visibility, summary and at least one clean photo; discoverable publication is rejected. |
+| HR-L06 | Publication lifecycle | Draft/paused/closed rows do not resolve publicly; initial publish requires unlisted visibility, summary and at least one clean photo. Discovery is a separate post-publish command. |
 | HR-L07 | Link rotation | Rotating a share UUID makes the old public identifier stop resolving; retry returns the same newly minted identifier. |
+
+## Homeowner B5 — explicit marketplace discovery
+
+| ID | Boundary | Required proof |
+|---|---|---|
+| HR-L08 | Discovery consent | Only a current self-managing operator with exact `property.manage` scope can toggle `discoverable`; stale versions and outsider/wrong-property calls are denied. |
+| HR-L09 | Discovery read | `search_public_rental_listings` is service-role only, bounded to `published + discoverable`, scanner-clean approved media, coarse location, and sanitized advertising fields. Anonymous/browser table access remains denied. |
+| HR-L10 | Fail-safe removal | Editing, pausing or closing a discoverable listing atomically resets it to `unlisted` and clears `discovered_at`; republish does not silently restore discovery. |
+| HR-L11 | Stable pagination | Search is newest-first with `(discovered_at,id)` keyset pagination; stable data yields no duplicate/omitted page rows. |

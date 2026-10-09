@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Copy, ImagePlus, Link2, Pause, RotateCcw, Send, XCircle } from "lucide-react";
+import { Copy, EyeOff, ImagePlus, Link2, Pause, RotateCcw, Search, Send, XCircle } from "lucide-react";
 import { z } from "zod";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,8 @@ type FormState = {
 };
 type ListingResponse = {
   listingId: string; publicId: string; status: RentalListingRow["status"];
-  visibility: "unlisted"; version: number; photoCount?: number; previousPublicId?: string;
+  visibility: "unlisted" | "discoverable"; version: number; photoCount?: number; previousPublicId?: string;
+  discoveredAt?: string | null;
 };
 class RequestFailure extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -37,8 +38,9 @@ async function jsonRequest(url: string, init: RequestInit): Promise<unknown> {
 const responseSchema = z.object({
   listingId: z.uuid(), publicId: z.uuid(),
   status: z.enum(["draft", "published", "paused", "closed"]),
-  visibility: z.literal("unlisted"), version: z.number().int().positive(),
+  visibility: z.enum(["unlisted", "discoverable"]), version: z.number().int().positive(),
   photoCount: z.number().int().nonnegative().optional(), previousPublicId: z.uuid().optional(),
+  discoveredAt: z.string().nullable().optional(),
 });
 const imageTypes = ["image/png", "image/jpeg"];
 
@@ -71,12 +73,13 @@ export function RentalListingForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [uncertain, setUncertain] = useState<"save" | "status" | "rotate" | null>(null);
+  const [uncertain, setUncertain] = useState<"save" | "status" | "rotate" | "visibility" | null>(null);
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const operationRef = useRef<{ key: string; body: unknown } | null>(null);
   const statusOperationRef = useRef<{ key: string; body: unknown; status: "published" | "paused" | "closed" } | null>(null);
   const rotateOperationRef = useRef<{ key: string; body: unknown } | null>(null);
+  const visibilityOperationRef = useRef<{ key: string; body: unknown; visibility: "unlisted" | "discoverable" } | null>(null);
   const versionRef = useRef(initialListing?.version ?? 0);
   const shareUrl = listing ? `${shareOrigin}/l/${listing.public_id}` : null;
   const interactionLocked = disabled || busy || uncertain !== null;
@@ -86,6 +89,7 @@ export function RentalListingForm({
     operationRef.current = null;
     statusOperationRef.current = null;
     rotateOperationRef.current = null;
+    visibilityOperationRef.current = null;
     setForm((current) => ({ ...current, [key]: value }));
     setDirty(true); setError(null); setMessage(null);
   }
@@ -94,6 +98,7 @@ export function RentalListingForm({
     operationRef.current = null;
     statusOperationRef.current = null;
     rotateOperationRef.current = null;
+    visibilityOperationRef.current = null;
     setSelectedIds((current) => {
       const next = new Set(current);
       if (next.has(versionId)) next.delete(versionId); else next.add(versionId);
@@ -109,10 +114,11 @@ export function RentalListingForm({
         title: form.title, summary: form.summary, rent_amount_minor: exactMoneyMinor(form.rentAmount) ?? 0,
         currency_code: currencyCode, available_on: form.availableOn, lease_term_text: form.leaseTermText,
         pets_text: form.petsText, utilities_text: form.utilitiesText, parking_text: form.parkingText,
-        published_at: null,
+        published_at: null, discovered_at: null,
       }),
       id: result.listingId, public_id: result.publicId, status: result.status,
       visibility: result.visibility, version: result.version,
+      discovered_at: result.discoveredAt ?? null,
       title: form.title, summary: form.summary,
       rent_amount_minor: exactMoneyMinor(form.rentAmount) ?? 0, available_on: form.availableOn,
       lease_term_text: form.leaseTermText, pets_text: form.petsText,
@@ -246,6 +252,45 @@ export function RentalListingForm({
     } finally { setBusy(false); }
   }
 
+  async function changeVisibility(visibility: "unlisted" | "discoverable") {
+    if (disabled || busy || dirty || !listing || listing.status !== "published"
+      || (uncertain !== null && uncertain !== "visibility")) return;
+    if (!visibilityOperationRef.current) {
+      visibilityOperationRef.current = {
+        key: crypto.randomUUID(),
+        visibility,
+        body: { organizationId, listingId: listing.id, expectedVersion: versionRef.current, visibility },
+      };
+    } else if (visibilityOperationRef.current.visibility !== visibility) {
+      return;
+    }
+    const operation = visibilityOperationRef.current;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      const result = responseSchema.parse(await jsonRequest("/api/v1/rental-listings/visibility", {
+        method: "POST", headers: { "content-type": "application/json", "idempotency-key": operation.key },
+        body: JSON.stringify(operation.body),
+      }));
+      applyResult(result);
+      visibilityOperationRef.current = null;
+      setUncertain(null);
+      setMessage(visibility === "discoverable"
+        ? "Listing added to Crecy discovery. Renters can now find it in Crecy search."
+        : "Listing removed from Crecy discovery. The direct share link still works.");
+    } catch (caught) {
+      const definite = caught instanceof RequestFailure && caught.status < 500;
+      if (definite) {
+        visibilityOperationRef.current = null;
+        setUncertain(null);
+      } else {
+        setUncertain("visibility");
+      }
+      setError(definite
+        ? (caught instanceof Error ? caught.message : "Discovery could not be changed.")
+        : "Crecy could not confirm the discovery change. Retry the exact same action.");
+    } finally { setBusy(false); }
+  }
+
   async function uploadPhoto() {
     const file = fileRef.current?.files?.[0];
     if (disabled || busy || uncertain || !file) return;
@@ -336,7 +381,7 @@ export function RentalListingForm({
         <Alert>
           <AlertTitle>Confirm the previous operation before editing</AlertTitle>
           <AlertDescription>
-            Crecy did not receive a definitive response. Retry the same {uncertain === "save" ? "save" : uncertain === "status" ? "status change" : "link replacement"}; the original operation key is preserved.
+            Crecy did not receive a definitive response. Retry the same {uncertain === "save" ? "save" : uncertain === "status" ? "status change" : uncertain === "rotate" ? "link replacement" : "discovery change"}; the original operation key is preserved.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -349,14 +394,18 @@ export function RentalListingForm({
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Share status</p>
               <p className="mt-1 text-lg font-semibold capitalize">{listing.status}</p>
               <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-                {listing.status === "published"
-                  ? "Anyone with the link can view this listing. It is not included in Crecy marketplace search."
-                  : listing.status === "paused" ? "The saved listing is not viewable from its public link."
-                  : listing.status === "closed" ? "This listing is closed permanently."
-                  : "This draft is visible only inside your management workspace."}
+                {listing.status === "published" && listing.visibility === "discoverable"
+                  ? "Anyone with the link can view this listing, and renters can also find it in Crecy search."
+                  : listing.status === "published"
+                    ? "Anyone with the link can view this listing. It is not included in Crecy search."
+                    : listing.status === "paused" ? "The saved listing is not viewable from its public link or search."
+                    : listing.status === "closed" ? "This listing is closed permanently."
+                    : "This draft is visible only inside your management workspace."}
               </p>
             </div>
-            <span className="w-fit rounded-full border px-3 py-1.5 text-xs font-semibold">Unlisted / shareable</span>
+            <span className="w-fit rounded-full border px-3 py-1.5 text-xs font-semibold">
+              {listing.visibility === "discoverable" ? "Visible in Crecy search" : "Unlisted / shareable"}
+            </span>
           </div>
           {shareUrl ? (
             <div className="mt-5 flex flex-col gap-2 border-t pt-4 sm:flex-row">
@@ -366,6 +415,25 @@ export function RentalListingForm({
               }}><Copy aria-hidden="true" className="h-4 w-4" />Copy</Button>
               <Button type="button" variant="outline" disabled={busy || dirty || listing.status === "closed" || (uncertain !== null && uncertain !== "rotate")} onClick={rotateLink}>
                 <RotateCcw aria-hidden="true" className="h-4 w-4" />Replace link
+              </Button>
+            </div>
+          ) : null}
+          {listing.status === "published" ? (
+            <div className="mt-4 flex flex-col gap-3 rounded-lg bg-muted/45 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="max-w-xl text-sm leading-6 text-muted-foreground">
+                {listing.visibility === "discoverable"
+                  ? "Crecy search is on for this listing. Removing it from discovery keeps the direct share link working."
+                  : "Crecy search is off. Turn it on only when you want renters to discover this listing inside Crecy."}
+              </p>
+              <Button
+                type="button"
+                variant={listing.visibility === "discoverable" ? "outline" : "default"}
+                disabled={disabled || busy || dirty || (uncertain !== null && uncertain !== "visibility")}
+                onClick={() => changeVisibility(listing.visibility === "discoverable" ? "unlisted" : "discoverable")}
+              >
+                {listing.visibility === "discoverable"
+                  ? <><EyeOff aria-hidden="true" className="h-4 w-4" />Remove from discovery</>
+                  : <><Search aria-hidden="true" className="h-4 w-4" />Add to Crecy discovery</>}
               </Button>
             </div>
           ) : null}

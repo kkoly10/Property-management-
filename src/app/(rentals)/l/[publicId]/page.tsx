@@ -85,7 +85,9 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
 
         <aside className="lg:sticky lg:top-6 lg:self-start">
           <div className="rounded-[1.5rem] border bg-white p-6 shadow-[0_18px_50px_rgba(31,35,48,.08)]">
-            <p className="text-sm font-semibold text-primary">Unlisted rental</p>
+            <p className="text-sm font-semibold text-primary">
+              {listing.visibility === "discoverable" ? "Rental on Crecy" : "Unlisted rental"}
+            </p>
             <h1 className="mt-3 text-3xl font-semibold tracking-[-0.045em] text-balance">{listing.title}</h1>
             <p className="mt-3 text-sm text-muted-foreground">{location}</p>
             <div className="mt-6 flex items-end justify-between gap-4 border-y py-5">
@@ -100,8 +102,9 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
             </div>
             <p className="mt-5 whitespace-pre-wrap text-sm leading-7 text-foreground/85">{listing.summary}</p>
             <div className="mt-6 rounded-xl bg-muted/55 p-4 text-sm leading-6 text-muted-foreground">
-              This landlord shared the page directly. Crecy marketplace discovery is not enabled for this listing.
-              You can ask a question, request a tour, or apply below without creating a renter account.
+              {listing.visibility === "discoverable"
+                ? "The landlord chose to include this listing in Crecy discovery. You can ask a question, request a tour, or apply below through the same rental workflow."
+                : "This landlord shared the page directly. It is not included in Crecy search. You can ask a question, request a tour, or apply below without creating a renter account."}
             </div>
           </div>
           <div className="mt-4 rounded-[1.5rem] border bg-white p-6">

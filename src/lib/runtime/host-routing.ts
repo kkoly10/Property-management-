@@ -24,7 +24,7 @@ export type RoutingDecision =
 const APP_SURFACE_PREFIXES = [
   "/app", "/onboarding", "/settings", "/platform", "/login", "/signup", "/auth", "/invitations",
 ];
-const RENTAL_PUBLIC_PREFIXES = ["/l", "/inquiries/verify", "/tours/verify", "/applications"];
+const RENTAL_PUBLIC_PREFIXES = ["/search", "/l", "/inquiries/verify", "/tours/verify", "/applications"];
 // Application capability endpoints must not be issued on an operator, owner,
 // resident or marketing origin. Operator decisions belong on the app host.
 const RENTAL_APPLICATION_PUBLIC_APIS = new Set([
@@ -101,7 +101,7 @@ export function routeForHost(rawHost: string | null | undefined, pathname: strin
 
     case "rentals": {
       if (pathname === "/") {
-        return { type: "redirect", location: `https://${marketing}/landlords${search}`, permanent: false };
+        return { type: "redirect", location: `/search${search}`, permanent: false };
       }
       if (underPrefix(pathname, RENTAL_PUBLIC_PREFIXES)
         || pathname.startsWith("/_next/")

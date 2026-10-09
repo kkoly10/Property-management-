@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     if (message.includes("LISTING_VERSION_CONFLICT")) return reply({ error: "This listing changed elsewhere. Reload before changing its status." }, 409);
     if (message.includes("LISTING_PHOTO_REQUIRED")) return reply({ error: "Add at least one scanner-clean photo before publishing." }, 422);
     if (message.includes("LISTING_SUMMARY_REQUIRED")) return reply({ error: "Add a short listing description before publishing." }, 422);
-    if (message.includes("DISCOVERY_NOT_ENABLED")) return reply({ error: "Crecy marketplace discovery is not enabled. Publish this listing as unlisted/shareable." }, 422);
+    if (message.includes("DISCOVERY_NOT_ENABLED")) return reply({ error: "Publish the listing as unlisted/shareable first. Discovery is a separate action after publication." }, 422);
     if (message.includes("LISTING_STATUS_TRANSITION_INVALID") || message.includes("LISTING_CLOSED")) {
       return reply({ error: "That listing status change is not available." }, 422);
     }

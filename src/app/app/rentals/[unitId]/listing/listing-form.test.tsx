@@ -27,7 +27,7 @@ const listing: RentalListingRow = {
   rent_amount_minor: 135000, currency_code: "USD", available_on: "2026-10-01",
   lease_term_text: "12 months", pets_text: "Ask about pets",
   utilities_text: "Water included", parking_text: "One driveway space",
-  status: "draft", visibility: "unlisted", version: 2, published_at: null,
+  status: "draft", visibility: "unlisted", version: 2, published_at: null, discovered_at: null,
 };
 const photo: ListingPhotoOption = {
   versionId: VERSION, documentId: DOCUMENT, status: "clean", originalFilename: "basement.jpg",
@@ -95,5 +95,39 @@ describe("shareable listing recovery", () => {
     expect(screen.getByText("Unlisted / shareable")).toBeInTheDocument();
     expect(screen.getByDisplayValue("https://rent.crecyos.com/l/" + PUBLIC)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /marketplace|discover/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("listing discovery controls", () => {
+  it("requires an explicit action to add and remove a published listing from Crecy search", async () => {
+    const published: RentalListingRow = {
+      ...listing,
+      status: "published",
+      version: 3,
+      published_at: "2026-10-09T20:00:00Z",
+    };
+    mocks.fetch
+      .mockResolvedValueOnce(okay({
+        listingId: LISTING, publicId: PUBLIC, status: "published",
+        visibility: "discoverable", version: 4, discoveredAt: "2026-10-09T20:05:00Z",
+      }))
+      .mockResolvedValueOnce(okay({
+        listingId: LISTING, publicId: PUBLIC, status: "published",
+        visibility: "unlisted", version: 5, discoveredAt: null,
+      }));
+
+    mount(published);
+    fireEvent.click(screen.getByRole("button", { name: "Add to Crecy discovery" }));
+    await screen.findByText("Visible in Crecy search");
+    expect(mocks.fetch.mock.calls[0][0]).toBe("/api/v1/rental-listings/visibility");
+    expect(JSON.parse(mocks.fetch.mock.calls[0][1].body)).toMatchObject({
+      listingId: LISTING, expectedVersion: 3, visibility: "discoverable",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove from discovery" }));
+    await screen.findByText("Unlisted / shareable");
+    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toMatchObject({
+      listingId: LISTING, expectedVersion: 4, visibility: "unlisted",
+    });
   });
 });

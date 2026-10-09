@@ -698,7 +698,7 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 - `SaveRentalListing(organizationId, unitId, expectedVersion, details, idempotencyKey)` is self-managing-only, property-scoped, version checked and durably idempotent. It snapshots only approved advertising fields and exact clean photo versions. Saving changes to a live listing returns that record to `draft`; a closed historical listing is never edited, and a later relisting starts a new record. Event: `rental_listing.saved`.
 - `SetRentalListingStatus(organizationId, listingId, expectedVersion, status, idempotencyKey)` permits `published`, `paused`, or terminal `closed`. Publish refuses discoverable visibility and requires a description plus scanner-clean media. Event: `rental_listing.status_changed`.
 - `RotateRentalListingLink(organizationId, listingId, expectedVersion, idempotencyKey)` replaces the public UUID without changing the private listing id. Event: `rental_listing.link_rotated`.
-- `GetPublicRentalListing(publicId)` is service-role-only. It returns a sanitized published/unlisted DTO; the server converts only its explicitly selected scanner-clean photo paths to short-lived signed URLs.
+- `GetPublicRentalListing(publicId)` is service-role-only. It returns a sanitized published advertising DTO for explicitly public `unlisted|discoverable` listings; the server converts only its explicitly selected scanner-clean photo paths to short-lived signed URLs.
 - `rental_listing_photo` is advertising media. It may not enter `document_deliveries`.
 
 
@@ -721,3 +721,11 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 - **Confirm:** `POST /api/v1/rental-tours/confirm` requires a current scoped operator, optimistic version, one of the visitor's exact submitted preferences, and a private meeting location. Confirmation schedules a 30-minute tour and queues the verified visitor's confirmation email.
 - **Time rules:** visitor-local fields are interpreted in the rental property's IANA time zone, round-trip validated through UTC, and rejected when duplicated, in the past, beyond the allowed horizon, or inside a daylight-saving gap.
 - **Boundary:** tour confirmation is logistics only. It does not rank, qualify, approve, reserve, or create an application or tenancy.
+
+## Homeowner B5 — rental marketplace discovery
+
+- `SetRentalListingVisibility(organizationId, listingId, expectedVersion, visibility, idempotencyKey)` is an authenticated self-managing operator command. `discoverable` requires the exact listing to already be published with a meaningful description and at least one scanner-clean approved photo. Event: `rental_listing.visibility_changed`.
+- `SearchPublicRentalListings(filters, cursor, limit)` is service-role-only. It returns only `published + discoverable` sanitized listing snapshots, one approved clean hero image, and a bounded `(discovered_at,id)` keyset cursor.
+- Discovery filters are country, region, locality, rent range, minimum bedrooms, space type and available-by date. B5 has no relevance scoring, paid placement or applicant ranking.
+- Editing a live listing saves it back as `draft + unlisted`; pausing or closing also clears discovery. Republishing does not restore discovery without a fresh explicit visibility command.
+- Search-result CTAs reuse `/l/:publicId` and the existing B2/B3/B4 inquiry, tour and application paths.

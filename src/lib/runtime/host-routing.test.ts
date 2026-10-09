@@ -75,7 +75,11 @@ describe("host routing", () => {
   it("keeps share links on the dedicated rentals host and nowhere else", () => {
     expect(classifyHost("rent.crecyos.com")).toEqual({ kind: "rentals" });
     expect(routeForHost("rent.crecyos.com", "/")).toEqual({
-      type: "redirect", location: "https://crecyos.com/landlords", permanent: false,
+      type: "redirect", location: "/search", permanent: false,
+    });
+    expect(routeForHost("rent.crecyos.com", "/search")).toEqual({ type: "continue" });
+    expect(routeForHost("crecyos.com", "/search")).toEqual({
+      type: "redirect", location: "https://rent.crecyos.com/search", permanent: false,
     });
     expect(routeForHost("rent.crecyos.com", "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
       .toEqual({ type: "continue" });
@@ -155,15 +159,14 @@ describe("host routing", () => {
     }
   });
 
-  it("serves a rental share page without constructing a session client and without shared caching", async () => {
-    const response = await proxy(new NextRequest(new URL(
-      "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      "https://rent.crecyos.com",
-    )));
-    expect(response.status).toBe(200);
-    expect(created.count).toBe(0);
-    expect(response.headers.get("set-cookie")).toBeNull();
-    expect(response.headers.get("cache-control")).toBe("private, no-store");
+  it("serves rental discovery and share pages without constructing a session client or shared cache", async () => {
+    for (const path of ["/search", "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]) {
+      const response = await proxy(new NextRequest(new URL(path, "https://rent.crecyos.com")));
+      expect(response.status, path).toBe(200);
+      expect(created.count, path).toBe(0);
+      expect(response.headers.get("set-cookie"), path).toBeNull();
+      expect(response.headers.get("cache-control"), path).toBe("private, no-store");
+    }
   });
 
   it("canonicalizes marketing /login to the app host WITHOUT constructing a session client", async () => {

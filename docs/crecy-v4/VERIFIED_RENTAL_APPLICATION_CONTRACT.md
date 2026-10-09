@@ -3,7 +3,7 @@
 Status: additive implementation contract under FD-HR-002–005. Local-only until release approval.
 
 ## Outcome
-A visitor holding a published unlisted rental link may submit a bounded application, verify control of the submitted email, and receive private access to their own application status. A landlord may review verified applications and explicitly choose “Prepare lease” or close one. Crecy does not score, rank, recommend, approve automatically, or perform screening.
+A visitor holding a published public rental listing may submit a bounded application, verify control of the submitted email, and receive private access to their own application status. B4 launched on unlisted share links; B5 later permits the same command for explicitly discoverable listings. A landlord may review verified applications and explicitly choose “Prepare lease” or close one. Crecy does not score, rank, recommend, approve automatically, or perform screening.
 
 ## V1 application data
 - first name, last name, verified email (no phone number collected in this minimal slice)
@@ -76,4 +76,4 @@ Route-level Vitest coverage now exercises the application handlers directly with
 Local B4 implementation certification does **not** attach or deploy `rent.crecyos.com`. Read-only Vercel inventory on October 9, 2026 shows the property-management project has seven custom/project domains, including `crecyos.com`, `app.crecyos.com`, `owner.crecyos.com`, and Crecy Living, but **not** `rent.crecyos.com`; the project currently reports no managed routes. Therefore the real rentals hostname and deployed forwarding-header topology remain production-release prerequisites requiring explicit infrastructure authorization. They do not invalidate the locally tested application lifecycle.
 
 ## Release boundary
-No marketplace search/discovery is introduced. No native applicant e-sign is introduced in this slice; the selected applicant proceeds through the existing signed-agreement workflow, so resident access still begins only after a real tenancy is activated.
+B4 itself introduces no marketplace search/discovery; B5 later exposes the same application path from explicitly discoverable listings. No native applicant e-sign is introduced in B4; the selected applicant proceeds through the existing signed-agreement workflow, so resident access still begins only after a real tenancy is activated.

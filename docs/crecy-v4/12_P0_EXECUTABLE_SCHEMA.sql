@@ -1616,7 +1616,7 @@ create table public.rental_listings (
   parking_text text not null default '' check (length(parking_text) <= 1000),
   status text not null default 'draft' check (status in ('draft','published','paused','closed')),
   visibility text not null default 'unlisted' check (visibility in ('unlisted','discoverable')),
-  published_at timestamptz, closed_at timestamptz,
+  published_at timestamptz, discovered_at timestamptz, closed_at timestamptz,
   version integer not null default 1 check (version > 0),
   created_at timestamptz not null default now(),
   created_by uuid references auth.users(id) on delete restrict,
@@ -1630,6 +1630,8 @@ create table public.rental_listings (
 );
 create index rental_listings_property_idx on public.rental_listings(property_id,status);
 create index rental_listings_public_status_idx on public.rental_listings(public_id,status);
+create index rental_listings_discovery_idx on public.rental_listings(discovered_at desc,id desc)
+  where status='published' and visibility='discoverable';
 create unique index rental_listings_open_unit_unique on public.rental_listings(organization_id,unit_id) where status<>'closed';
 
 create table public.rental_listing_photos (
