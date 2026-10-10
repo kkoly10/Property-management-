@@ -34,7 +34,7 @@ export default async function SignDocumentPage({ params }: { params: Promise<{ d
       <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">This is a legally binding electronic signature under the ESIGN Act and UETA. You will consent, review the document, then sign.</p>
     </div>
     {!delivery.signable && state.mode === "ready" ? <Alert variant="warning"><CircleAlert className="h-5 w-5" /><AlertTitle>Not ready to sign</AlertTitle><AlertDescription>This document has not finished security scanning, or is not available to you to sign.</AlertDescription></Alert> : null}
-    <Card><CardContent className="p-6">
+    <Card><CardContent className="p-4 sm:p-6">
       <SignCeremony
         deliveryId={delivery.deliveryId}
         organizationId={delivery.organizationId}

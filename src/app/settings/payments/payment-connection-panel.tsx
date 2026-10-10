@@ -87,9 +87,9 @@ export function PaymentConnectionPanel({ items, authenticatorLevel, setupMode = 
           <p className="mt-1 text-sm leading-5 text-muted-foreground">{item.countryCode} · {item.providerAccountReference ?? "No Stripe account"}</p>
           <p className="mt-3 text-sm leading-5 text-muted-foreground">{presentation.description}</p>
         </div>
-        {setupMode ? <Button disabled>Connect Stripe <ExternalLink className="h-4 w-4" /></Button>
-          : authenticatorLevel !== "aal2" ? <Button asChild><Link href="/settings/security/mfa?returnTo=%2Fsettings%2Fpayments"><ShieldCheck className="h-4 w-4" />Verify with MFA</Link></Button>
-          : <Button onClick={startOnboarding} disabled={submitting}>{submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}{submitting ? "Opening Stripe…" : actionLabel}</Button>}
+        {setupMode ? <Button className="w-full sm:w-auto" disabled>Connect Stripe <ExternalLink className="h-4 w-4" /></Button>
+          : authenticatorLevel !== "aal2" ? <Button asChild className="w-full sm:w-auto"><Link href="/settings/security/mfa?returnTo=%2Fsettings%2Fpayments"><ShieldCheck className="h-4 w-4" />Verify with MFA</Link></Button>
+          : <Button className="w-full sm:w-auto" onClick={startOnboarding} disabled={submitting}>{submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}{submitting ? "Opening Stripe…" : actionLabel}</Button>}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Circle } from "lucide-react";
+import { Check } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 const steps = [
@@ -15,18 +15,17 @@ export function OnboardingSteps() {
   const activeIndex = matchedIndex < 0 ? 0 : matchedIndex;
 
   return (
-    <ol className="mt-5 flex gap-3 lg:flex-col">
+    <ol className="mt-5 grid grid-cols-3 gap-2 lg:flex lg:flex-col lg:gap-3">
       {steps.map((step, index) => {
         const complete = index < activeIndex;
         const active = index === activeIndex;
 
         return (
-          <li key={step.path} className="flex min-w-0 items-center gap-3" aria-current={active ? "step" : undefined}>
-            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${active ? "border-primary bg-primary text-white" : complete ? "border-success bg-[#ecfdf3] text-success" : "bg-card text-muted-foreground"}`}>
+          <li key={step.path} className="flex min-w-0 flex-col items-center gap-2 text-center lg:flex-row lg:gap-3 lg:text-left" aria-current={active ? "step" : undefined}>
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-semibold lg:h-7 lg:w-7 ${active ? "border-primary bg-primary text-white" : complete ? "border-success bg-[#ecfdf3] text-success" : "bg-card text-muted-foreground"}`}>
               {complete ? <Check aria-hidden="true" className="h-4 w-4" /> : index + 1}
             </span>
-            <span className="hidden truncate text-sm font-medium lg:block">{step.label}</span>
-            {index < steps.length - 1 ? <Circle aria-hidden="true" className="h-1 w-1 fill-border text-border lg:hidden" /> : null}
+            <span className={`text-xs font-medium leading-4 sm:text-sm ${active ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
           </li>
         );
       })}

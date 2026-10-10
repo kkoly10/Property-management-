@@ -62,7 +62,7 @@ export function DocumentAcknowledgeForm({
   }
 
   return <div className="flex flex-col items-stretch gap-2 sm:items-end">
-    <Button size="sm" variant="ghost" disabled={disabled || pending || !evidenceHash} onClick={acknowledge}>
+    <Button size="sm" variant="ghost" className="w-full sm:w-auto" disabled={disabled || pending || !evidenceHash} onClick={acknowledge}>
       {pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}Acknowledge receipt
     </Button>
     {error ? <Alert variant="destructive" className="text-left"><AlertTitle>Not recorded</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}

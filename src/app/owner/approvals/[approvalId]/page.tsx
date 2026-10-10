@@ -90,6 +90,12 @@ export default async function OwnerApprovalDetailPage({ params }: { params: Prom
                   </div>
                 </section>
 
+                <div className="border-t px-5 py-4 lg:hidden">
+                  <Button asChild className="w-full">
+                    <a href="#owner-decision">{item.status === "pending" ? "Review and decide" : "View decision record"}</a>
+                  </Button>
+                </div>
+
                 <section aria-labelledby="chronology-heading" className="border-t px-5 py-6 sm:px-6">
                   <h2 id="chronology-heading" className="text-sm font-semibold">Request chronology</h2>
                   <ol className="mt-5 border-l pl-5">
@@ -108,7 +114,7 @@ export default async function OwnerApprovalDetailPage({ params }: { params: Prom
                 </section>
               </div>
 
-              <aside aria-labelledby="decision-heading" className="border-t bg-[var(--surface-subtle)]/45 lg:border-t-0 lg:border-l">
+              <aside id="owner-decision" aria-labelledby="decision-heading" className="scroll-mt-24 border-t bg-[var(--surface-subtle)]/45 lg:border-t-0 lg:border-l">
                 <div className="sticky top-28 px-5 py-6 sm:px-6 sm:py-7">
                   <div className="flex items-center gap-2">
                     <Clock3 aria-hidden="true" className="h-4 w-4 text-primary" />

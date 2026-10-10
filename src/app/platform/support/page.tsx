@@ -47,7 +47,7 @@ export default async function PlatformConsolePage({ searchParams }: { searchPara
         <CardContent className="pt-5">
           <form action="/platform" method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div className="flex-1 space-y-2"><Label htmlFor="q">Organization</Label><Input id="q" name="q" defaultValue={query ?? ""} placeholder="Northstar, or northstar" /></div>
-            <Button type="submit">Search</Button>
+            <Button type="submit" className="w-full sm:w-auto">Search</Button>
           </form>
           <div className="mt-5 divide-y">
             {state.organizations.length ? state.organizations.map((org) => (

@@ -88,19 +88,19 @@ export default async function OwnerDocumentsPage() {
                       ) : <Badge variant="warning">Awaiting response</Badge>}
                     </div>
 
-                    <div className="flex flex-wrap gap-2 lg:max-w-[210px] lg:justify-end">
+                    <div className="grid gap-2 sm:flex sm:flex-wrap lg:max-w-[210px] lg:justify-end">
                       {item.documentId ? (
-                        <Button asChild variant="outline" size="sm">
+                        <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
                           <Link href={`/api/v1/documents/${item.documentId}/download`}><Download aria-hidden="true" className="h-4 w-4" />Download</Link>
                         </Button>
                       ) : null}
                       {signed ? (
-                        <Button asChild size="sm" variant="secondary">
+                        <Button asChild size="sm" variant="secondary" className="w-full sm:w-auto">
                           <Link href={`/documents/${item.deliveryId}/certificate`}><BadgeCheck aria-hidden="true" className="h-4 w-4" />Certificate</Link>
                         </Button>
                       ) : (
                         <>
-                          <Button asChild size="sm">
+                          <Button asChild size="sm" className="w-full sm:w-auto">
                             <Link href={`/documents/${item.deliveryId}/sign`}><PenLine aria-hidden="true" className="h-4 w-4" />Review &amp; sign</Link>
                           </Button>
                           <DocumentAcknowledgeForm

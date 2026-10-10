@@ -449,6 +449,86 @@ test.describe("secondary operator workflows stay phone-first", () => {
   });
 });
 
+test.describe("minimum mobile quality on low-frequency surfaces", () => {
+  test.use({ viewport: PHONE });
+
+  test("onboarding progress names every step instead of showing unlabeled dots", async ({ page }) => {
+    await page.goto("/onboarding/organization", { waitUntil: "networkidle" });
+    for (const label of ["Workspace", "Entity & book", "First property"]) {
+      await expect(page.getByText(label, { exact: true })).toBeVisible();
+    }
+  });
+
+  test("document upload is reachable before the register on a phone", async ({ page }) => {
+    await page.goto("/app/documents", { waitUntil: "networkidle" });
+    const upload = page.getByText("Upload document", { exact: true }).first();
+    const register = page.getByText("Document register", { exact: true }).first();
+    await expect(upload).toBeVisible();
+    await expect(register).toBeVisible();
+    const [uploadBox, registerBox] = await Promise.all([upload.boundingBox(), register.boundingBox()]);
+    expect(uploadBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(registerBox?.y ?? Number.NEGATIVE_INFINITY);
+  });
+
+  test("notification and payment settings keep their primary actions full-width on phones", async ({ page }) => {
+    await page.goto("/settings/notifications", { waitUntil: "networkidle" });
+    for (const control of [
+      page.getByRole("button", { name: "Save preferences" }),
+      page.getByRole("link", { name: "Privacy requests" }),
+    ]) {
+      const box = await control.boundingBox();
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(300);
+    }
+
+    await page.goto("/settings/payments", { waitUntil: "networkidle" });
+    const paymentAction = page.getByRole("button", { name: /Connect Stripe|Continue verification|Opening Stripe/i })
+      .or(page.getByRole("link", { name: /Verify with MFA|Review in Stripe/i }))
+      .first();
+    await expect(paymentAction).toBeVisible();
+    const paymentBox = await paymentAction.boundingBox();
+    expect(paymentBox?.width ?? 0).toBeGreaterThanOrEqual(300);
+  });
+
+  test("owner approvals expose the decision area after the facts", async ({ page }) => {
+    await page.goto("/owner/approvals/d0000000-0000-4000-8000-000000000001", { waitUntil: "networkidle" });
+    const jump = page.getByRole("link", { name: /Review and decide|View decision record/i });
+    await expect(jump).toBeVisible();
+    await expect(jump).toHaveAttribute("href", "#owner-decision");
+    const box = await jump.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(300);
+    await expect(page.locator("#owner-decision")).toBeAttached();
+  });
+
+  test("owner document actions stack into full-width phone controls", async ({ page }) => {
+    await page.goto("/owner/documents", { waitUntil: "networkidle" });
+    const register = page.getByRole("region", { name: "Owner document register" });
+    await expect(register).toBeVisible();
+    const action = register.getByRole("link", { name: /Download|Certificate|Review & sign/i }).first();
+    await expect(action).toBeVisible();
+    const box = await action.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(300);
+  });
+
+  test("privacy and platform support primary actions are thumb-oriented", async ({ page }) => {
+    await page.goto("/settings/privacy", { waitUntil: "networkidle" });
+    const submit = page.getByRole("button", { name: "Submit request" });
+    const submitBox = await submit.boundingBox();
+    expect(submitBox?.width ?? 0).toBeGreaterThanOrEqual(300);
+
+    await page.goto("/platform/support", { waitUntil: "networkidle" });
+    const search = page.getByRole("button", { name: "Search" });
+    const searchBox = await search.boundingBox();
+    expect(searchBox?.width ?? 0).toBeGreaterThanOrEqual(300);
+  });
+
+  test("secure signing gives the primary step action the phone width", async ({ page }) => {
+    await page.goto("/documents/preview-delivery/sign", { waitUntil: "networkidle" });
+    const continueButton = page.getByRole("button", { name: "Continue" }).first();
+    await expect(continueButton).toBeVisible();
+    const box = await continueButton.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(280);
+  });
+});
+
 test.describe("invitation acceptance without a backend", () => {
   test.use({ viewport: PHONE });
 

@@ -333,12 +333,12 @@ export function NotificationPreferencesForm({
 
       {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
       {success ? <Alert variant="info"><CheckCircle2 className="h-5 w-5" /><AlertDescription>{success}</AlertDescription></Alert> : null}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" disabled={disabled || busy}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+        <Button type="submit" className="w-full sm:w-auto" disabled={disabled || busy}>
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <BellRing className="h-4 w-4" />}
           {busy ? "Saving…" : "Save preferences"}
         </Button>
-        <Button variant="ghost" asChild><Link href={`/settings/privacy?returnTo=${NOTIFICATION_PREFERENCE_PATH[audience]}`}><FileLock2 className="h-4 w-4" />Privacy requests</Link></Button>
+        <Button variant="ghost" asChild className="w-full sm:w-auto"><Link href={`/settings/privacy?returnTo=${NOTIFICATION_PREFERENCE_PATH[audience]}`}><FileLock2 className="h-4 w-4" />Privacy requests</Link></Button>
       </div>
     </form>
   );

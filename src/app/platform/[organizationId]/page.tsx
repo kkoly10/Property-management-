@@ -47,7 +47,7 @@ export default async function PlatformOrganizationPage({ params }: { params: Pro
                   <AlertTitle>Multi-factor verification required</AlertTitle>
                   <AlertDescription>Opening an audited support session requires a verified authenticator. Verify to continue — you&apos;ll return here.</AlertDescription>
                 </Alert>
-                <Button asChild><Link href={stepUpHref}><ShieldCheck className="h-4 w-4" />Verify with MFA</Link></Button>
+                <Button asChild className="w-full sm:w-auto"><Link href={stepUpHref}><ShieldCheck className="h-4 w-4" />Verify with MFA</Link></Button>
               </>
             ) : (
               <>
@@ -94,7 +94,7 @@ export default async function PlatformOrganizationPage({ params }: { params: Pro
             <CardHeader className="border-b"><div className="flex items-center gap-2"><Users className="h-4 w-4 text-primary" /><CardTitle>Members</CardTitle></div><CardDescription>Roles and access windows. Email addresses are masked.</CardDescription></CardHeader>
             <CardContent className="p-0">
               {state.members.length ? <div className="divide-y">{state.members.map((member) => (
-                <div key={member.membershipId} className="flex items-center justify-between gap-4 px-5 py-3 text-sm">
+                <div key={member.membershipId} className="flex flex-col items-start gap-2 px-5 py-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                   <span className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs text-muted-foreground">{member.maskedEmail}</span><Badge variant="neutral">{member.roleCode}</Badge></span>
                   <Badge variant={member.status === "active" ? "success" : "neutral"}>{member.status}</Badge>
                 </div>
@@ -106,7 +106,7 @@ export default async function PlatformOrganizationPage({ params }: { params: Pro
             <CardHeader className="border-b"><div className="flex items-center gap-2"><Activity className="h-4 w-4 text-primary" /><CardTitle>Recent activity</CardTitle></div><CardDescription>Action codes only — no record contents or before/after payloads.</CardDescription></CardHeader>
             <CardContent className="p-0">
               {state.activity.length ? <div className="divide-y">{state.activity.map((event, index) => (
-                <div key={`${event.actionCode}:${event.occurredAt}:${index}`} className="flex items-center justify-between gap-4 px-5 py-3 text-sm">
+                <div key={`${event.actionCode}:${event.occurredAt}:${index}`} className="flex flex-col items-start gap-1.5 px-5 py-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                   <span><span className="font-medium">{label(event.actionCode)}</span><span className="ml-2 text-xs text-muted-foreground">{event.resourceType}</span></span>
                   <span className="text-xs text-muted-foreground">{event.occurredAt ? new Date(event.occurredAt).toLocaleString() : ""}</span>
                 </div>

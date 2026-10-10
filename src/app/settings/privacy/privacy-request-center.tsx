@@ -174,7 +174,7 @@ export function PrivacyRequestCenter({
             </Alert>
             {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
             {success ? <Alert variant="info"><CheckCircle2 className="h-5 w-5" /><AlertDescription>{success}</AlertDescription></Alert> : null}
-            <Button type="submit" disabled={disabled || busy}>
+            <Button type="submit" className="w-full sm:w-auto" disabled={disabled || busy}>
               {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               {busy ? "Submitting…" : "Submit request"}
             </Button>
@@ -233,12 +233,12 @@ export function PrivacyRequestCenter({
                         <Label htmlFor={`privacy-cancel-${item.privacyRequestId}`}>Cancellation reason <span className="font-normal text-muted-foreground">(optional)</span></Label>
                         <Input id={`privacy-cancel-${item.privacyRequestId}`} value={cancellationReason} maxLength={500} onChange={(event) => setCancellationReason(event.target.value)} disabled={activeAction === item.privacyRequestId} />
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button type="button" size="sm" variant="outline" disabled={activeAction === item.privacyRequestId} onClick={() => cancelRequest(item)}>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                        <Button type="button" size="sm" variant="outline" className="w-full sm:w-auto" disabled={activeAction === item.privacyRequestId} onClick={() => cancelRequest(item)}>
                           {activeAction === item.privacyRequestId ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
                           Confirm cancellation
                         </Button>
-                        <Button type="button" size="sm" variant="ghost" disabled={activeAction === item.privacyRequestId} onClick={() => setCancelingId(undefined)}>Keep request</Button>
+                        <Button type="button" size="sm" variant="ghost" className="w-full sm:w-auto" disabled={activeAction === item.privacyRequestId} onClick={() => setCancelingId(undefined)}>Keep request</Button>
                       </div>
                     </div>
                   ) : null}

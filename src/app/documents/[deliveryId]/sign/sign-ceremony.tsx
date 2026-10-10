@@ -117,19 +117,19 @@ export function SignCeremony({
         <input type="checkbox" checked={consented} disabled={disabled} onChange={(event) => setConsented(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary" />
         <span>I have read the disclosure above, I can access and keep these records, and I consent to use electronic records and signatures for this document.</span>
       </label>
-      <div className="flex justify-end"><Button disabled={!canContinueConsent || disabled} onClick={() => setStep(1)}>Continue</Button></div>
+      <div className="flex justify-end"><Button className="w-full sm:w-auto" disabled={!canContinueConsent || disabled} onClick={() => setStep(1)}>Continue</Button></div>
     </section> : null}
 
     {step === 1 ? <section className="space-y-4">
       <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" /><h2 className="text-lg font-semibold">Review the document</h2></div>
       <p className="text-sm leading-6 text-muted-foreground">Open and read <span className="font-medium text-foreground">{documentTitle}</span>{versionNumber ? ` (version ${versionNumber})` : ""} before you sign. Your signature will be bound to this exact version.</p>
-      {documentId ? <Button asChild variant="outline"><Link href={`/api/v1/documents/${documentId}/download`} target="_blank" rel="noreferrer"><Download className="h-4 w-4" />Open the document</Link></Button> : <Alert variant="info"><AlertTitle>Document</AlertTitle><AlertDescription>This document will open for review once the workspace is connected.</AlertDescription></Alert>}
+      {documentId ? <Button asChild variant="outline" className="w-full sm:w-auto"><Link href={`/api/v1/documents/${documentId}/download`} target="_blank" rel="noreferrer"><Download className="h-4 w-4" />Open the document</Link></Button> : <Alert variant="info"><AlertTitle>Document</AlertTitle><AlertDescription>This document will open for review once the workspace is connected.</AlertDescription></Alert>}
       <div className="space-y-1.5">
         <Label htmlFor="signer-name">Adopt your signature — type your full legal name</Label>
         <Input id="signer-name" value={signerName} disabled={disabled} onChange={(event) => setSignerName(event.target.value)} placeholder="Jordan Q. Rivera" autoComplete="name" maxLength={160} />
         {signerName.trim() ? <p className="pt-1 font-[cursive] text-2xl text-foreground">{signerName.trim()}</p> : null}
       </div>
-      <div className="flex justify-between"><Button variant="ghost" onClick={() => setStep(0)}>Back</Button><Button disabled={!canSign || disabled} onClick={() => setStep(2)}>Continue</Button></div>
+      <div className="grid grid-cols-2 gap-3"><Button className="w-full" variant="ghost" onClick={() => setStep(0)}>Back</Button><Button className="w-full" disabled={!canSign || disabled} onClick={() => setStep(2)}>Continue</Button></div>
     </section> : null}
 
     {step === 2 ? <section className="space-y-4">
@@ -140,9 +140,9 @@ export function SignCeremony({
         <p className="mt-1 text-xs text-muted-foreground">Signing records your name, this device and network address, the exact document version, and the date and time.</p>
       </div>
       {error ? <Alert variant="destructive"><AlertTitle>Not signed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
-      <div className="flex justify-between">
-        <Button variant="ghost" disabled={pending} onClick={() => setStep(1)}>Back</Button>
-        <Button disabled={pending || disabled || !canSign} onClick={sign}>
+      <div className="grid grid-cols-2 gap-3">
+        <Button className="w-full" variant="ghost" disabled={pending} onClick={() => setStep(1)}>Back</Button>
+        <Button className="w-full" disabled={pending || disabled || !canSign} onClick={sign}>
           {pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <PenLine className="h-4 w-4" />}Sign document
         </Button>
       </div>
