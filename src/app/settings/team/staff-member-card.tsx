@@ -98,7 +98,7 @@ export function StaffMemberCard({
               <option value="suspended">Suspended</option>
             </NativeSelect>
           </div>
-          <label className="flex min-h-10 items-center gap-3 self-end rounded-md border px-3 py-2 text-sm">
+          <label className="flex min-h-11 items-center gap-3 self-end rounded-md border px-3 py-2 text-sm">
             <input type="checkbox" checked={mfaRequired} onChange={(event) => setMfaRequired(event.target.checked)} disabled={locked} className="h-4 w-4 accent-primary" />
             Require MFA
           </label>
@@ -111,7 +111,7 @@ export function StaffMemberCard({
           </p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {properties.map((property) => (
-              <label key={property.propertyId} className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm">
+              <label key={property.propertyId} className="flex min-h-11 items-center gap-3 rounded-md border px-3 py-2 text-sm">
                 <input
                   type="checkbox"
                   checked={propertyIds.includes(property.propertyId)}
@@ -136,11 +136,12 @@ export function StaffMemberCard({
         ) : null}
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
         {success ? <Alert variant="info"><AlertDescription>{success}</AlertDescription></Alert> : null}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <Button
             type="button"
             size="sm"
             variant="outline"
+            className="w-full sm:w-auto"
             disabled={locked || member.status === "invited"}
             onClick={() => run("details", () => mutate(`/api/v1/staff/${member.membershipId}`, "PATCH", {
               roleCode,
@@ -158,6 +159,7 @@ export function StaffMemberCard({
             type="button"
             size="sm"
             variant="outline"
+            className="w-full sm:w-auto"
             disabled={locked || member.status === "invited" || (!selectedRole?.organizationWideAllowed && propertyIds.length === 0)}
             onClick={() => run("scopes", () => mutate(`/api/v1/staff/${member.membershipId}/property-scopes`, "PUT", {
               propertyIds,
@@ -171,6 +173,7 @@ export function StaffMemberCard({
             type="button"
             size="sm"
             variant="destructive"
+            className="w-full sm:w-auto"
             disabled={locked || reason.trim().length < 3}
             onClick={() => run("revoke", () => mutate(`/api/v1/staff/${member.membershipId}/revoke`, "POST", {
               expectedVersion: member.version,

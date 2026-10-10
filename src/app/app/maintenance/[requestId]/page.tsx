@@ -245,7 +245,7 @@ export default async function OperatorMaintenanceDetailPage({
           ) : null}
         </div>
 
-        <aside className="space-y-6 xl:sticky xl:top-28 xl:self-start">
+        <aside aria-label="Maintenance actions" className="order-first space-y-6 xl:order-none xl:sticky xl:top-28 xl:self-start">
           {workOrder ? (
             <>
               <WorkOrderActions

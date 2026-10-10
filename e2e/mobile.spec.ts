@@ -100,6 +100,21 @@ async function undersizedTextControls(page: Page) {
       .map((el) => `${el.tagName.toLowerCase()}#${el.id || "(no id)"} @ ${getComputedStyle(el).fontSize}`));
 }
 
+async function undersizedSharedTouchControls(page: Page) {
+  return page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('[data-slot="button"], [data-slot="input"], [data-slot="native-select"]')]
+      .filter((el) => {
+        const box = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0;
+      })
+      .filter((el) => el.getBoundingClientRect().height < 44)
+      .map((el) => {
+        const box = el.getBoundingClientRect();
+        return `${el.tagName.toLowerCase()}#${el.id || "(no id)"} @ ${Math.round(box.height)}px`;
+      }));
+}
+
 test.describe("every page fits a phone", () => {
   test.use({ viewport: PHONE });
 
@@ -117,6 +132,7 @@ test.describe("every page fits a phone", () => {
       // out. The shared primitives carry `text-base sm:text-sm`; this catches a hand-rolled control
       // that skipped them.
       expect(await undersizedTextControls(page), `${route} has a control iOS will zoom into on focus`).toEqual([]);
+      expect(await undersizedSharedTouchControls(page), `${route} has a shared control below the 44px phone touch target`).toEqual([]);
     });
   }
 });
@@ -367,6 +383,69 @@ test.describe("phone touch ergonomics", () => {
     await expect(mobileLabel).toBeVisible();
     await expect(mobileLabel).toContainText(/Apply to/i);
     await expect(page.getByText("Open charge", { exact: true })).toBeHidden();
+  });
+});
+
+test.describe("secondary operator workflows stay phone-first", () => {
+  test.use({ viewport: PHONE });
+
+  test("payment actions appear before long payment history on a phone", async ({ page }) => {
+    await page.goto("/app/payments/50000000-0000-4000-8000-000000000005", { waitUntil: "networkidle" });
+    const actions = page.getByRole("complementary", { name: "Payment actions" });
+    const history = page.getByRole("heading", { name: "Settlement history" });
+    await expect(actions).toBeVisible();
+    await expect(history).toBeVisible();
+    const [actionsBox, historyBox] = await Promise.all([actions.boundingBox(), history.boundingBox()]);
+    expect(actionsBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(historyBox?.y ?? Number.NEGATIVE_INFINITY);
+  });
+
+  test("maintenance actions appear before the detail record on a phone", async ({ page }) => {
+    await page.goto("/app/maintenance/a0000000-0000-4000-8000-000000000001", { waitUntil: "networkidle" });
+    const actions = page.getByRole("complementary", { name: "Maintenance actions" });
+    const report = page.getByRole("heading", { name: "Resident report" });
+    await expect(actions).toBeVisible();
+    await expect(report).toBeVisible();
+    const [actionsBox, reportBox] = await Promise.all([actions.boundingBox(), report.boundingBox()]);
+    expect(actionsBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(reportBox?.y ?? Number.NEGATIVE_INFINITY);
+  });
+
+  test("import mapping prioritizes required fields and collapses optional fields", async ({ page }) => {
+    await page.goto("/app/imports/preview-import", { waitUntil: "networkidle" });
+    await expect(page.getByText("Required mappings", { exact: true })).toBeVisible();
+
+    const optional = page.getByTestId("optional-import-mappings");
+    await expect(optional).toBeVisible();
+    await expect(optional).not.toHaveAttribute("open", "");
+    const optionalSelects = optional.locator("select");
+    expect(await optionalSelects.count()).toBeGreaterThan(0);
+    await expect(optionalSelects.first()).toBeHidden();
+
+    await optional.locator("summary").click();
+    await expect(optionalSelects.first()).toBeVisible();
+  });
+
+  test("team access controls and destructive actions are thumb-sized and stacked", async ({ page }) => {
+    await page.goto("/settings/team", { waitUntil: "networkidle" });
+
+    const inviteMfa = page.getByText("Require MFA for this user", { exact: true }).locator("..");
+    const inviteProperty = page.getByRole("group", { name: "Property access" }).locator("label").first();
+    for (const control of [inviteMfa, inviteProperty]) {
+      const box = await control.boundingBox();
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    }
+
+    const inviteButton = page.getByRole("button", { name: "Invite staff member" });
+    const inviteBox = await inviteButton.boundingBox();
+    expect(inviteBox?.width ?? 0).toBeGreaterThanOrEqual(300);
+
+    const roster = page.getByRole("region", { name: "Team roster" }).or(page.locator('section[aria-labelledby="team-roster"]'));
+    const saveButton = roster.getByRole("button", { name: "Save role/status" }).first();
+    const revokeButton = roster.getByRole("button", { name: "Revoke access" }).first();
+    for (const control of [saveButton, revokeButton]) {
+      const box = await control.boundingBox();
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(300);
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    }
   });
 });
 

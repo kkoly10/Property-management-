@@ -126,7 +126,7 @@ export function StaffInviteForm({
             <option value="fr-CA">Français (Canada)</option>
           </NativeSelect>
         </div>
-        <label className="flex min-h-10 items-center gap-3 self-end rounded-md border bg-card px-3 py-2 text-sm">
+        <label className="flex min-h-11 items-center gap-3 self-end rounded-md border bg-card px-3 py-2 text-sm">
           <input name="mfaRequired" type="checkbox" checked={mfaRequired} onChange={(event) => setMfaRequired(event.target.checked)} disabled={disabled || busy || Boolean(role?.sensitive)} className="h-4 w-4 accent-primary" />
           Require MFA for this user
         </label>
@@ -138,7 +138,7 @@ export function StaffInviteForm({
         </p>
         <div className="grid gap-2 sm:grid-cols-2">
           {properties.map((property) => (
-            <label key={property.propertyId} className="flex items-center gap-3 rounded-md border bg-card px-3 py-2 text-sm">
+            <label key={property.propertyId} className="flex min-h-11 items-center gap-3 rounded-md border bg-card px-3 py-2 text-sm">
               <input
                 type="checkbox"
                 checked={propertyIds.includes(property.propertyId)}
@@ -174,7 +174,7 @@ export function StaffInviteForm({
           </AlertDescription>
         </Alert>
       ) : null}
-      <Button type="submit" disabled={disabled || busy || (!role?.organizationWideAllowed && propertyIds.length === 0)}>
+      <Button type="submit" className="w-full sm:w-auto" disabled={disabled || busy || (!role?.organizationWideAllowed && propertyIds.length === 0)}>
         {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
         {busy ? "Creating invitation…" : "Invite staff member"}
       </Button>

@@ -174,13 +174,49 @@ export function ImportWorkflow({ jobId, importType, headers, currentMapping, cur
     }
   }
 
+  const requiredFields = fields.filter((field) => field.required);
+  const optionalFields = fields.filter((field) => !field.required);
+  const mappingControl = (field: { key: string; label: string; required: boolean }) => (
+    <div key={field.key} className="space-y-2">
+      <Label htmlFor={`mapping-${field.key}`}>{field.label}{field.required ? " *" : ""}</Label>
+      <NativeSelect
+        id={`mapping-${field.key}`}
+        value={mapping[field.key] ?? ""}
+        disabled={locked}
+        onChange={(event) => setMapping((current) => ({ ...current, [field.key]: event.target.value }))}
+      >
+        <option value="">Not mapped</option>
+        {headers.map((header) => <option key={header} value={header}>{header}</option>)}
+      </NativeSelect>
+    </div>
+  );
+
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2">{fields.map((field) => <div key={field.key} className="space-y-2"><Label htmlFor={`mapping-${field.key}`}>{field.label}{field.required ? " *" : ""}</Label><NativeSelect id={`mapping-${field.key}`} value={mapping[field.key] ?? ""} disabled={locked} onChange={(event) => setMapping((current) => ({ ...current, [field.key]: event.target.value }))}><option value="">Not mapped</option>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</NativeSelect></div>)}</div>
+      <section className="space-y-3" aria-labelledby="required-mappings-heading">
+        <div>
+          <p id="required-mappings-heading" className="text-sm font-semibold">Required mappings</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">Map these fields first. Validation cannot pass without them.</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">{requiredFields.map(mappingControl)}</div>
+      </section>
+
+      {optionalFields.length ? (
+        <details data-testid="optional-import-mappings" className="overflow-hidden rounded-xl border bg-card">
+          <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold marker:hidden">
+            <span>Optional mappings</span>
+            <span className="text-xs font-medium text-muted-foreground">{optionalFields.length} fields</span>
+          </summary>
+          <div className="grid gap-4 border-t px-4 py-4 sm:grid-cols-2">
+            {optionalFields.map(mappingControl)}
+          </div>
+        </details>
+      ) : null}
+
       <div className="space-y-2"><Label htmlFor="dedupe-mode">Duplicate handling</Label><NativeSelect id="dedupe-mode" value={dedupeMode} disabled={locked} onChange={(event) => setDedupeMode(event.target.value as "strict" | "review")}><option value="strict">Strict — block duplicate units</option><option value="review">Review — flag duplicates for review</option></NativeSelect></div>
       {validationHash ? <div className="rounded-lg border bg-muted/50 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Validation hash</p><p className="mt-1 break-all font-mono text-xs">{validationHash}</p></div> : null}
       {message ? <Alert variant={message.tone === "error" ? "destructive" : "info"}>{message.tone === "success" ? <CheckCircle2 className="h-5 w-5" /> : <RotateCcw className="h-5 w-5" />}<AlertTitle>{message.tone === "success" ? "Workflow updated" : "Action required"}</AlertTitle><AlertDescription>{message.text}</AlertDescription></Alert> : null}
-      <div className="flex flex-col gap-2 sm:flex-row"><Button type="button" variant="outline" className="flex-1" disabled={locked} onClick={validate}>{pending === "validate" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}{pending === "validate" ? "Validating…" : status === "ready" || status === "failed" ? "Validate again" : "Validate rows"}</Button><Button type="button" className="flex-1" disabled={disabled || pending !== null || status !== "ready" || !validationHash} onClick={commit}>{pending === "commit" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}{pending === "commit" ? "Committing…" : "Commit atomically"}</Button></div>
+      <div className="flex flex-col gap-2 sm:flex-row"><Button type="button" variant="outline" className="w-full sm:flex-1" disabled={locked} onClick={validate}>{pending === "validate" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}{pending === "validate" ? "Validating…" : status === "ready" || status === "failed" ? "Validate again" : "Validate rows"}</Button><Button type="button" className="w-full sm:flex-1" disabled={disabled || pending !== null || status !== "ready" || !validationHash} onClick={commit}>{pending === "commit" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}{pending === "commit" ? "Committing…" : "Commit atomically"}</Button></div>
     </div>
   );
 }
