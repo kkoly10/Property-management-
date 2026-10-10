@@ -28,12 +28,12 @@ function moneyToMinor(value: string) {
   return Math.round(amount * 100);
 }
 
-export function ExistingLeaseForm({ properties, units, documents, initialPropertyId, disabled }: {
-  properties: LeasePropertyOption[]; units: LeaseUnitOption[]; documents: SignedLeaseDocumentOption[]; initialPropertyId?: string; disabled: boolean;
+export function ExistingLeaseForm({ properties, units, documents, initialPropertyId, initialUnitId, disabled }: {
+  properties: LeasePropertyOption[]; units: LeaseUnitOption[]; documents: SignedLeaseDocumentOption[]; initialPropertyId?: string; initialUnitId?: string; disabled: boolean;
 }) {
   const initialProperty = properties.find((property) => property.id === initialPropertyId) ?? properties[0];
   const [draft, setDraft] = useState<LeaseDraft>({
-    propertyId: initialProperty?.id ?? "", unitId: "", householdName: "", members: [{ ...emptyMember("primary"), primaryContact: true, financiallyResponsible: true }],
+    propertyId: initialProperty?.id ?? "", unitId: units.find((unit) => unit.id === initialUnitId && unit.propertyId === initialProperty?.id)?.id ?? "", householdName: "", members: [{ ...emptyMember("primary"), primaryContact: true, financiallyResponsible: true }],
     source: "operator_supplied", externalReference: "", startDate: "", endDate: "", rentAmount: "", rentFrequency: "monthly",
     signedDocumentId: "", openingBalance: "0.00", firstChargeDueDate: "",
   });

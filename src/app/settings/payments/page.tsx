@@ -19,7 +19,7 @@ export default async function PaymentSettingsPage() {
   if (!organizationId && getPublicSupabaseConfig()) redirect("/app");
   const workspace = await getPaymentConnectionWorkspace(organizationId);
   return (
-    <main className="min-h-screen p-5 lg:p-10"><div className="mx-auto max-w-4xl space-y-6">
+    <main className="min-h-screen gutter-5 py-5 lg:gutter-8 lg:py-10"><div className="mx-auto max-w-4xl space-y-6">
       <Button variant="ghost" asChild><Link href="/app"><ArrowLeft className="h-4 w-4" />Back to command center</Link></Button>
       <div><p className="text-sm font-semibold text-primary">Settings</p><h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Payment connection</h1><p className="mt-2 text-muted-foreground">Connect the operator&apos;s merchant account before residents can pay online.</p></div>
       <Alert variant="info"><ShieldCheck className="h-5 w-5" /><AlertTitle>Operator-controlled funds flow</AlertTitle><AlertDescription>Rent is processed on your connected merchant account. Crecy does not hold your rent.</AlertDescription></Alert>

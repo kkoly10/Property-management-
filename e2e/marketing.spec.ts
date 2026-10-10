@@ -6,7 +6,7 @@ import { test, expect, type Page } from "@playwright/test";
 // test can see, and which makes a marketing page feel broken on the device most visitors use), and a
 // navigation link that 404s. Both are checked on every public route rather than on a sample.
 
-const ROUTES = ["/", "/product", "/pricing", "/crecy-living", "/security", "/pilot", "/legal"] as const;
+const ROUTES = ["/", "/product", "/landlords", "/pricing", "/crecy-living", "/security", "/pilot", "/legal"] as const;
 
 const PHONE = { width: 375, height: 812 };
 const DESKTOP = { width: 1440, height: 900 };
@@ -78,10 +78,23 @@ test.describe("public marketing surface", () => {
     await expect(page.getByRole("link", { name: "Start free" }).first()).toBeVisible();
   });
 
+  test("the landlord entry preserves the self-managing signup intent", async ({ page }) => {
+    await page.goto("/landlords");
+    await page.getByRole("link", { name: "Set up my rental" }).first().click();
+    await expect(page).toHaveURL(/\/signup\?path=self_managing$/);
+    await expect(page.getByRole("heading", { name: "Create your landlord account" })).toBeVisible();
+    await expect(page.locator('input[name="customerPath"]')).toHaveValue("self_managing");
+    await expect(page.getByRole("link", { name: "Sign in" })).toHaveAttribute(
+      "href",
+      "/login?next=%2Fonboarding%2Flandlord",
+    );
+  });
+
   test("desktop navigation reaches every marketing page", async ({ page }) => {
     await page.setViewportSize(DESKTOP);
     for (const [label, path] of [
       ["Product", "/product"],
+      ["Landlords", "/landlords"],
       ["Pricing", "/pricing"],
       ["Crecy Living", "/crecy-living"],
       ["Security", "/security"],
@@ -115,7 +128,7 @@ test.describe("public marketing surface", () => {
     for (const path of ["/", "/pricing", "/security"]) {
       await page.goto(path);
       const footer = page.locator("footer");
-      for (const label of ["Product", "Pricing", "Crecy Living", "Security", "Pilot", "Log in", "Start free", "Legal documents"]) {
+      for (const label of ["Product", "Landlords", "Pricing", "Crecy Living", "Security", "Pilot", "Log in", "Start free", "Legal documents"]) {
         await expect(footer.getByRole("link", { name: label, exact: true }), `${path} footer is missing ${label}`).toBeVisible();
       }
     }
@@ -187,7 +200,9 @@ test.describe("indexing policy", () => {
     for (const prefix of ["/app", "/owner", "/platform", "/settings", "/home", "/login", "/signup", "/api"]) {
       expect(body, `${prefix} is not disallowed`).toContain(`Disallow: ${prefix}\n`);
     }
-    for (const route of ["/product", "/pricing", "/crecy-living", "/security", "/pilot"]) {
+    expect(body).toContain("Disallow: /l/\n");
+    expect(body).not.toContain("Disallow: /l\n");
+    for (const route of ["/product", "/landlords", "/pricing", "/crecy-living", "/security", "/pilot"]) {
       expect(body).not.toContain(`Disallow: ${route}`);
     }
     expect(body).toContain("Sitemap:");
@@ -197,10 +212,10 @@ test.describe("indexing policy", () => {
     const response = await request.get("/sitemap.xml");
     expect(response.status()).toBe(200);
     const body = await response.text();
-    for (const route of ["/product", "/pricing", "/crecy-living", "/security", "/pilot", "/legal"]) {
+    for (const route of ["/product", "/landlords", "/pricing", "/crecy-living", "/security", "/pilot", "/legal"]) {
       expect(body, `${route} is missing from the sitemap`).toContain(`${route}<`);
     }
-    for (const route of ["/app", "/settings", "/platform", "/home<"]) {
+    for (const route of ["/app", "/settings", "/platform", "/home<", "/l/"]) {
       expect(body, `${route} should not be in the sitemap`).not.toContain(`${route}<`);
     }
   });
@@ -226,7 +241,7 @@ test.describe("indexing policy", () => {
   test("each public page carries a unique title, description and canonical", async ({ page }) => {
     await page.setViewportSize(DESKTOP);
     const seen = new Map<string, string>();
-    for (const path of ["/", "/product", "/pricing", "/crecy-living", "/security", "/pilot"]) {
+    for (const path of ["/", "/product", "/landlords", "/pricing", "/crecy-living", "/security", "/pilot"]) {
       await page.goto(path);
       const title = await page.title();
       const description = await page.locator('meta[name="description"]').getAttribute("content");
@@ -300,7 +315,7 @@ test.describe("shared header at 200% text-only enlargement", () => {
         ? desktopNav
         : header.getByRole("navigation", { name: "Primary mobile" });
 
-      for (const label of ["Product", "Pricing", "Crecy Living", "Security", "Pilot"]) {
+      for (const label of ["Product", "Landlords", "Pricing", "Crecy Living", "Security", "Pilot"]) {
         await expect(menu.getByRole("link", { name: label }), `${label} unreachable at ${width}px`).toBeVisible();
       }
       await expect(header.getByRole("link", { name: "Sign in" }).first()).toBeVisible();

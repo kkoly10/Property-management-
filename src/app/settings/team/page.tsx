@@ -18,7 +18,7 @@ export default async function TeamSettingsPage() {
   if (!organizationId && getPublicSupabaseConfig()) redirect("/app");
   const workspace = await getStaffWorkspace(organizationId);
   return (
-    <main className="min-h-screen p-5 lg:p-10">
+    <main className="min-h-screen gutter-5 py-5 lg:gutter-8 lg:py-10">
       <div className="mx-auto max-w-5xl space-y-6">
         <Button variant="ghost" asChild><Link href="/app"><ArrowLeft className="h-4 w-4" />Back to command center</Link></Button>
         <div className="flex items-start gap-4">

@@ -11,6 +11,7 @@
  *   crecyos.com               public Crecy marketing (canonical)
  *   www.crecyos.com           308 -> crecyos.com (Vercel owns the primary redirect)
  *   app.crecyos.com           Crecy OS operator application
+ *   rent.crecyos.com          shared rental listings / prospective-renter surface
  *   crecyliving.com           Crecy Living resident root
  *   {community}.crecyliving.com   community resident portals
  *   owner.crecyos.com         Crecy Owner
@@ -34,6 +35,7 @@ const COMMUNITY_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 export type HostClassification =
   | { kind: "marketing" }
   | { kind: "app" }
+  | { kind: "rentals" }
   | { kind: "owner" }
   | { kind: "vendor" }
   | { kind: "living-root" }
@@ -72,13 +74,14 @@ function hostnameOf(rawOrigin: string | undefined, fallback: string): string {
 export function hostConfig() {
   const marketing = hostnameOf(process.env.NEXT_PUBLIC_MARKETING_ORIGIN, "crecyos.com");
   const app = hostnameOf(process.env.NEXT_PUBLIC_SITE_URL, "app.crecyos.com");
+  const rentals = hostnameOf(process.env.NEXT_PUBLIC_RENTALS_ORIGIN, `rent.${marketing}`);
   const livingRoot = normalizeHostname(process.env.NEXT_PUBLIC_LIVING_ROOT_DOMAIN) || "crecyliving.com";
   // Owner and vendor are structural labels on the marketing apex, per FD-037. The APP host is NOT
   // derived this way: it has its own configuration because links are built from it, and deriving one
   // host from another by string surgery is exactly how app and marketing become interchangeable.
   const owner = hostnameOf(process.env.NEXT_PUBLIC_OWNER_ORIGIN, `owner.${marketing}`);
   const vendor = `vendor.${marketing}`;
-  return { marketing, app, owner, vendor, livingRoot };
+  return { marketing, app, rentals, owner, vendor, livingRoot };
 }
 
 function isDevelopmentHost(hostname: string): boolean {
@@ -99,9 +102,10 @@ export function classifyHost(rawHost: string | null | undefined): HostClassifica
   // /app and making the marketing site undevelopable.
   if (isDevelopmentHost(hostname)) return { kind: "development" };
 
-  const { marketing, app, owner, vendor, livingRoot } = hostConfig();
+  const { marketing, app, rentals, owner, vendor, livingRoot } = hostConfig();
 
   if (hostname === app) return { kind: "app" };
+  if (hostname === rentals) return { kind: "rentals" };
   if (hostname === owner) return { kind: "owner" };
   if (hostname === vendor) return { kind: "vendor" };
   if (hostname === marketing || hostname === `www.${marketing}`) return { kind: "marketing" };
@@ -151,6 +155,23 @@ export function appOrigin(): string {
   if (!configured || configured.includes("replace_me")) return "";
   if (!/^https?:\/\//i.test(configured)) return "";
   return configured.replace(/\/+$/, "");
+}
+
+/** Canonical rentals origin for share/prospect links. */
+export function rentalsOrigin(): string {
+  const configured = process.env.NEXT_PUBLIC_RENTALS_ORIGIN?.trim();
+  if (configured && !configured.includes("replace_me") && /^https?:\/\//i.test(configured)) {
+    return configured.replace(/\/+$/, "");
+  }
+  const app = appOrigin();
+  if (app) {
+    try {
+      if (classifyHost(new URL(app).host).kind === "development") return app;
+    } catch {
+      return "";
+    }
+  }
+  return `https://${hostConfig().rentals}`;
 }
 
 /**

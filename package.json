@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:db": "node scripts/validate-schema.mjs",
+    "test:db:postgres:b4": "node scripts/validate-rental-application-postgres.mjs && node scripts/validate-rental-application-verification-postgres.mjs && node scripts/validate-rental-application-full-lifecycle-postgres.mjs",
     "test:e2e": "playwright test",
     "test:e2e:connected": "playwright test --config=playwright.connected.config.ts",
     "test:e2e:connected:full": "playwright test --config=playwright.connected.full.config.ts",

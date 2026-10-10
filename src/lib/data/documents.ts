@@ -160,7 +160,11 @@ export async function getDocumentCenterState(organizationId: string | null): Pro
     const supabase = await createClient();
     const [{ data: properties, error: propertyError }, { data: documents, error: documentError }] = await Promise.all([
       supabase.from("properties").select("id,name").eq("organization_id", organizationId).order("name"),
-      supabase.from("documents").select("id,title,document_type,property_id,source,status,created_at").eq("organization_id", organizationId).order("created_at", { ascending: false }),
+      // Rental listing photos are advertising media, not operational documents. Keeping them out
+      // of this register also keeps the document-delivery affordance from presenting them as deliverable.
+      supabase.from("documents").select("id,title,document_type,property_id,source,status,created_at")
+        .eq("organization_id", organizationId).neq("document_type", "rental_listing_photo")
+        .order("created_at", { ascending: false }),
     ]);
     if (propertyError || documentError) throw propertyError ?? documentError;
 

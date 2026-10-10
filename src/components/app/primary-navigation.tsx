@@ -19,12 +19,12 @@ import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type NavigationItem = { label: string; href: string; icon: LucideIcon };
-type NavigationGroup = { label: string; items: NavigationItem[] };
+export type NavigationItem = { label: string; href: string; icon: LucideIcon };
+export type NavigationGroup = { label: string; items: NavigationItem[] };
 
-const overview: NavigationItem = { label: "Overview", href: "/app", icon: CircleGauge };
+export const overview: NavigationItem = { label: "Overview", href: "/app", icon: CircleGauge };
 
-const groups: NavigationGroup[] = [
+export const groups: NavigationGroup[] = [
   {
     label: "Portfolio",
     items: [
@@ -59,9 +59,24 @@ const groups: NavigationGroup[] = [
   },
 ];
 
-const mobileItems: NavigationItem[] = [overview, ...groups.flatMap((group) => group.items)];
+export type WorkspaceExperience = "self_managing" | "property_manager";
+export function navigationFor(experience: WorkspaceExperience) {
+  if (experience !== "self_managing") return { overview, groups };
+  return {
+    overview: { ...overview, label: "Home" },
+    groups: [{ label: "Your rental", items: [
+      { label: "My rentals", href: "/app/rentals", icon: Building2 },
+      { label: "Renters", href: "/app/residents", icon: Users },
+      { label: "Agreements", href: "/app/leases", icon: FileSignature },
+      { label: "Payments", href: "/app/payments", icon: CreditCard },
+      { label: "Maintenance", href: "/app/maintenance", icon: Wrench },
+      { label: "Messages", href: "/app/messages", icon: MessageSquareText },
+      { label: "Documents", href: "/app/documents", icon: FileText },
+    ] }],
+  };
+}
 
-function isActive(pathname: string, href: string) {
+export function isActive(pathname: string, href: string) {
   return href === "/app" ? pathname === href : pathname.startsWith(href);
 }
 
@@ -69,33 +84,13 @@ function NavigationLink({
   label,
   href,
   icon: Icon,
-  compact = false,
 }: {
   label: string;
   href: string;
   icon: LucideIcon;
-  compact?: boolean;
 }) {
   const pathname = usePathname();
   const active = isActive(pathname, href);
-
-  if (compact) {
-    return (
-      <Link
-        href={href}
-        aria-current={active ? "page" : undefined}
-        className={cn(
-          "flex shrink-0 items-center gap-2 border-b-2 px-3 py-3 text-sm font-medium transition-colors",
-          active
-            ? "border-primary text-foreground"
-            : "border-transparent text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <Icon aria-hidden="true" className="h-4 w-4" />
-        {label}
-      </Link>
-    );
-  }
 
   return (
     <Link
@@ -115,24 +110,15 @@ function NavigationLink({
   );
 }
 
-export function PrimaryNavigation({ compact = false }: { compact?: boolean }) {
-  if (compact) {
-    return (
-      <nav aria-label="Operator navigation" className="overflow-x-auto">
-        <div className="flex min-w-max px-1">
-          {mobileItems.map((item) => <NavigationLink key={item.href} {...item} compact />)}
-        </div>
-      </nav>
-    );
-  }
-
+export function PrimaryNavigation({ experience = "property_manager" }: { experience?: WorkspaceExperience }) {
+  const navigation = navigationFor(experience);
   return (
     <nav aria-label="Primary" className="flex-1 overflow-y-auto px-3 pb-4">
       <div className="mb-4">
-        <NavigationLink {...overview} />
+        <NavigationLink {...navigation.overview} />
       </div>
       <div className="space-y-5">
-        {groups.map((group) => (
+        {navigation.groups.map((group) => (
           <section key={group.label} aria-label={group.label}>
             <div className="mb-1.5 px-3 text-[0.72rem] font-semibold tracking-[0.015em] text-muted-foreground/75">
               {group.label}

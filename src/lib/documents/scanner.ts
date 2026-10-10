@@ -53,6 +53,37 @@ export function getDocumentScanRelayConfig(): { url: string; secret: string } | 
   return { url, secret };
 }
 
+export function getCloudmersiveScannerConfig(): { url: string; apiKey: string } | null {
+  const apiKey = process.env.CLOUDMERSIVE_API_KEY;
+  const url = process.env.CRECY_CLOUDMERSIVE_SCAN_URL || "https://api.cloudmersive.com/virus/scan/file";
+  if (!apiKey || apiKey.includes("replace_") || apiKey.length < 16) return null;
+  if (!/^https:\/\//i.test(url)) return null;
+  return { url, apiKey };
+}
+
+export function readCloudmersiveVerdict(body: unknown): "clean" | "infected" | null {
+  if (!body || typeof body !== "object") return null;
+  const clean = (body as Record<string, unknown>).CleanResult;
+  if (clean === true) return "clean";
+  if (clean === false) return "infected";
+  return null;
+}
+
+async function readTargetBytes(
+  target: ScanTarget,
+  source: DocumentObjectSource,
+): Promise<{ bytes: Buffer; observedSha256Hex: string } | ScanFailure> {
+  const { bytes, error } = await source.download(target.storageBucket, target.storagePath);
+  if (error || !bytes) return { ok: false, errorCode: "OBJECT_UNREADABLE", retryable: true };
+  if (bytes.byteLength > MAXIMUM_SCANNABLE_BYTES) {
+    return { ok: false, errorCode: "OBJECT_TOO_LARGE_TO_SCAN", retryable: false };
+  }
+  return {
+    bytes,
+    observedSha256Hex: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
 /**
  * A relay body is only a verdict if it says so unambiguously. Anything else — a missing field, an
  * unknown word, a truncated response — is a FAILED ATTEMPT, never a silent "clean". The asymmetry is
@@ -67,22 +98,13 @@ export function readScanVerdict(body: unknown): { verdict: "clean" | "infected";
   return { verdict, reference: raw ? raw.slice(0, 200) : null };
 }
 
-export function getDocumentScanner(): DocumentScanner | null {
-  const config = getDocumentScanRelayConfig();
-  if (!config) return null;
+function relayScanner(config: { url: string; secret: string }): DocumentScanner {
   return {
     providerCode: "relay",
     async scan(target: ScanTarget, source: DocumentObjectSource): Promise<ScanResult> {
-      const { bytes, error } = await source.download(target.storageBucket, target.storagePath);
-      if (error || !bytes) {
-        // The object is missing or unreadable. Retryable on purpose: storage may simply be having a
-        // bad minute, and dead-lettering here would strand a legitimate upload forever.
-        return { ok: false, errorCode: "OBJECT_UNREADABLE", retryable: true };
-      }
-      if (bytes.byteLength > MAXIMUM_SCANNABLE_BYTES) {
-        return { ok: false, errorCode: "OBJECT_TOO_LARGE_TO_SCAN", retryable: false };
-      }
-      const observedSha256Hex = createHash("sha256").update(bytes).digest("hex");
+      const loaded = await readTargetBytes(target, source);
+      if ("ok" in loaded) return loaded;
+      const { bytes, observedSha256Hex } = loaded;
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), SCAN_RELAY_TIMEOUT_MS);
@@ -91,7 +113,7 @@ export function getDocumentScanner(): DocumentScanner | null {
           method: "POST",
           headers: {
             "content-type": "application/octet-stream",
-            authorization: `Bearer ${config.secret}`,
+            authorization: "Bearer " + config.secret,
             "idempotency-key": target.documentScanJobId,
             "x-crecy-sha256": observedSha256Hex,
           },
@@ -116,4 +138,52 @@ export function getDocumentScanner(): DocumentScanner | null {
       }
     },
   };
+}
+
+function cloudmersiveScanner(config: { url: string; apiKey: string }): DocumentScanner {
+  return {
+    providerCode: "cloudmersive",
+    async scan(target: ScanTarget, source: DocumentObjectSource): Promise<ScanResult> {
+      const loaded = await readTargetBytes(target, source);
+      if ("ok" in loaded) return loaded;
+      const { bytes, observedSha256Hex } = loaded;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), SCAN_RELAY_TIMEOUT_MS);
+      try {
+        const filename = target.storagePath.split("/").pop()?.slice(0, 180) || "upload.bin";
+        const form = new FormData();
+        form.append("inputFile", new Blob([new Uint8Array(bytes)]), filename);
+        const response = await fetch(config.url, {
+          method: "POST",
+          headers: { Apikey: config.apiKey },
+          body: form,
+          signal: controller.signal,
+        });
+        if (!response.ok) return classifyRelayStatus(response.status);
+        const verdict = readCloudmersiveVerdict(await response.json().catch(() => null));
+        if (!verdict) return { ok: false, errorCode: "UNREADABLE_SCAN_VERDICT", retryable: true };
+        return {
+          ok: true,
+          verdict,
+          observedSha256Hex,
+          providerCode: "cloudmersive",
+          providerReference: null,
+        };
+      } catch (caught) {
+        const aborted = caught instanceof Error && caught.name === "AbortError";
+        return { ok: false, errorCode: aborted ? "SCANNER_TIMEOUT" : "SCANNER_UNREACHABLE", retryable: true };
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  };
+}
+
+export function getDocumentScanner(): DocumentScanner | null {
+  const relay = getDocumentScanRelayConfig();
+  if (relay) return relayScanner(relay);
+  const cloudmersive = getCloudmersiveScannerConfig();
+  if (cloudmersive) return cloudmersiveScanner(cloudmersive);
+  return null;
 }

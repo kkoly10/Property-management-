@@ -56,6 +56,37 @@ export default function ProductPage() {
         <div className="mt-12"><OperatingSequence /></div>
       </Section>
 
+      <Section className="!py-20 lg:!py-28">
+        <div className="grid gap-10 lg:grid-cols-[0.82fr_1.18fr] lg:gap-20">
+          <div className="max-w-xl">
+            <p className="text-sm font-semibold text-primary">One engine, two operating experiences</p>
+            <h2 className="mt-4 text-[clamp(2.8rem,4.6vw,4.7rem)] font-normal leading-[0.97] tracking-[-0.058em] text-balance">
+              A professional manager and a one-rental landlord should not have to use the same cockpit.
+            </h2>
+            <p className="mt-7 text-lg leading-8 text-muted-foreground">
+              Crecy keeps the underlying property, tenancy, lease, resident, charge, payment, work order and document model consistent while changing the workspace around the person operating it.
+            </p>
+          </div>
+          <div className="divide-y border-y">
+            <div className="grid gap-3 py-6 sm:grid-cols-[190px_1fr]">
+              <p className="font-semibold">Property manager</p>
+              <p className="text-sm leading-6 text-muted-foreground">Portfolio controls, staff scopes, owner oversight, imports and operating depth remain available where a professional team needs them.</p>
+            </div>
+            <div className="grid gap-3 py-6 sm:grid-cols-[190px_1fr]">
+              <p className="font-semibold">Self-managing landlord</p>
+              <p className="text-sm leading-6 text-muted-foreground">Start from the rental itself: existing renter or shareable listing, verified questions and tours, application, signed agreement, then ongoing rent and maintenance.</p>
+            </div>
+            <div className="grid gap-3 py-6 sm:grid-cols-[190px_1fr]">
+              <p className="font-semibold">Prospect → resident</p>
+              <p className="text-sm leading-6 text-muted-foreground">Crecy discovery does not create a second marketplace database. A discovered listing flows through the same application and tenancy path as a landlord-shared link.</p>
+            </div>
+            <div className="py-6">
+              <Link href="/landlords" className="text-sm font-semibold text-primary hover:underline">See the self-managing landlord experience →</Link>
+            </div>
+          </div>
+        </div>
+      </Section>
+
       <Section className="!py-20 lg:!py-32">
         <div className="grid gap-10 lg:grid-cols-[0.62fr_1.38fr] lg:gap-20">
           <div className="max-w-xl lg:pt-6">

@@ -371,3 +371,67 @@ For each P0 journey test:
 - Suppressible categories are exactly the non-NULL values of `private.notification_template_category`: payments, maintenance, messages, documents, announcements. Access and security mail (invitations) maps to a NULL category, is never suppressible, and never carries a `List-Unsubscribe` header, because opting out of the message that grants access would leave the recipient unable to accept an invitation. Preference surfaces build their toggles from that category list rather than restating it, so no toggle for access mail can exist.
 - `List-Unsubscribe` is offered only for category mail AND only where the recipient's own portal is known, at that audience's canonical origin. Where a template's recipient may be more than one audience the header is withheld rather than guessed: a link to a portal the recipient has no account on fails at the sign-in wall instead of at a 404, which is not an improvement.
 - Relationship users never receive raw operator tables when a sanitized projection is specified. Owner lease/maintenance and vendor assignment pages use the v4.1 reporting projections.
+
+
+## Homeowner expansion — September 25, 2026
+
+See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` for the additive command, persistence,
+screen states, security tests, and traceability approved under FD-HR-001–005.
+
+
+## Homeowner A3/A4 — existing signed rental
+See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
+upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
+
+
+## Homeowner public entry — September 26, 2026
+
+- **Public route:** `/landlords` explains the self-managing workflow without promising listing traffic,
+  screening, legal certification, or marketplace availability.
+- **Signup intent:** `/signup?path=self_managing` changes presentation and the post-auth destination only.
+  The query value grants no permission and creates no organization.
+- **Authenticated resolver:** `/onboarding/landlord` enters an already-active self-managing workspace,
+  offers explicit selection among the caller's existing self-managing memberships, or offers creation of
+  a new self-managing workspace. It never selects one organization merely because several exist.
+- **Creation handoff:** `/onboarding/organization?path=self_managing` preselects the self-managing
+  customer path but keeps the choice visible and uses the same legal-consent boundary as every workspace.
+
+## Homeowner B1 — landlord-shared listing
+
+- **Management route:** `/app/rentals/:unitId/listing` belongs to the active self-managing workspace. Saving creates/updates a private draft; it never publishes implicitly.
+- **Media:** the landlord uploads PNG/JPEG photos through the existing private document upload + malware-scan pipeline. Pending/rejected photos cannot be selected for publication.
+- **Publish state:** `draft → published ↔ paused → closed`; editing a published/paused listing saves the changed snapshot back as `draft`. Closed is terminal for that record, while a later relisting creates a fresh draft/public id. Initial publish remains `unlisted`; B5 discovery is a separate explicit post-publish action.
+- **Share URL:** `rent.crecyos.com/l/:publicId`. “Unlisted” means absent from Crecy discovery and search indexing, not secret; anyone holding the URL can view it.
+- **Public content:** title, summary, rent, availability, space snapshot, coarse city/region/country, lease/pets/utilities/parking and selected clean photos. Street/postal and management/tenant records stay private.
+- **Recovery:** stale edits return a version conflict; uncertain save/publish/pause/close/link-rotation operations retain and retry the same body/idempotency key while editing is locked; share-link rotation invalidates the old public id.
+- **B1 baseline:** the original shared-listing slice introduced no inquiry, tour, application, screening or marketplace-search flow. B2–B5 add those capabilities later without replacing the same listing record.
+
+
+## Homeowner B2 — verified question intake
+
+- `/l/:publicId` adds contact-only question intake: first name, last name, email and a bounded rental
+  question. It does not collect screening, protected-class, credit, income or identity-document data.
+- `/inquiries/verify` reads its credential from the URL fragment only after explicit user action, then
+  removes the fragment before POSTing verification.
+- `/app/rentals/:unitId/inquiries` shows only verified `open|closed` inquiries. The screen exposes no
+  ranking, approval, rejection or score control.
+- Public submit success tells the visitor to check email and does not promise availability, reservation,
+  landlord response, application acceptance or approval.
+
+## Homeowner B3 — verified tour requests
+
+- **Public listing:** `/l/:publicId` includes a separate “Request a verified tour” card. The visitor enters contact details and up to three preferred times; the page states the rental time zone and that verification does not confirm a tour.
+- **Verification:** `/tours/verify` reads the token from the URL fragment, removes the fragment, and waits for an explicit “Verify my email” action before POSTing.
+- **Landlord queue:** `/app/rentals/:unitId/tours` shows only email-verified requests, their submitted preferences in the property time zone, and confirmation controls.
+- **Private location:** the landlord meeting location is never copied into the public listing. It is disclosed only to the verified visitor after one time is confirmed.
+- **States:** `pending_verification → requested → confirmed`; invalid/expired verification never enters the landlord queue. Confirmation is retry-safe and a second confirmed tour cannot overlap the same unit/time window.
+- **Language boundary:** no screen contains applicant scoring, qualification, approval, rejection, reservation, or marketplace-discovery claims.
+
+## Homeowner B5 — marketplace discovery
+
+- **Browse route:** `rent.crecyos.com/search` is a public/session-independent no-store surface. In local/preview mode it remains reachable on the shared development origin.
+- **Discovery cards:** show only approved advertising data: hero photo, title, coarse city/region/country, rent, availability and space summary. Cards link to the existing `/l/:publicId` detail page.
+- **Filters:** country, state/province, city, rent range, minimum bedrooms, space type and available-by date. Invalid filters fail closed without querying rental data.
+- **Landlord control:** a published listing shows either `Add to Crecy discovery` or `Remove from discovery`. Share publication and marketplace discovery are visibly separate states.
+- **Fail-safe state:** editing, pausing or closing removes discovery. Republishing returns to unlisted/shareable; the landlord must opt into discovery again.
+- **Indexing:** search and listing detail remain noindex in this local implementation. Search-engine indexing is a production marketplace-release decision, not implied by B5 functionality.

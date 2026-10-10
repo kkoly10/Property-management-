@@ -36,6 +36,14 @@ export const createUploadGrantSchema = z.object({
   if (value.parent.type === "work_order" && value.documentType !== "work_order_evidence") {
     context.addIssue({ code: "custom", path: ["documentType"], message: "Work order uploads must be work order evidence." });
   }
+  if (value.documentType === "rental_listing_photo") {
+    if (value.parent.type !== "unit") {
+      context.addIssue({ code: "custom", path: ["parent"], message: "Rental listing photos must belong to a rental unit." });
+    }
+    if (value.mimeType !== "image/png" && value.mimeType !== "image/jpeg") {
+      context.addIssue({ code: "custom", path: ["mimeType"], message: "Rental listing photos must be PNG or JPEG images." });
+    }
+  }
 });
 export const finalizeDocumentSchema = z.object({
   grantId: z.uuid(),

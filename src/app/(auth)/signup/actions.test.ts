@@ -46,10 +46,15 @@ vi.mock("@/lib/notifications/auth-email", () => ({
 
 const { signupAction } = await import("./actions");
 
-function form(email = "new@example.com", password = "a-secure-password-123") {
+function form(
+  email = "new@example.com",
+  password = "a-secure-password-123",
+  customerPath?: "property_manager" | "self_managing" | string,
+) {
   const data = new FormData();
   data.set("email", email);
   data.set("password", password);
+  if (customerPath) data.set("customerPath", customerPath);
   return data;
 }
 
@@ -114,6 +119,24 @@ describe("signup activation", () => {
     expect(message.idempotencyKey).toBe("signup-user-123");
   });
 
+  it("preserves self-managing intent through signup confirmation", async () => {
+    generateLink.mockResolvedValue({
+      data: { user: { id: "homeowner-user" }, properties: { hashed_token: GOOD_HASH } },
+      error: null,
+    });
+
+    await expect(
+      signupAction(
+        { status: "idle" },
+        form("homeowner@example.com", "a-secure-password-123", "self_managing"),
+      ),
+    ).rejects.toThrow("REDIRECT:/signup?check_email=1&path=self_managing");
+
+    expect(sendViaResend).toHaveBeenCalledTimes(1);
+    const message = sendViaResend.mock.calls[0][0];
+    expect(String(message.text)).toContain("next=%2Fonboarding%2Flandlord");
+  });
+
   it("gives an existing account the same neutral completion state and sends a one-time sign-in link", async () => {
     generateLink
       .mockResolvedValueOnce({
@@ -136,6 +159,29 @@ describe("signup activation", () => {
     expect(String(message.text)).toContain("next=%2Fapp");
     expect(message.idempotencyKey).toBe("signup-existing-existing-user");
     expect(deleteUser).not.toHaveBeenCalled();
+  });
+
+  it("preserves landlord intent for an existing account without selecting a workspace", async () => {
+    generateLink
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: "user_already_exists", message: "User already registered" },
+      })
+      .mockResolvedValueOnce({
+        data: { user: { id: "existing-homeowner" }, properties: { hashed_token: GOOD_HASH } },
+        error: null,
+      });
+
+    await expect(
+      signupAction(
+        { status: "idle" },
+        form("existing-homeowner@example.com", "a-secure-password-123", "self_managing"),
+      ),
+    ).rejects.toThrow("REDIRECT:/signup?check_email=1&path=self_managing");
+
+    const message = sendViaResend.mock.calls[0][0];
+    expect(String(message.text)).toContain("type=magiclink");
+    expect(String(message.text)).toContain("next=%2Fonboarding%2Flandlord");
   });
 
   it("does not expose an existing account when its recovery link cannot be minted", async () => {

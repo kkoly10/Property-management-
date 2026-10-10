@@ -6,6 +6,7 @@ export type MarketingRoute = { href: string; label: string; description: string 
 
 export const MARKETING_ROUTES: MarketingRoute[] = [
   { href: "/product", label: "Product", description: "How Crecy handles portfolio, leasing, rent, maintenance, documents and owner visibility." },
+  { href: "/landlords", label: "Landlords", description: "A simpler Crecy workspace for people who manage their own home, basement, room or rental." },
   { href: "/pricing", label: "Pricing", description: "Plans, included units and payment disclosure for the United States, Canada and Mexico." },
   { href: "/crecy-living", label: "Crecy Living", description: "The resident experience: balance, payments, receipts, maintenance and documents." },
   { href: "/security", label: "Security", description: "How Crecy isolates tenants, scopes access and records what happened." },
@@ -37,6 +38,14 @@ export const PRIVATE_PREFIXES = [
   "/home", "/maintenance", "/messages", "/payments", "/receipts", "/more", "/documents",
   "/login", "/signup", "/invitations", "/api",
 ];
+
+/**
+ * Public-to-the-link routes that must stay out of search indexing.
+ *
+ * `/l/` intentionally carries the trailing slash. Robots matching is prefix-based, so `/l` would also
+ * swallow the real public `/landlords` page. There is no bare `/l` page; every share URL is `/l/:publicId`.
+ */
+export const UNINDEXED_PUBLIC_PREFIXES = ["/l/", "/search", "/inquiries/verify", "/tours/verify", "/applications"];
 
 /**
  * Prefixes that require a session, enforced in `src/proxy.ts`.

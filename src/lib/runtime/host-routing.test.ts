@@ -72,6 +72,62 @@ describe("host routing", () => {
     expect(routeForHost("crecyliving.com", "/login")).toEqual({ type: "continue" });
   });
 
+  it("keeps share links on the dedicated rentals host and nowhere else", () => {
+    expect(classifyHost("rent.crecyos.com")).toEqual({ kind: "rentals" });
+    expect(routeForHost("rent.crecyos.com", "/")).toEqual({
+      type: "redirect", location: "/search", permanent: false,
+    });
+    expect(routeForHost("rent.crecyos.com", "/search")).toEqual({ type: "continue" });
+    expect(routeForHost("crecyos.com", "/search")).toEqual({
+      type: "redirect", location: "https://rent.crecyos.com/search", permanent: false,
+    });
+    expect(routeForHost("rent.crecyos.com", "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+      .toEqual({ type: "continue" });
+    expect(routeForHost("crecyos.com", "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+      .toEqual({
+        type: "redirect",
+        location: "https://rent.crecyos.com/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        permanent: false,
+      });
+    expect(routeForHost("app.crecyos.com", "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+      .toEqual({
+        type: "redirect",
+        location: "https://rent.crecyos.com/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        permanent: false,
+      });
+    expect(routeForHost("rent.crecyos.com", "/app")).toEqual({
+      type: "redirect", location: "https://app.crecyos.com/app", permanent: false,
+    });
+    expect(routeForHost("rent.crecyos.com", "/not-a-rental-surface")).toEqual({ type: "reject" });
+  });
+
+  it("scopes applicant capability endpoints to rentals and lease decisions to the operator host", () => {
+    const publicPaths = [
+      "/api/v1/rental-applications", "/api/v1/rental-applications/verify",
+      "/api/v1/rental-applications/status", "/api/v1/rental-applications/withdraw",
+    ];
+    const operatorPaths = [
+      "/api/v1/rental-applications/prepare", "/api/v1/rental-applications/close",
+    ];
+    const otherHosts = ["app.crecyos.com", "owner.crecyos.com", "crecyos.com",
+      "crecyliving.com", "lakewood.crecyliving.com"];
+    for (const path of publicPaths) {
+      expect(routeForHost("rent.crecyos.com", path), path).toEqual({ type: "continue" });
+      for (const host of otherHosts) {
+        expect(routeForHost(host, path), `${host}${path}`).toEqual({ type: "reject" });
+      }
+      expect(routeForHost("localhost:3100", path)).toEqual({ type: "continue" });
+    }
+    for (const path of operatorPaths) {
+      expect(routeForHost("app.crecyos.com", path), path).toEqual({ type: "continue" });
+      expect(routeForHost("rent.crecyos.com", path), path).toEqual({ type: "reject" });
+      expect(routeForHost("owner.crecyos.com", path), path).toEqual({ type: "reject" });
+      expect(routeForHost("localhost:3100", path)).toEqual({ type: "continue" });
+    }
+    // Preserve other infrastructure endpoints: unrelated webhook routes still work.
+    expect(routeForHost("crecyos.com", "/api/internal/notifications/relay")).toEqual({ type: "continue" });
+  });
+
   it("canonicalizes a marketing path reached on a product host back to marketing", () => {
     expect(routeForHost("app.crecyos.com", "/pricing"))
       .toEqual({ type: "redirect", location: "https://crecyos.com/pricing", permanent: false });
@@ -100,6 +156,16 @@ describe("host routing", () => {
     for (const host of ["localhost:3000", "127.0.0.1:3000", "property-management-six-plum.vercel.app"]) {
       expect(routeForHost(host, "/"), host).toEqual({ type: "continue" });
       expect(routeForHost(host, "/app"), host).toEqual({ type: "continue" });
+    }
+  });
+
+  it("serves rental discovery and share pages without constructing a session client or shared cache", async () => {
+    for (const path of ["/search", "/l/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]) {
+      const response = await proxy(new NextRequest(new URL(path, "https://rent.crecyos.com")));
+      expect(response.status, path).toBe(200);
+      expect(created.count, path).toBe(0);
+      expect(response.headers.get("set-cookie"), path).toBeNull();
+      expect(response.headers.get("cache-control"), path).toBe("private, no-store");
     }
   });
 

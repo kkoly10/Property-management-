@@ -11,6 +11,7 @@ import {
   MARKETING_ROUTES,
   PRIVATE_PREFIXES,
   PUBLIC_ROUTES,
+  UNINDEXED_PUBLIC_PREFIXES,
   isCacheablePublicPage,
   requiresSession,
 } from "./navigation";
@@ -195,6 +196,15 @@ describe("indexing policy", () => {
       const blocked = disallow.find((prefix) => route.href.startsWith(prefix));
       expect(blocked, `${route.href} is blocked by ${blocked}`).toBeUndefined();
     }
+  });
+
+  it("keeps unlisted rental/prospect pages unindexed without swallowing /landlords", () => {
+    expect(UNINDEXED_PUBLIC_PREFIXES).toEqual(["/l/", "/search", "/inquiries/verify", "/tours/verify", "/applications"]);
+    expect(disallow).toContain("/l/");
+    expect(disallow).toContain("/search");
+    expect(disallow).toContain("/inquiries/verify");
+    expect(disallow).toContain("/tours/verify");
+    expect("/landlords".startsWith("/l/")).toBe(false);
   });
 
   it("points crawlers at the marketing origin, not whatever host served the request", () => {

@@ -14,6 +14,7 @@ export const metadata: Metadata = marketingMetadata({
 });
 
 const FAQ: { question: string; answer: string }[] = [
+  { question: "Is Crecy also for one rental I manage myself?", answer: "Yes. The Free plan includes one active unit, and the self-managing workspace removes professional portfolio overhead. You can manage an existing renter or publish a shareable listing and later opt it into Crecy discovery." },
   { question: "What counts as an active unit?", answer: "An operational unit that is not archived or retired during the billing day. Usage is sampled daily. Archiving a unit stops it counting going forward, but it cannot erase usage that already happened." },
   { question: "What happens if I go above my plan's units?", answer: "On Pro, additional active units are metered at the rate shown for your price book. On the other plans you either archive units or move up a plan — a downgrade is blocked while your usage is above the destination limit." },
   { question: "Does the trial need a card?", answer: "No. The Growth trial runs for 30 days without a card. It does not bypass connected-account verification or the production payment gates, so online payment collection still requires that verification to complete." },
@@ -39,6 +40,21 @@ export default function PricingPage() {
 
       <Section className="!pt-8 lg:!pt-10">
         <PricingExplorer />
+      </Section>
+
+      <Section className="!py-12 lg:!py-16">
+        <div className="grid gap-8 border-y py-8 md:grid-cols-[0.7fr_1.3fr] md:items-center">
+          <div>
+            <p className="text-sm font-semibold text-primary">Starting with one rental?</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-[-0.045em]">You do not need a portfolio to use Crecy.</h2>
+          </div>
+          <div>
+            <p className="text-base leading-7 text-muted-foreground">
+              The Free plan includes one active unit. A self-managing landlord can use the simpler rental workspace, bring an existing renter or publish a listing, and keep the resident relationship in Crecy Living after move-in.
+            </p>
+            <p className="mt-4"><Link href="/landlords" className="text-sm font-semibold text-primary hover:underline">See the landlord workflow →</Link></p>
+          </div>
+        </div>
       </Section>
 
       <section className="bg-[var(--surface-inverse)] text-white">

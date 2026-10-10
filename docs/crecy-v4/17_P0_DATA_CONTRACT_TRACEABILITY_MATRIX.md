@@ -28,3 +28,54 @@
 ## Completion rule
 
 Codex or Claude must update this matrix when any command, table, screen, or event is added. Missing traceability is a release-blocking specification defect.
+
+
+## Homeowner expansion — September 25, 2026
+
+See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` for the additive command, persistence,
+screen states, security tests, and traceability approved under FD-HR-001–005.
+
+
+## Homeowner A3/A4 — existing signed rental
+See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
+upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
+
+
+## Homeowner public-entry trace — September 26, 2026
+
+| Capability | Primary persistence | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Homeowner acquisition + workspace handoff | existing auth users, organizations, memberships; no new table | existing signup confirmation + `list_operator_organizations` + `selectOrganization` | public marketing/signup; organization choice is revalidated against the signed-in user's live memberships | marketing route/navigation/sitemap/cache tests; signup intent survives new/existing-account email; self-managing creation is preselected; no implicit multi-organization selection |
+
+## Homeowner B1 — shared-listing traceability
+
+| Capability | Primary tables | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Save listing draft | `rental_listings`, `rental_listing_photos`, exact `document_versions` | `SaveRentalListing` | authenticated self-managing workspace + current `property.manage` on exact unit/property | `rental_listing.saved`; stale version, durable retry, cross-unit/unclean photo, outsider, professional-workspace denial |
+| Publish/pause/close | `rental_listings` | `SetRentalListingStatus` | same scoped manager boundary | `rental_listing.status_changed`; no-photo, short-summary, discovery-disabled, paused/closed public denial, replay |
+| Rotate share URL | `rental_listings.public_id` | `RotateRentalListingLink` | same scoped manager boundary | `rental_listing.link_rotated`; old id returns no public DTO; replay returns one new id |
+| Public unlisted listing | sanitized `rental_listings` snapshot + attached clean photo versions | service-only `GetPublicRentalListing` + short-lived server-signed media URLs | anonymous browser receives no table/RPC grant; server exposes published+unlisted DTO only | street/postal absence, unknown/draft/paused/closed id 404/no row, exact photo version, noindex/nofollow |
+| Listing photo lifecycle | existing documents/versions + scan jobs; `rental_listing_photos` attachment | existing upload/finalize/scan commands + listing selection | unit-parent image grant, scanner-clean exact version, same org/property/unit; delivery trigger blocks recipient delivery | MIME/parent rejection, quarantine rejection, direct delivery rejection, document-register exclusion |
+
+
+## Homeowner B2 trace — verified inquiries
+
+| Capability | Primary tables | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Verified rental question intake | `rental_inquiries`, `private.rental_inquiry_verifications`, `private.rental_inquiry_attempts`, `private.notification_jobs` | `SubmitPublicRentalInquiry`, `VerifyPublicRentalInquiry`, `CloseRentalInquiry` | public submit/verify only through validated service route; landlord read/close requires exact-property `lease.manage` or `property.manage`; no anon base-table grant | pending hidden, wrong/expired token, token replay, normalized-email and keyed-network rate limits, terminal token scrub, wrong-property/outsider denial, direct-write denial, paused listing denial, close replay |
+
+## Homeowner B3 trace — verified tour requests
+
+| Capability | Primary tables | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Verified tour intake | `rental_tour_requests`, `rental_tour_preferences`, private verification/attempt rows, notification jobs | `SubmitPublicRentalTour`, `VerifyPublicRentalTour` | public submit/verify only through validated service route; listing must remain published+unlisted | pending hidden, wrong/expired token, verification replay, property-time-zone conversion, duplicate/DST-gap denial, normalized-email and keyed-network rate limits, terminal token scrub, paused-listing denial |
+| Tour confirmation | same tour request/preferences + notification jobs | `ConfirmRentalTour` | authenticated exact-property `lease.manage` or `property.manage`; optimistic version; one submitted preference only | confirmation event + notification; replay, wrong-property/outsider/direct-write denial, overlap denial, private meeting-location boundary |
+
+## Homeowner B5 discovery trace — October 9, 2026
+
+| Capability | Primary persistence | Command/query | Authorization | Required evidence |
+|---|---|---|---|---|
+| Discovery opt-in/out | `rental_listings.visibility`, `discovered_at` | `set_rental_listing_visibility` | current self-managing operator + exact `property.manage`; versioned/idempotent | explicit opt-in, outsider/stale denial, audit/outbox |
+| Fail-safe unlisting | same listing row | trigger on status + existing save command | database invariant beneath app routes | edit/pause/close clear discovery; republish stays unlisted |
+| Public marketplace browse | no new marketplace table | `search_public_rental_listings` | service-role server DTO only | published+discoverable only, clean media, coarse location, bounded filters, stable keyset cursor |
+| Listing detail from search | existing listing/public DTO | `get_public_rental_listing` | service-role server DTO only | same B2/B3/B4 inquiry/tour/application surface; no duplicate lead pipeline |

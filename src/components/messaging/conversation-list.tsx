@@ -120,7 +120,14 @@ export function ConversationList({
   return (
     <div className="grid gap-3">
       {items.map((item) => (
-        <Link key={item.conversationId} href={`${routeBase}/${item.conversationId}`} className="rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
+        // `min-w-0` is load-bearing. This Link is a grid item, and for grid and flex items
+        // `min-width: auto` resolves to the automatic minimum size rather than 0 — so the
+        // `truncate` (white-space: nowrap) preview text below set the item's floor, the row grew to
+        // its full single-line width, and the whole operator inbox laid out at 543px inside a 390px
+        // phone. Safari and Chrome do not scroll that; they zoom the entire page out to fit, so
+        // every surface on the page rendered at ~72%. The `living` and `owner` branches escaped it
+        // because their grids declare `minmax(0,...)` tracks.
+        <Link key={item.conversationId} href={`${routeBase}/${item.conversationId}`} className="min-w-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
           <Card className="transition-colors hover:bg-muted/30">
             <CardContent className="flex items-center gap-4 p-5">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary text-secondary-foreground">

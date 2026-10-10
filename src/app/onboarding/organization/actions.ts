@@ -106,5 +106,5 @@ export async function createOrganizationAction(_previousState: ActionState, form
   // continue onboarding inside the WRONG tenant, putting the entity, book and first property there.
   await setActiveOrganization(organizationId);
 
-  redirect("/onboarding/entity");
+  redirect(result.data.customerPath === "self_managing" ? "/app/rentals/new" : "/onboarding/entity");
 }

@@ -1,4 +1,4 @@
-import { originForAudience, type LinkAudience } from "@/lib/runtime/host";
+import { originForAudience, rentalsOrigin, type LinkAudience } from "@/lib/runtime/host";
 import { EMAIL_CHROME } from "@/lib/notifications/email-brand";
 import "server-only";
 
@@ -125,6 +125,48 @@ function roleLabel(value: unknown, language: NotificationLanguage): string {
 function link(path: string, audience: LinkAudience): string {
   const origin = originForAudience(audience);
   return origin ? `${origin}${path}` : path;
+}
+
+function inquiryVerificationLink(p: Record<string, unknown>): string {
+  const token = typeof p.verificationToken === "string" ? p.verificationToken.trim().toLowerCase() : "";
+  const origin = rentalsOrigin();
+  if (!origin || !/^[0-9a-f]{64}$/.test(token)) {
+    return origin ? `${origin}/inquiries/verify` : "/inquiries/verify";
+  }
+  return `${origin}/inquiries/verify#token=${encodeURIComponent(token)}`;
+}
+
+function applicationVerificationLink(p: Record<string, unknown>): string {
+  const token = typeof p.verificationToken === "string" ? p.verificationToken.trim().toLowerCase() : "";
+  const origin = rentalsOrigin();
+  if (!origin || !/^[0-9a-f]{64}$/.test(token)) {
+    return origin ? `${origin}/applications/verify` : "/applications/verify";
+  }
+  return `${origin}/applications/verify#token=${encodeURIComponent(token)}`;
+}
+
+function tourVerificationLink(p: Record<string, unknown>): string {
+  const token = typeof p.verificationToken === "string" ? p.verificationToken.trim().toLowerCase() : "";
+  const origin = rentalsOrigin();
+  if (!origin || !/^[0-9a-f]{64}$/.test(token)) {
+    return origin ? `${origin}/tours/verify` : "/tours/verify";
+  }
+  return `${origin}/tours/verify#token=${encodeURIComponent(token)}`;
+}
+
+function tourTime(p: Record<string, unknown>, language: NotificationLanguage): string {
+  const raw = typeof p.confirmedStartAt === "string" ? p.confirmedStartAt.trim() : "";
+  const timeZone = typeof p.timeZone === "string" ? p.timeZone.trim() : "";
+  if (!raw || !timeZone) return "";
+  try {
+    const locale = language === "es" ? "es-MX" : language === "fr" ? "fr-CA" : "en-US";
+    return new Intl.DateTimeFormat(locale, {
+      timeZone, weekday: "short", month: "short", day: "numeric", year: "numeric",
+      hour: "numeric", minute: "2-digit", timeZoneName: "short",
+    }).format(new Date(raw));
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -259,6 +301,140 @@ const ORG_FALLBACK: Record<NotificationLanguage, string> = {
 };
 
 const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> = {
+  rental_application_verification: {
+    en: (p) => compose({
+      subject: "Verify your rental application",
+      heading: "Verify your email",
+      paragraphs: ["Verify this email address to share your rental application with the landlord. Verification does not approve your application."],
+      ctaLabel: "Verify my application", ctaUrl: applicationVerificationLink(p),
+      securityNote: "This link expires in 60 minutes. Ignore it if you did not apply.",
+    }, "en"),
+    es: (p) => compose({
+      subject: "Verifica tu solicitud de alquiler",
+      heading: "Verifica tu correo electrónico",
+      paragraphs: ["Verifica tu correo para enviar tu solicitud al propietario. Esta verificación no aprueba tu solicitud."],
+      ctaLabel: "Verificar mi solicitud", ctaUrl: applicationVerificationLink(p),
+      securityNote: "Este enlace vence en 60 minutos. Si no solicitaste el alquiler, ignóralo.",
+    }, "es"),
+    fr: (p) => compose({
+      subject: "Vérifiez votre candidature de location",
+      heading: "Vérifiez votre adresse e-mail",
+      paragraphs: ["Vérifiez cette adresse pour envoyer votre candidature au propriétaire. Cela ne constitue pas une approbation."],
+      ctaLabel: "Vérifier ma candidature", ctaUrl: applicationVerificationLink(p),
+      securityNote: "Ce lien expire dans 60 minutes. Si ce n'était pas vous, ignorez cet e-mail.",
+    }, "fr"),
+  },
+  rental_tour_verification: {
+    en: (p) => compose({
+      subject: `Verify your tour request for ${text(p.listingTitle, "this rental")}`,
+      heading: "Verify your email before your tour request is shared",
+      paragraphs: [
+        `Crecy received preferred tour times for ${text(p.listingTitle, "this rental")}.`,
+        "Verify this email address to share those times with the landlord. Verification does not confirm a tour or reserve the rental.",
+      ],
+      ctaLabel: "Verify my email",
+      ctaUrl: tourVerificationLink(p),
+      securityNote: "This link expires in 60 minutes. If you did not request this tour, ignore this message.",
+    }, "en"),
+    es: (p) => compose({
+      subject: `Verifica tu solicitud de visita para ${text(p.listingTitle, "este alquiler")}`,
+      heading: "Verifica tu correo antes de enviar tu solicitud de visita",
+      paragraphs: [
+        `Crecy recibió horarios preferidos para visitar ${text(p.listingTitle, "este alquiler")}.`,
+        "Verifica este correo para compartir esos horarios con el propietario. La verificación no confirma una visita ni reserva el alquiler.",
+      ],
+      ctaLabel: "Verificar mi correo",
+      ctaUrl: tourVerificationLink(p),
+      securityNote: "Este enlace vence en 60 minutos. Si no solicitaste esta visita, ignora este mensaje.",
+    }, "es"),
+    fr: (p) => compose({
+      subject: `Vérifiez votre demande de visite pour ${text(p.listingTitle, "cette location")}`,
+      heading: "Vérifiez votre adresse e-mail avant l'envoi de la demande",
+      paragraphs: [
+        `Crecy a reçu vos horaires préférés pour visiter ${text(p.listingTitle, "cette location")}.`,
+        "Vérifiez cette adresse pour partager ces horaires avec le propriétaire. La vérification ne confirme pas une visite et ne réserve pas le logement.",
+      ],
+      ctaLabel: "Vérifier mon e-mail",
+      ctaUrl: tourVerificationLink(p),
+      securityNote: "Ce lien expire dans 60 minutes. Si vous n'avez pas demandé cette visite, ignorez ce message.",
+    }, "fr"),
+  },
+
+  rental_tour_confirmed: {
+    en: (p) => compose({
+      subject: `Your tour is confirmed for ${text(p.listingTitle, "this rental")}`,
+      heading: "Your rental tour is confirmed",
+      paragraphs: [
+        `The landlord confirmed a 30-minute tour for ${text(p.listingTitle, "this rental")}.`,
+        "This confirmation schedules the visit only. It does not reserve the rental or approve an application.",
+      ],
+      details: [
+        { label: "Time", value: tourTime(p, "en") || "See the landlord's confirmation" },
+        { label: "Meeting location", value: text(p.meetingLocation, "Contact the landlord") },
+      ],
+    }, "en"),
+    es: (p) => compose({
+      subject: `Tu visita está confirmada para ${text(p.listingTitle, "este alquiler")}`,
+      heading: "Tu visita está confirmada",
+      paragraphs: [
+        `El propietario confirmó una visita de 30 minutos para ${text(p.listingTitle, "este alquiler")}.`,
+        "Esta confirmación solo programa la visita. No reserva el alquiler ni aprueba una solicitud.",
+      ],
+      details: [
+        { label: "Hora", value: tourTime(p, "es") || "Consulta la confirmación del propietario" },
+        { label: "Lugar de encuentro", value: text(p.meetingLocation, "Contacta al propietario") },
+      ],
+    }, "es"),
+    fr: (p) => compose({
+      subject: `Votre visite est confirmée pour ${text(p.listingTitle, "cette location")}`,
+      heading: "Votre visite est confirmée",
+      paragraphs: [
+        `Le propriétaire a confirmé une visite de 30 minutes pour ${text(p.listingTitle, "cette location")}.`,
+        "Cette confirmation planifie uniquement la visite. Elle ne réserve pas le logement et n'approuve aucune demande.",
+      ],
+      details: [
+        { label: "Heure", value: tourTime(p, "fr") || "Consultez la confirmation du propriétaire" },
+        { label: "Lieu de rendez-vous", value: text(p.meetingLocation, "Contactez le propriétaire") },
+      ],
+    }, "fr"),
+  },
+
+  rental_inquiry_verification: {
+    en: (p) => compose({
+      subject: `Verify your question about ${text(p.listingTitle, "this rental")}`,
+      heading: "Verify your email before your question is shared",
+      paragraphs: [
+        `Crecy received a question about ${text(p.listingTitle, "this rental")}.`,
+        "Verify this email address to send the question to the landlord. Verification does not reserve the rental or approve an application.",
+      ],
+      ctaLabel: "Verify my email",
+      ctaUrl: inquiryVerificationLink(p),
+      securityNote: "This link expires in 60 minutes. If you did not send this question, ignore this message.",
+    }, "en"),
+    es: (p) => compose({
+      subject: `Verifica tu pregunta sobre ${text(p.listingTitle, "este alquiler")}`,
+      heading: "Verifica tu correo antes de enviar tu pregunta",
+      paragraphs: [
+        `Crecy recibió una pregunta sobre ${text(p.listingTitle, "este alquiler")}.`,
+        "Verifica este correo para enviar la pregunta al propietario. La verificación no reserva el alquiler ni aprueba una solicitud.",
+      ],
+      ctaLabel: "Verificar mi correo",
+      ctaUrl: inquiryVerificationLink(p),
+      securityNote: "Este enlace vence en 60 minutos. Si no enviaste esta pregunta, ignora este mensaje.",
+    }, "es"),
+    fr: (p) => compose({
+      subject: `Vérifiez votre question concernant ${text(p.listingTitle, "cette location")}`,
+      heading: "Vérifiez votre adresse e-mail avant l'envoi",
+      paragraphs: [
+        `Crecy a reçu une question concernant ${text(p.listingTitle, "cette location")}.`,
+        "Vérifiez cette adresse e-mail pour envoyer la question au propriétaire. La vérification ne réserve pas le logement et n'approuve aucune demande.",
+      ],
+      ctaLabel: "Vérifier mon e-mail",
+      ctaUrl: inquiryVerificationLink(p),
+      securityNote: "Ce lien expire dans 60 minutes. Si vous n'avez pas envoyé cette question, ignorez ce message.",
+    }, "fr"),
+  },
+
   staff_invitation: {
     en: (p) => {
       const org = text(p.organizationName, ORG_FALLBACK.en);

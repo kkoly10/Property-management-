@@ -11,6 +11,12 @@ import { existsSync } from "node:fs";
  */
 const preinstalledChromium = process.env.PLAYWRIGHT_CHROMIUM_PATH ?? "/opt/pw-browsers/chromium";
 const launchOptions = existsSync(preinstalledChromium) ? { executablePath: preinstalledChromium } : {};
+// Permit independent local worktrees to run the smoke gate without sharing port 3100.
+const port = Number(process.env.CRECY_E2E_PORT ?? "3100");
+if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+  throw new Error("CRECY_E2E_PORT must be a valid non-privileged TCP port.");
+}
+const origin = `http://127.0.0.1:${port}`;
 
 // E2E smoke suite. Runs the production build in demo/setup mode (no Supabase env),
 // which renders every page with preview data — so the whole UI is exercisable
@@ -24,7 +30,7 @@ export default defineConfig({
   retries: 0,
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {
-    baseURL: "http://127.0.0.1:3100",
+    baseURL: origin,
     headless: true,
     screenshot: "only-on-failure",
     trace: "off",
@@ -41,9 +47,9 @@ export default defineConfig({
     // at 127.0.0.1 is the LOCAL configuration, not a production one: `originsAreLocal()` still reports
     // true for a loopback host, so every audience collapses to this one origin exactly as it does in
     // `npm run dev`, and no audience-splitting behaviour is changed by its presence.
-    env: { CRECY_DEPLOYMENT_ENV: "test", NEXT_PUBLIC_SITE_URL: "http://127.0.0.1:3100" },
-    command: "npx next start -p 3100 -H 127.0.0.1",
-    url: "http://127.0.0.1:3100/login",
+    env: { CRECY_DEPLOYMENT_ENV: "test", NEXT_PUBLIC_SITE_URL: origin },
+    command: `npx next start -p ${port} -H 127.0.0.1`,
+    url: `${origin}/login`,
     timeout: 120_000,
     reuseExistingServer: false,
   },

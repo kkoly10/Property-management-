@@ -28,6 +28,21 @@ describe("document request validation", () => {
     expect(createUploadGrantSchema.safeParse({ ...tenancyUpload, mimeType: "application/pdf" }).success).toBe(false);
   });
 
+  it("limits rental listing photos to unit-scoped PNG or JPEG uploads", () => {
+    const photo = {
+      ...validUpload,
+      parent: { type: "unit" as const, id: validUpload.organizationId },
+      documentType: "rental_listing_photo",
+      originalFilename: "room.jpg",
+      mimeType: "image/jpeg" as const,
+    };
+    expect(createUploadGrantSchema.safeParse(photo).success).toBe(true);
+    expect(createUploadGrantSchema.safeParse({ ...photo, mimeType: "application/pdf" }).success).toBe(false);
+    expect(createUploadGrantSchema.safeParse({
+      ...photo, parent: { type: "property" as const, id: validUpload.organizationId },
+    }).success).toBe(false);
+  });
+
   it("requires a canonical SHA-256 checksum", () => {
     expect(finalizeDocumentSchema.safeParse({ grantId: validUpload.organizationId, sha256Hex: "a".repeat(64) }).success).toBe(true);
     expect(finalizeDocumentSchema.safeParse({ grantId: validUpload.organizationId, sha256Hex: "not-a-checksum" }).success).toBe(false);

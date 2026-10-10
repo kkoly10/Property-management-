@@ -13,6 +13,13 @@ This directory is the authoritative **Crecy v4.2** implementation package. v4.2 
 
 The correction exists because feature/pilot implementation had advanced much farther than public marketing, unattended runtime operation, legal publication/version binding, and launch certification. Coding agents must no longer treat product implementation completion as equivalent to runtime, pilot, beta, or public-launch completion.
 
+## September 25, 2026 homeowner expansion
+
+`ADR_HR_2026_09_25_HOMEOWNER_RENTALS.md` and founder decisions FD-HR-001–005 narrowly
+extend the acquisition boundary. `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` defines the
+first local implementation slice. Historical marketplace exclusions below remain in
+force except for that explicit expansion; discovery is still deferred.
+
 ## 1. Authority and supersession
 
 This folder is the only authoritative implementation source. It supersedes every earlier v1, v2, or v3 ZIP, extracted folder, questionnaire, chat prompt, and generated-image caption.

@@ -24,6 +24,16 @@ export type RoutingDecision =
 const APP_SURFACE_PREFIXES = [
   "/app", "/onboarding", "/settings", "/platform", "/login", "/signup", "/auth", "/invitations",
 ];
+const RENTAL_PUBLIC_PREFIXES = ["/search", "/l", "/inquiries/verify", "/tours/verify", "/applications"];
+// Application capability endpoints must not be issued on an operator, owner,
+// resident or marketing origin. Operator decisions belong on the app host.
+const RENTAL_APPLICATION_PUBLIC_APIS = new Set([
+  "/api/v1/rental-applications", "/api/v1/rental-applications/verify",
+  "/api/v1/rental-applications/status", "/api/v1/rental-applications/withdraw",
+]);
+const RENTAL_APPLICATION_OPERATOR_APIS = new Set([
+  "/api/v1/rental-applications/prepare", "/api/v1/rental-applications/close",
+]);
 
 function underPrefix(pathname: string, prefixes: readonly string[]): boolean {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -40,9 +50,23 @@ const ROOT_DESTINATION: Partial<Record<HostClassification["kind"], string>> = {
 export function routeForHost(rawHost: string | null | undefined, pathname: string, search = ""): RoutingDecision {
   const classification = classifyHost(rawHost);
   const hostname = normalizeHostname(rawHost);
-  const { marketing } = hostConfig();
+  const { marketing, rentals } = hostConfig();
 
-  // Infrastructure paths are host-agnostic. Redirecting them would break webhooks and crawlers.
+  // B4 has origin-scoped public capability cookies. Never serve applicant
+  // verification/status/withdrawal on an operator or other sibling origin.
+  // Keep operator-only lease decisions on app.crecyos.com instead.
+  if (RENTAL_APPLICATION_PUBLIC_APIS.has(pathname)) {
+    return classification.kind === "rentals" || classification.kind === "development"
+      ? { type: "continue" } : { type: "reject" };
+  }
+  if (RENTAL_APPLICATION_OPERATOR_APIS.has(pathname)) {
+    return classification.kind === "app" || classification.kind === "development"
+      ? { type: "continue" } : { type: "reject" };
+  }
+  // A future application endpoint must be explicitly assigned an origin first;
+  // never inherit the broadly host-agnostic webhook/API fallback by accident.
+  if (pathname.startsWith("/api/v1/rental-applications/")) return { type: "reject" };
+  // All other infrastructure paths remain host-agnostic for webhooks/crawlers.
   if (pathname.startsWith("/api/") || pathname === "/robots.txt" || pathname === "/sitemap.xml") {
     return classification.kind === "unknown" ? { type: "reject" } : { type: "continue" };
   }
@@ -69,7 +93,29 @@ export function routeForHost(rawHost: string | null | undefined, pathname: strin
       if (underPrefix(pathname, APP_SURFACE_PREFIXES)) {
         return { type: "redirect", location: `https://${hostConfig().app}${pathname}${search}`, permanent: false };
       }
+      if (underPrefix(pathname, RENTAL_PUBLIC_PREFIXES)) {
+        return { type: "redirect", location: `https://${rentals}${pathname}${search}`, permanent: false };
+      }
       return { type: "continue" };
+    }
+
+    case "rentals": {
+      if (pathname === "/") {
+        return { type: "redirect", location: `/search${search}`, permanent: false };
+      }
+      if (underPrefix(pathname, RENTAL_PUBLIC_PREFIXES)
+        || pathname.startsWith("/_next/")
+        || pathname === "/favicon.ico"
+        || pathname === "/opengraph-image") {
+        return { type: "continue" };
+      }
+      if (underPrefix(pathname, APP_SURFACE_PREFIXES)) {
+        return { type: "redirect", location: `https://${hostConfig().app}${pathname}${search}`, permanent: false };
+      }
+      if (isCacheablePublicPage(pathname)) {
+        return { type: "redirect", location: `https://${marketing}${pathname}${search}`, permanent: false };
+      }
+      return { type: "reject" };
     }
 
     default: {
@@ -84,6 +130,10 @@ export function routeForHost(rawHost: string | null | undefined, pathname: strin
       // instead. Path-only, so it stays on the host they arrived on.
       if (classification.kind !== "app" && underPrefix(pathname, ["/signup"])) {
         return { type: "redirect", location: `/login${search}`, permanent: false };
+      }
+      // A landlord share link always canonicalizes to the rentals host.
+      if (underPrefix(pathname, RENTAL_PUBLIC_PREFIXES)) {
+        return { type: "redirect", location: `https://${rentals}${pathname}${search}`, permanent: false };
       }
       // A marketing page reached on a product host canonicalizes back to the marketing origin, so
       // app.crecyos.com/pricing cannot become a second copy of the public site.
@@ -106,4 +156,23 @@ export function isCacheablePublicRequest(rawHost: string | null | undefined, pat
   const kind = classifyHost(rawHost).kind;
   if (kind !== "marketing" && kind !== "development") return false;
   return isCacheablePublicPage(pathname);
+}
+
+/**
+ * Public HTML that must not construct the Supabase session client.
+ *
+ * Marketing pages are session-independent AND shared-cacheable. Rental share pages are also
+ * session-independent, but deliberately no-store because their availability and short-lived media URLs
+ * can change immediately when a landlord pauses, closes, edits or rotates a listing.
+ */
+export function isSessionIndependentPublicRequest(
+  rawHost: string | null | undefined,
+  pathname: string,
+): boolean {
+  const kind = classifyHost(rawHost).kind;
+  if (isCacheablePublicRequest(rawHost, pathname)) return true;
+  if ((kind === "rentals" || kind === "development") && underPrefix(pathname, RENTAL_PUBLIC_PREFIXES)) {
+    return true;
+  }
+  return false;
 }
