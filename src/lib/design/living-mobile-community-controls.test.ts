@@ -62,7 +62,8 @@ describe("Crecy Living mobile login and operator controls", () => {
     expect(form).toContain('inputMode="tel"');
     expect(form).toContain("normalizePhoneE164");
     for (const control of [input, textarea, nativeSelect]) {
-      expect(control).toContain("text-base sm:text-sm");
+      expect(control).toContain("text-base");
+      expect(control).toContain("sm:text-sm");
     }
   });
 
