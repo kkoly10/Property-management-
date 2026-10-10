@@ -33,14 +33,14 @@ export function LivingShell({
               <Link
                 href="/more/preferences"
                 aria-label="Notification preferences"
-                className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9 sm:w-9"
               >
                 <Bell aria-hidden="true" className="h-[1.05rem] w-[1.05rem]" />
               </Link>
               <Link
                 href="/more/preferences"
                 aria-label="Resident preferences"
-                className="flex h-9 w-9 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:border-[var(--brand)] hover:text-foreground"
+                className="flex h-11 w-11 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:border-[var(--brand)] hover:text-foreground sm:h-9 sm:w-9"
               >
                 <UserRound aria-hidden="true" className="h-[1.05rem] w-[1.05rem]" />
               </Link>

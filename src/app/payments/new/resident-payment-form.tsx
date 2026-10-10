@@ -167,7 +167,7 @@ export function ResidentPaymentForm({ options, retry, disabled }: { options: Res
           </div>
 
           <div className="mt-5 overflow-hidden rounded-xl border">
-            <div className="grid grid-cols-[minmax(0,1fr)_120px] border-b bg-[var(--surface-subtle)] px-4 py-2.5 text-xs font-medium text-muted-foreground">
+            <div className="hidden grid-cols-[minmax(0,1fr)_120px] border-b bg-[var(--surface-subtle)] px-4 py-2.5 text-xs font-medium text-muted-foreground sm:grid">
               <span>Open charge</span>
               <span>Apply</span>
             </div>
@@ -179,7 +179,7 @@ export function ResidentPaymentForm({ options, retry, disabled }: { options: Res
                     <p className="mt-1 text-xs text-muted-foreground">Due {charge.dueDate} · {money(charge.remainingMinor, selected.currencyCode)} remaining</p>
                   </div>
                   <div>
-                    <Label className="sr-only" htmlFor={`resident-allocation-${charge.chargeId}`}>Apply to {charge.description}</Label>
+                    <Label className="mb-2 block text-xs font-medium text-muted-foreground sm:sr-only" htmlFor={`resident-allocation-${charge.chargeId}`}>Apply to {charge.description}</Label>
                     <Input id={`resident-allocation-${charge.chargeId}`} inputMode="decimal" placeholder="0.00" value={allocations[charge.chargeId] ?? ""} disabled={disabled || pending} onChange={(event) => { setAllocations((current) => ({ ...current, [charge.chargeId]: event.target.value })); changed(); }} />
                   </div>
                 </div>

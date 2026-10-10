@@ -134,8 +134,45 @@ export default async function OwnerHomePage() {
                    the three figures they came for. Narrow containers keep the payable — the number
                    that says what is coming to them — and fold income and net position underneath
                    the property, each still labelled in words. */
-                <div role="region" aria-label="Recent statements, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
-                  <table className="w-full border-collapse text-left text-sm @xl:min-w-[680px]">
+                <div role="region" aria-label="Recent statements" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+                  <div className="divide-y @xl:hidden">
+                    {recentStatements.map((item) => (
+                      <Link
+                        key={item.statementSnapshotId}
+                        href={"/owner/statements/" + item.statementSnapshotId}
+                        data-mobile-record
+                        className="group block px-5 py-4 transition-colors hover:bg-[var(--brand-subtle)] active:bg-[var(--brand-subtle)] sm:px-6"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold tracking-[-0.01em]">{item.propertyName}</p>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">{period(item)} · {item.currencyCode} · v{item.versionNumber}</p>
+                          </div>
+                          <ArrowRight aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+                        </div>
+
+                        <div className="mt-4 rounded-lg border border-[var(--finance-accent)]/20 bg-[var(--finance-soft)] px-4 py-3">
+                          <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Owner payable</p>
+                          <p data-financial-value className="mt-1 text-xl font-semibold text-[var(--finance-accent)]">
+                            {money(item.ownerPayableMinor, item.currencyCode)}
+                          </p>
+                        </div>
+
+                        <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                          <div>
+                            <dt className="text-muted-foreground">Income</dt>
+                            <dd data-financial-value className="mt-1 font-semibold">{money(item.incomeMinor, item.currencyCode)}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-muted-foreground">Net position</dt>
+                            <dd data-financial-value className="mt-1 font-semibold">{money(item.netOwnerPositionMinor, item.currencyCode)}</dd>
+                          </div>
+                        </dl>
+                      </Link>
+                    ))}
+                  </div>
+
+                  <table className="hidden w-full border-collapse text-left text-sm @xl:table @xl:min-w-[680px]">
                     <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
                       <tr>
                         <th scope="col" className="px-5 py-3 sm:px-6">Property / period</th>

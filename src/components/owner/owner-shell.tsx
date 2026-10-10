@@ -51,21 +51,22 @@ export function OwnerShell({
               </div>
 
               <div className="ml-auto flex items-center gap-1">
-                <Link href="/owner/messages" aria-label="Owner messages" className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                <Link href="/owner/messages" aria-label="Owner messages" className="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9 sm:w-9">
                   <MessageSquareText aria-hidden="true" className="h-[1.05rem] w-[1.05rem]" />
                 </Link>
-                <Link href="/owner/documents" aria-label="Owner documents" className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                <Link href="/owner/documents" aria-label="Owner documents" className="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9 sm:w-9">
                   <FileText aria-hidden="true" className="h-[1.05rem] w-[1.05rem]" />
                 </Link>
-                <Link href="/owner/preferences" aria-label="Owner preferences" className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                <Link href="/owner/preferences" aria-label="Owner preferences" className="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-9 sm:w-9">
                   <Bell aria-hidden="true" className="h-[1.05rem] w-[1.05rem]" />
                 </Link>
               </div>
             </div>
-            <div className="lg:hidden"><OwnerNavigation compact /></div>
           </header>
 
           <main className={cn("mx-auto max-w-[1380px] gutter-4 py-6 print:max-w-none print:p-0 sm:gutter-6 sm:py-8 lg:gutter-8", mainClassName)}>{children}</main>
+          <OwnerNavigation compact />
+          <div aria-hidden="true" className="h-20 print:hidden lg:hidden" />
         </div>
       </div>
     </SurfaceTheme>

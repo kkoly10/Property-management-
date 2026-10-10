@@ -2,14 +2,10 @@ import Link from "next/link";
 import {
   ArrowRight,
   Building2,
-  CalendarClock,
   CircleAlert,
   CircleCheckBig,
-  ClipboardCheck,
   Filter,
-  Gauge,
   Settings2,
-  Wrench,
 } from "lucide-react";
 import { EmptyState } from "@/components/crecy/empty-state";
 import { MetricStrip, type MetricStripItem } from "@/components/crecy/metric-strip";
@@ -219,7 +215,7 @@ function DashboardScopeBar({
       <form action="/app" method="get" className="grid gap-3 px-1 sm:grid-cols-2 xl:grid-cols-[minmax(190px,1.25fr)_minmax(190px,1.1fr)_150px_150px_auto_auto] xl:items-end">
         <div className="space-y-1.5">
           <Label htmlFor="dashboard-property" className="text-xs text-muted-foreground">Property</Label>
-          <NativeSelect id="dashboard-property" name="propertyId" defaultValue={filters.propertyId ?? ""} className="h-9 bg-card">
+          <NativeSelect id="dashboard-property" name="propertyId" defaultValue={filters.propertyId ?? ""} className="h-11 bg-card sm:h-9">
             <option value="">All accessible properties</option>
             {dashboard.filters.properties.map((property) => (
               <option key={property.propertyId} value={property.propertyId}>
@@ -231,7 +227,7 @@ function DashboardScopeBar({
 
         <div className="space-y-1.5">
           <Label htmlFor="dashboard-book" className="text-xs text-muted-foreground">Book / currency</Label>
-          <NativeSelect id="dashboard-book" name="bookId" defaultValue={filters.accountingBookId ?? ""} className="h-9 bg-card">
+          <NativeSelect id="dashboard-book" name="bookId" defaultValue={filters.accountingBookId ?? ""} className="h-11 bg-card sm:h-9">
             <option value="">All accessible books</option>
             {dashboard.filters.books.map((book) => (
               <option key={book.accountingBookId} value={book.accountingBookId}>
@@ -243,7 +239,7 @@ function DashboardScopeBar({
 
         <div className="space-y-1.5">
           <Label htmlFor="dashboard-from" className="text-xs text-muted-foreground">From</Label>
-          <Input id="dashboard-from" name="from" type="date" max={filters.toDate} defaultValue={filters.fromDate} className="h-9 bg-card" />
+          <Input id="dashboard-from" name="from" type="date" max={filters.toDate} defaultValue={filters.fromDate} className="h-11 bg-card sm:h-9" />
         </div>
 
         <div className="space-y-1.5">
@@ -255,7 +251,7 @@ function DashboardScopeBar({
             min={filters.fromDate}
             max={new Date().toISOString().slice(0, 10)}
             defaultValue={filters.toDate}
-            className="h-9 bg-card"
+            className="h-11 bg-card sm:h-9"
           />
         </div>
 
@@ -377,8 +373,55 @@ function PropertyPerformance({
            happens not to populate this table, so nothing in the demo harness exercises it — which is
            exactly why it is fixed alongside the registers that do, rather than left to be discovered
            by the first operator with real portfolio data and a phone. */
-        <div role="region" aria-label="Property performance, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
-          <table className="w-full border-collapse text-left text-sm @xl:min-w-[680px]">
+        <div role="region" aria-label="Property performance" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+          <div className="divide-y @xl:hidden">
+            {dashboard.propertyPerformance.map((property) => {
+              const totalUnits = property.totalUnits;
+              const occupiedUnits = property.occupiedUnits;
+              const propertyRestricted = totalUnits == null || occupiedUnits == null;
+              const propertyOccupancy = totalUnits != null && occupiedUnits != null && totalUnits > 0
+                ? Math.round((occupiedUnits / totalUnits) * 100)
+                : null;
+
+              return (
+                <Link
+                  key={property.propertyId}
+                  href={"/app/properties/" + property.propertyId}
+                  data-mobile-record
+                  className="group block px-5 py-4 transition-colors hover:bg-[var(--brand-subtle)] active:bg-[var(--brand-subtle)] sm:px-6"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold tracking-[-0.01em]">{property.propertyName}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{property.currencyCode}</p>
+                    </div>
+                    <ArrowRight aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+                  </div>
+
+                  <dl className="mt-4 grid grid-cols-3 gap-3 border-t pt-3 text-xs">
+                    <div>
+                      <dt className="text-muted-foreground">Occupancy</dt>
+                      <dd className="mt-1 font-semibold">
+                        {propertyRestricted || propertyOccupancy == null ? "Restricted" : String(propertyOccupancy) + "%"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Overdue</dt>
+                      <dd data-financial-value className={property.overdueMinor && property.overdueMinor > 0 ? "mt-1 font-semibold text-warning" : "mt-1 font-semibold"}>
+                        {property.overdueMinor == null ? "Restricted" : money(property.overdueMinor, property.currencyCode)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Open work</dt>
+                      <dd className="mt-1 font-semibold">{property.openWorkOrders == null ? "Restricted" : property.openWorkOrders}</dd>
+                    </div>
+                  </dl>
+                </Link>
+              );
+            })}
+          </div>
+
+          <table className="hidden w-full border-collapse text-left text-sm @xl:table @xl:min-w-[680px]">
             <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
               <tr>
                 <th scope="col" className="px-5 py-3 sm:px-6">Property</th>

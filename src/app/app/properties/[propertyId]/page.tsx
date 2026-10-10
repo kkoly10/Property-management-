@@ -128,7 +128,7 @@ export default async function PropertyWorkspacePage({
 
       <MetricStrip items={metrics} />
 
-      <nav aria-label="Property sections" className="flex gap-5 overflow-x-auto border-b text-sm">
+      <nav aria-label="Property sections" className="grid grid-cols-2 gap-2 text-sm sm:flex sm:gap-5 sm:overflow-x-auto sm:border-b">
         {[
           ["Foundation", "#foundation"],
           ["Resident portal", "#resident-portal"],
@@ -138,7 +138,7 @@ export default async function PropertyWorkspacePage({
           <a
             key={href}
             href={href}
-            className="shrink-0 border-b-2 border-transparent py-3 font-medium text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+            className="flex min-h-11 items-center justify-center rounded-lg border bg-card px-3 py-2.5 text-center font-medium text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground sm:shrink-0 sm:justify-start sm:rounded-none sm:border-x-0 sm:border-t-0 sm:border-b-2 sm:border-b-transparent sm:bg-transparent sm:px-0 sm:py-3 sm:text-left"
           >
             {label}
           </a>
@@ -225,8 +225,38 @@ export default async function PropertyWorkspacePage({
               {workspace.units.length ? (
                 /* Narrow containers keep the unit and its occupancy state, and fold the
                    specification and the household under the unit code. */
-                <div role="region" aria-label="Units, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
-                  <table className="w-full border-collapse text-left text-sm @xl:min-w-[680px]">
+                <div role="region" aria-label="Units" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+                  <div className="divide-y @xl:hidden">
+                    {workspace.units.map((unit) => {
+                      const occupancy = occupancyByUnit.get(unit.id);
+                      const details = [
+                        unit.unitType,
+                        unit.bedrooms !== null ? String(unit.bedrooms) + " bd" : null,
+                        unit.bathrooms !== null ? String(unit.bathrooms) + " ba" : null,
+                        unit.squareFeet !== null ? unit.squareFeet.toLocaleString() + " sq ft" : null,
+                      ].filter(Boolean).join(" · ") || "Details not added";
+
+                      return (
+                        <article key={unit.id} data-mobile-record className="px-5 py-4 sm:px-6">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-semibold tracking-[-0.01em]">Unit {unit.unitCode}</p>
+                              <p className="mt-1 text-xs leading-5 text-muted-foreground">{details}</p>
+                            </div>
+                            <Badge variant={occupancy ? "info" : unit.status === "active" ? "success" : "neutral"}>
+                              {occupancy ? "occupied" : unit.status.replaceAll("_", " ")}
+                            </Badge>
+                          </div>
+                          <div className="mt-3 rounded-lg bg-[var(--surface-subtle)] px-3 py-2.5">
+                            <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Household</p>
+                            <p className="mt-1 text-sm font-medium">{occupancy?.householdName ?? "Vacant"}</p>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+
+                  <table className="hidden w-full border-collapse text-left text-sm @xl:table @xl:min-w-[680px]">
                     <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
                       <tr>
                         <th scope="col" className="px-5 py-3 sm:px-6">Unit</th>

@@ -226,74 +226,147 @@ test.describe("owner navigation on a phone", () => {
   test.use({ viewport: PHONE });
 
   for (const route of ["/owner", "/owner/documents", "/owner/messages", "/owner/preferences"]) {
-    test(`${route} scrolls its rail to the current section`, async ({ page }) => {
+    test(`${route} keeps the current owner destination visible`, async ({ page }) => {
       await page.goto(route, { waitUntil: "networkidle" });
       const current = page.getByRole("navigation", { name: "Owner navigation" }).locator('[aria-current="page"]');
       await expect(current).toHaveCount(1);
-      // Seven tabs need 694px. Without the rail scrolling itself, Approvals, Documents, Messages and
-      // Preferences all sat past the right edge with nothing to say they were there.
       await expect(current).toBeInViewport();
     });
   }
+
+  test("every owner destination is reachable in two taps", async ({ page }) => {
+    await page.goto("/owner", { waitUntil: "networkidle" });
+    const nav = page.getByRole("navigation", { name: "Owner navigation" });
+
+    for (const label of ["Overview", "Statements", "Approvals", "Messages"]) {
+      await expect(nav.getByRole("link", { name: label, exact: true })).toBeVisible();
+    }
+
+    await nav.getByRole("button", { name: "More", exact: true }).click();
+    const sheet = page.getByRole("dialog");
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByRole("link", { name: "Distributions", exact: true })).toHaveAttribute("href", "/owner#remittances");
+    await expect(sheet.getByRole("link", { name: "Documents", exact: true })).toHaveAttribute("href", "/owner/documents");
+    await expect(sheet.getByRole("link", { name: "Preferences", exact: true })).toHaveAttribute("href", "/owner/preferences");
+  });
+
+  test("the owner bottom bar does not cover the end of the page", async ({ page }) => {
+    await page.goto("/owner", { waitUntil: "networkidle" });
+    const overlap = await page.evaluate(() => {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
+      const bar = [...document.querySelectorAll<HTMLElement>('nav[aria-label="Owner navigation"]')]
+        .find((candidate) => candidate.getBoundingClientRect().height > 0);
+      const main = document.querySelector("main");
+      if (!bar || !main) return null;
+      return Math.round(main.getBoundingClientRect().bottom - bar.getBoundingClientRect().top);
+    });
+    expect(overlap).toBeLessThanOrEqual(0);
+  });
 });
 
-test.describe("financial registers on a phone", () => {
+test.describe("mobile records replace compressed desktop registers", () => {
   test.use({ viewport: PHONE });
 
   const REGISTERS = [
-    { route: "/app/payments", label: "Recent payments, scrollable", mustShow: [/\$[\d,]+\.\d\d/, /succeeded|failed|returned|pending/i] },
-    { route: "/app/maintenance", label: "Maintenance requests, scrollable", mustShow: [/Needs triage|assigned|scheduled|completed/i] },
-    { route: "/owner", label: "Recent statements, scrollable", mustShow: [/\$[\d,]+\.\d\d/] },
+    { route: "/app/payments", label: "Recent payments", mustShow: [/Amount/i, /\$[\d,]+\.\d\d/, /succeeded|failed|returned|pending/i] },
+    { route: "/app/maintenance", label: "Maintenance requests", mustShow: [/Official priority/i, /Needs triage|assigned|scheduled|completed/i] },
+    { route: "/owner", label: "Recent statements", mustShow: [/Owner payable/i, /\$[\d,]+\.\d\d/] },
   ] as const;
 
   for (const { route, label, mustShow } of REGISTERS) {
-    test(`${route} keeps its decisive column on screen`, async ({ page }) => {
+    test(`${route} uses a scan-friendly record card on a phone`, async ({ page }) => {
       await page.goto(route, { waitUntil: "networkidle" });
       const region = page.getByRole("region", { name: label });
       await expect(region).toBeVisible();
 
-      const result = await page.evaluate((name) => {
-        const scroller = [...document.querySelectorAll<HTMLElement>('[role="region"]')].find((el) => el.getAttribute("aria-label") === name);
-        const table = scroller?.querySelector("table");
-        if (!scroller || !table) return null;
-        const displayed = (el: Element) => getComputedStyle(el).display !== "none";
-        const box = scroller.getBoundingClientRect();
-        const heads = [...table.querySelectorAll("thead th")];
-        const firstRow = table.querySelector("tbody tr");
-        const cells = firstRow ? [...firstRow.children] : [];
-        return {
-          headCount: heads.length,
-          cellCount: cells.length,
-          shownHeads: heads.filter(displayed).length,
-          shownCells: cells.filter(displayed).length,
-          clipped: heads.filter(displayed).filter((h) => h.getBoundingClientRect().right > box.right + 1).map((h) => h.textContent?.trim()),
-          // Only text that is actually painted — `textContent` would happily return the collapsed
-          // columns and make this assertion meaningless.
-          visibleText: (firstRow as HTMLElement | null)?.innerText ?? "",
-        };
-      }, label);
-
-      expect(result, `${route}: no register table found`).not.toBeNull();
-      // Hiding a `th` without its `td` desynchronises the column headers from the data, which breaks
-      // the row/column association a screen reader relies on — a worse defect than the overflow.
-      expect(result!.headCount, `${route}: header and cell counts diverge`).toBe(result!.cellCount);
-      expect(result!.shownHeads, `${route}: a column is collapsed in the header but not the body, or vice versa`).toBe(result!.shownCells);
-      expect(result!.clipped, `${route}: a rendered column is off the right edge`).toEqual([]);
-
+      const firstRecord = region.locator("[data-mobile-record]").first();
+      await expect(firstRecord, `${route}: no mobile record rendered`).toBeVisible();
+      const visibleText = await firstRecord.innerText();
       for (const pattern of mustShow) {
-        expect(result!.visibleText, `${route}: the row does not show ${pattern} without scrolling sideways`).toMatch(pattern);
+        expect(visibleText, `${route}: mobile record does not show ${pattern}`).toMatch(pattern);
       }
+
+      await expect(region.locator("table"), `${route}: desktop table is still painted on the phone`).toBeHidden();
+      const box = await firstRecord.boundingBox();
+      expect(box?.width ?? 0, `${route}: mobile record is too narrow to be the primary presentation`).toBeGreaterThan(300);
     });
   }
 
-  test("a scrollable register is reachable by keyboard", async ({ page }) => {
-    // A bare `overflow-x-auto` div is not focusable in every browser, so a keyboard-only operator
-    // cannot scroll it and a screen reader announces nothing when it lands there. These four
-    // registers had none of `role`, `tabindex` or a name; the marketing tables already did.
+  test("the desktop payment register remains keyboard reachable", async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 900 });
     await page.goto("/app/payments", { waitUntil: "networkidle" });
-    const region = page.getByRole("region", { name: "Recent payments, scrollable" });
+    const region = page.getByRole("region", { name: "Recent payments" });
     await expect(region).toHaveAttribute("tabindex", "0");
+  });
+
+  test("property detail exposes all section jumps and unit cards without sideways discovery", async ({ page }) => {
+    await page.goto("/app/properties/20000000-0000-4000-8000-000000000002", { waitUntil: "networkidle" });
+    const nav = page.getByRole("navigation", { name: "Property sections" });
+    await nav.scrollIntoViewIfNeeded();
+    const horizontalGeometry = await nav.evaluate((element) => ({
+      left: element.getBoundingClientRect().left,
+      right: element.getBoundingClientRect().right,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      links: [...element.querySelectorAll("a")].map((link) => {
+        const box = link.getBoundingClientRect();
+        return { left: box.left, right: box.right };
+      }),
+    }));
+    expect(horizontalGeometry.scrollWidth, "property section choices should not require sideways scrolling").toBe(horizontalGeometry.clientWidth);
+    for (const link of horizontalGeometry.links) {
+      expect(link.left).toBeGreaterThanOrEqual(horizontalGeometry.left - 1);
+      expect(link.right).toBeLessThanOrEqual(horizontalGeometry.right + 1);
+    }
+
+    const units = page.getByRole("region", { name: "Units" });
+    await expect(units.locator("[data-mobile-record]").first()).toBeVisible();
+    await expect(units.locator("table")).toBeHidden();
+  });
+});
+
+test.describe("phone touch ergonomics", () => {
+  test.use({ viewport: PHONE });
+
+  for (const route of ["/app", "/payments/new"]) {
+    test(`${route} keeps shared form controls thumb-sized`, async ({ page }) => {
+      await page.goto(route, { waitUntil: "networkidle" });
+      const undersized = await page.locator(
+        '[data-slot="button"]:visible, [data-slot="input"]:visible, [data-slot="native-select"]:visible',
+      ).evaluateAll((elements) => elements
+        .map((element) => {
+          const box = element.getBoundingClientRect();
+          return {
+            tag: element.tagName.toLowerCase(),
+            id: element.id,
+            text: (element.textContent ?? "").trim().slice(0, 40),
+            height: Math.round(box.height),
+          };
+        })
+        .filter((control) => control.height < 44));
+      expect(undersized, `${route}: shared controls smaller than the 44px phone target`).toEqual([]);
+    });
+  }
+
+  test("owner and resident header actions are thumb-sized", async ({ page }) => {
+    for (const [route, label] of [
+      ["/owner", "Owner messages"],
+      ["/home", "Notification preferences"],
+    ] as const) {
+      await page.goto(route, { waitUntil: "networkidle" });
+      const control = page.getByLabel(label);
+      const box = await control.boundingBox();
+      expect(box?.height ?? 0, `${route}: ${label} is too short for a phone target`).toBeGreaterThanOrEqual(44);
+      expect(box?.width ?? 0, `${route}: ${label} is too narrow for a phone target`).toBeGreaterThanOrEqual(44);
+    }
+  });
+
+  test("resident payment allocation labels the amount field on a phone", async ({ page }) => {
+    await page.goto("/payments/new", { waitUntil: "networkidle" });
+    const mobileLabel = page.locator('label[for^="resident-allocation-"]').first();
+    await expect(mobileLabel).toBeVisible();
+    await expect(mobileLabel).toContainText(/Apply to/i);
+    await expect(page.getByText("Open charge", { exact: true })).toBeHidden();
   });
 });
 

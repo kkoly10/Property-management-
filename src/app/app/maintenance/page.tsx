@@ -13,7 +13,6 @@ import { PageHeader } from "@/components/crecy/page-header";
 import { WorkspacePanel } from "@/components/crecy/workspace-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { getOperatorMaintenanceWorkspace, type OperatorMaintenanceItem } from "@/lib/data/maintenance";
 import { getActiveOrganizationId } from "@/lib/organization/context";
 
@@ -186,8 +185,48 @@ export default async function OperatorMaintenancePage() {
              the official priority and the work-order state all past the right edge. Narrow
              containers keep the title, the work-order state and the link, and fold the property and
              the priority into the title cell so nothing an operator triages on is lost. */
-          <div role="region" aria-label="Maintenance requests, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
-            <table className="w-full border-collapse text-left text-sm @xl:min-w-[860px]">
+          <div role="region" aria-label="Maintenance requests" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+            <div className="divide-y @xl:hidden">
+              {workspace.items.map((item) => (
+                <Link
+                  key={item.maintenanceRequestId}
+                  href={"/app/maintenance/" + item.maintenanceRequestId}
+                  data-mobile-record
+                  className="group block px-5 py-4 transition-colors hover:bg-[var(--brand-subtle)] active:bg-[var(--brand-subtle)] sm:px-6"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold tracking-[-0.01em]">{item.title}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {item.propertyName} · Unit {item.unitCode}
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{item.publicReference} · {label(item.category)}</p>
+                    </div>
+                    <ArrowRight aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3 border-t pt-3">
+                    <div>
+                      <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Official priority</p>
+                      <p className="mt-1 text-sm font-semibold">{label(item.officialPriority)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Work order</p>
+                      <div className="mt-1">
+                        {item.workOrder ? <Badge variant="info">{label(item.workOrder.status)}</Badge> : <Badge variant="warning">Needs triage</Badge>}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                    <span>{item.workOrder?.vendorName ?? "Vendor pending"}</span>
+                    <span className="inline-flex items-center gap-1"><Camera aria-hidden="true" className="h-3.5 w-3.5" />{item.evidenceCount} evidence</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+
+            <table className="hidden w-full border-collapse text-left text-sm @xl:table @xl:min-w-[860px]">
               <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
                 <tr>
                   <th scope="col" className="px-5 py-3 sm:px-6">Request</th>

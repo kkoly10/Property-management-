@@ -40,7 +40,7 @@ export function GlobalSearch() {
         enterKeyHint="search"
         aria-keyshortcuts="/ Control+K Meta+K"
         placeholder="Search properties, residents, leases, references…"
-        className="h-9 bg-background pr-15 pl-9"
+        className="h-11 bg-background pr-10 pl-9 sm:h-9 sm:pr-15"
       />
       <kbd className="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:block">
         ⌘/Ctrl K

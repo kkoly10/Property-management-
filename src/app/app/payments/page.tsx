@@ -150,8 +150,61 @@ export default async function PaymentsPage() {
            * and the two signals an operator scans for — how much, and did it land — are promoted
            * into the cells that survive.
            */
-          <div role="region" aria-label="Recent payments, scrollable" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
-            <table className="w-full border-collapse text-left text-sm @xl:min-w-[860px]">
+          <div role="region" aria-label="Recent payments" tabIndex={0} className="@container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40">
+            <div className="divide-y @xl:hidden">
+              {workspace.payments.map((payment) => (
+                <Link
+                  key={payment.paymentId}
+                  href={"/app/payments/" + payment.paymentId}
+                  data-mobile-record
+                  className="group block px-5 py-4 transition-colors hover:bg-[var(--brand-subtle)] active:bg-[var(--brand-subtle)] sm:px-6"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold tracking-[-0.01em]">{payment.householdName}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {payment.propertyName} · Unit {payment.unitCode}
+                      </p>
+                      <p className="mt-0.5 font-mono text-[0.7rem] text-muted-foreground">{payment.publicReference}</p>
+                    </div>
+                    <ArrowRight aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+                  </div>
+
+                  <div className="mt-4 flex items-end justify-between gap-3 border-t pt-3">
+                    <div>
+                      <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Amount</p>
+                      <p data-financial-value className="mt-1 text-lg font-semibold">{money(payment.amountMinor, payment.currencyCode)}</p>
+                    </div>
+                    <Badge variant={payment.status === "succeeded" ? "success" : ["failed", "returned"].includes(payment.status) ? "warning" : "neutral"}>
+                      {label(payment.status)}
+                    </Badge>
+                  </div>
+
+                  <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+                    <div>
+                      <dt className="text-muted-foreground">Source</dt>
+                      <dd className="mt-1 font-medium">{sourceLabel(payment.source)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Reconciliation</dt>
+                      <dd className="mt-1">
+                        {payment.reconciliationStatus
+                          ? <Badge variant={reconciliationBadge(payment.reconciliationStatus)}>{label(payment.reconciliationStatus)}</Badge>
+                          : <span className="font-medium">—</span>}
+                      </dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className="text-muted-foreground">Received</dt>
+                      <dd className="mt-1 font-medium">
+                        {payment.receivedAt ? new Date(payment.receivedAt).toLocaleDateString() : "Awaiting provider"}
+                      </dd>
+                    </div>
+                  </dl>
+                </Link>
+              ))}
+            </div>
+
+            <table className="hidden w-full border-collapse text-left text-sm @xl:table @xl:min-w-[860px]">
               <thead className="border-b bg-[var(--surface-subtle)]/70 text-xs font-medium text-muted-foreground">
                 <tr>
                   <th scope="col" className="px-5 py-3 sm:px-6">Resident</th>
