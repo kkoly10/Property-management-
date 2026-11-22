@@ -2,16 +2,21 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
 export async function validateOrganizationClosure(db) {
-  const [org, otherOrg, operator, otherOperator, scopedAdmin, entity, book, property, unit, household, document, version, request, ledger, creditAccount, otherCreditAccount] =
-    Array.from({ length: 16 }, () => randomUUID());
+  const [org, otherOrg, operator, otherOperator, scopedAdmin, unscopedAdmin, entity, book, property, unit, household, document, version, request, ledger, creditAccount, otherCreditAccount] =
+    Array.from({ length: 17 }, () => randomUUID());
   const result = async (sql, params) => (await db.query(sql, params)).rows[0].result;
   const read = (id = org) => result("select public.get_organization_closure_readiness($1) as result", [id]);
+  const readReview = (id = org) => result("select public.get_workspace_closure_review($1) as result", [id]);
+  const recordReview = (action, expected = null, key = randomUUID(), id = org) => result(
+    "select public.record_workspace_closure_action($1,$2,$3,$4,$5) as result",
+    [id, expected?.caseId ?? null, expected?.caseVersion ?? 0, action, key],
+  );
   const setActor = (actor, aal = "aal2") => db.exec(
     `reset role; set role authenticated; set request.jwt.claim.sub='${actor}'; set request.jwt.claim.aal='${aal}'`,
   );
   await db.exec("reset role; reset request.jwt.claims; reset crecy.active_organization_id");
-  await db.query("insert into auth.users(id,email) values ($1,'closure-admin@example.invalid'),($2,'other@example.invalid'),($3,'scoped@example.invalid')",
-    [operator, otherOperator, scopedAdmin]);
+  await db.query("insert into auth.users(id,email) values ($1,'closure-admin@example.invalid'),($2,'other@example.invalid'),($3,'scoped@example.invalid'),($4,'closure-manager@example.invalid')",
+    [operator, otherOperator, scopedAdmin, unscopedAdmin]);
   for (const [id, owner] of [[org, operator], [otherOrg, otherOperator]]) {
     await db.query("insert into public.organizations(id,display_name,slug,headquarters_country_code,default_locale,default_time_zone,customer_path,created_by) "
       + "values($1,'Synthetic closure workspace',$2,'US','en-US','UTC','property_manager',$3)", [id, "closure-" + id, owner]);
@@ -19,6 +24,8 @@ export async function validateOrganizationClosure(db) {
     await db.query("insert into public.organization_subscriptions(organization_id,plan_code,country_price_book,trial_ends_at) "
       + "values($1,'growth','US',now()+interval '1 day')", [id]);
   }
+  await db.query("insert into public.organization_memberships(organization_id,user_id,role_code,status) values($1,$2,'org_admin','active')",
+    [org, unscopedAdmin]);
   await db.query("insert into public.operating_entities(id,organization_id,legal_name,display_name,country_code,entity_type,created_by) "
     + "values($1,$2,'Synthetic entity','Synthetic entity','US','company',$3)", [entity, org, operator]);
   await db.query("insert into public.accounting_books(id,organization_id,operating_entity_id,name,functional_currency_code) values($1,$2,$3,'Synthetic book','USD')",
@@ -139,18 +146,67 @@ export async function validateOrganizationClosure(db) {
     const openTenancyReceipt = await recordDeposit(episodes[0], 1, receipt);
     const openTenancyRefund = await recordDeposit(episodes[0], 2, { ...refund, targetId: openTenancyReceipt.entryId });
     assert.equal((await read()).counts.unresolvedDepositTenancies, 0);
+
+    assert.deepEqual(await readReview(), { organizationId: org, case: null });
+    await assert.rejects(() => recordReview("review"), /CLOSURE_REVIEW_NOT_ACTIVE/);
+    await setActor(operator, "aal1");
+    await assert.rejects(readReview, /MFA_REQUIRED/);
+    await assert.rejects(() => recordReview("request"), /MFA_REQUIRED/);
+    await setActor(unscopedAdmin);
+    assert.equal((await read()).organizationId, org);
+    await assert.rejects(readReview, /WORKSPACE_OWNER_REQUIRED/);
+    await assert.rejects(() => recordReview("request"), /WORKSPACE_OWNER_REQUIRED/);
+    await setActor(otherOperator);
+    await assert.rejects(readReview, /ORGANIZATION_SCOPE_DENIED/);
+    await assert.rejects(() => recordReview("request"), /ORGANIZATION_SCOPE_DENIED/);
+    await setActor(operator);
+    await assert.rejects(() => db.query("select * from private.organization_closure_actions"), /permission denied/);
+    const requestKey = randomUUID();
+    const started = await recordReview("request", null, requestKey);
+    assert.equal(started.status, "requested");
+    assert.deepEqual(await recordReview("request", null, requestKey), started);
+    await assert.rejects(() => recordReview("review", started, requestKey), /IDEMPOTENCY_CONFLICT/);
+    await assert.rejects(() => recordReview("request", started), /CLOSURE_REVIEW_ALREADY_ACTIVE_OR_UNAVAILABLE/);
+    const reviewed = await recordReview("review", started);
+    const firstSnapshot = (await readReview()).case.reviewedReadiness;
+    assert.equal(firstSnapshot.caseVersion, reviewed.caseVersion);
+    assert.equal(firstSnapshot.readiness.counts.unresolvedDepositTenancies, 0);
+    assert.equal(firstSnapshot.readiness.counts.privacyCasesWithHolds, 1);
+    await assert.rejects(() => recordReview("cancel", started), /CLOSURE_VERSION_CONFLICT/);
+
     await recordDeposit(episodes[0], 3, { kind: "correction", targetId: openTenancyRefund.entryId, detail: "Custodian corrected the refund record." });
     assert.equal((await read()).counts.unresolvedDepositTenancies, 1, "Correcting a refund restores the unresolved balance.");
+    assert.deepEqual((await readReview()).case.reviewedReadiness, firstSnapshot);
+    const reviewedAgain = await recordReview("review", reviewed);
+    const secondSnapshot = (await readReview()).case.reviewedReadiness;
+    assert.equal(secondSnapshot.readiness.counts.unresolvedDepositTenancies, 1);
+    const canceled = await recordReview("cancel", reviewedAgain);
+    assert.equal((await readReview()).case.status, "canceled");
+    assert.deepEqual((await readReview()).case.reviewedReadiness, secondSnapshot);
+    assert.deepEqual(await recordReview("request", null, requestKey), started);
+    await assert.rejects(() => recordReview("review", canceled), /CLOSURE_REVIEW_NOT_ACTIVE/);
+    const restarted = await recordReview("request", canceled);
+    assert.notEqual(restarted.caseId, canceled.caseId);
+    assert.equal((await readReview()).case.reviewedReadiness, null);
+    assert.equal((await read()).organizationStatus, clean.organizationStatus);
+
     await setActor(otherOperator);
     const own = await read(otherOrg);
     assert.deepEqual(own.counts, { ...clean.counts, openPrivacyRequests: 1 });
     await assert.rejects(read, /ORGANIZATION_SCOPE_DENIED/);
+    assert.deepEqual(await readReview(otherOrg), { organizationId: otherOrg, case: null });
     await db.exec("reset role");
+    assert.equal(await result("select count(*)::int as result from private.organization_closure_actions where organization_id=$1", [org]), 5);
+    assert.equal(await result("select count(*)::int as result from audit.audit_events where organization_id=$1 and action_code='organization_closure.action_recorded'", [org]), 5);
+    assert.equal(await result("select count(*)::int as result from private.outbox_events where organization_id=$1 and event_type='organization_closure.action_recorded'", [org]), 5);
+    assert.deepEqual(await result("select readiness as result from private.organization_closure_actions where organization_id=$1 and case_id=$2 and case_version=2",
+      [org, started.caseId]), firstSnapshot.readiness);
     await db.query("update public.organizations set status='closed' where id=$1", [org]);
     await setActor(operator);
     const historical = await read();
     assert.equal(historical.organizationStatus, "closed");
     assert.deepEqual(historical.counts, { ...populated.counts, unresolvedDepositTenancies: 1 });
+    assert.equal((await readReview()).case.caseId, restarted.caseId);
   } finally {
     await db.exec("reset role; reset request.jwt.claim.sub; reset request.jwt.claim.aal; reset crecy.active_organization_id");
   }

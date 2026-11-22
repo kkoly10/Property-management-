@@ -216,6 +216,74 @@ export async function validatePlatformBilling(db) {
     const replacement = await prepare();
     assert.notEqual(replacement.attemptId, reservation.attemptId);
     assert.equal(replacement.customerId, customer);
+
+    const subscribed = await result("select public.prepare_platform_billing_checkout($1,'aal2',$2,$3,'CA','starter','month','price_StarterFixture') as result",
+      [owner, freeOrganization, account]);
+    const upgradeSubscription = "sub_UpgradeFixture";
+    const upgradeCustomer = "cus_UpgradeFixture";
+    const starterPrice = "price_StarterFixture";
+    const growthPrice = "price_GrowthFixture";
+    const invoiceId = "in_UpgradeFixture";
+    const upgradeClaim = (eventId, eventType = "invoice.paid") => result(
+      "select public.claim_platform_billing_event($1,$2,$3,$4,$5) as result",
+      [account, eventId, eventType, upgradeSubscription, subscribed.attemptId],
+    );
+    const upgradeWorkspace = () => result("select public.get_platform_billing_workspace($1) as result", [freeOrganization]);
+    const prepareUpgrade = (target = "growth", interval = "month", aal = "aal2", actor = owner) => result(
+      "select public.prepare_platform_billing_upgrade($1,$2,$3,$4,'CA',$5,$6,$7) as result",
+      [actor, aal, freeOrganization, account, target, interval, target === "pro" ? price : growthPrice],
+    );
+    const applyUpgrade = (eventId, claim, target, paid, invoice, { voided = false, pending = false } = {}) => result(
+      "select public.apply_platform_billing_upgrade_event($1,$2,$3,$4,$5,$6,$7,'active',$8,now(),now()+interval '30 days',false,$9,$10,$11) as result",
+      [account, eventId, claim.attemptId, claim.generation, upgradeSubscription, upgradeCustomer, target, paid, invoice, voided, pending],
+    );
+
+    const activated = await upgradeClaim("evt_UpgradeActivate");
+    assert.equal(await result(
+      "select public.apply_platform_billing_event($1,'evt_UpgradeActivate',$2,$3,$4,$5,$6,'active',true,now(),now()+interval '30 days',false) as result",
+      [account, subscribed.attemptId, activated.generation, upgradeSubscription, upgradeCustomer, starterPrice],
+    ), true);
+    await assert.rejects(() => prepareUpgrade("growth", "month", "aal1"), /MFA_REQUIRED/);
+    await assert.rejects(() => prepareUpgrade("growth", "month", "aal2", outsider), /BILLING_SCOPE_DENIED/);
+    await assert.rejects(() => prepareUpgrade("starter"), /BILLING_UPGRADE_TARGET_UNSUPPORTED/);
+    await assert.rejects(() => prepareUpgrade("growth", "year"), /BILLING_UPGRADE_TARGET_UNSUPPORTED/);
+    const abandoned = await prepareUpgrade();
+    assert.deepEqual(await prepareUpgrade(), abandoned);
+    await assert.rejects(() => prepareUpgrade("pro"), /BILLING_UPGRADE_PENDING/);
+    assert.equal(await result("select public.record_platform_billing_upgrade_invoice($1,$2,'in_ExpiredFixture') as result",
+      [abandoned.upgradeId, account]), true);
+    const expired = await upgradeClaim("evt_UpgradeExpired", "customer.subscription.pending_update_expired");
+    assert.equal(await applyUpgrade("evt_UpgradeExpired", expired, starterPrice, true, "in_Unknown", { voided: true }), false);
+    assert.equal(await applyUpgrade("evt_UpgradeExpired", expired, starterPrice, true, "in_ExpiredFixture", { voided: true }), true);
+
+    const reserved = await prepareUpgrade();
+    assert.notEqual(reserved.upgradeId, abandoned.upgradeId);
+    assert.equal(await result("select public.record_platform_billing_upgrade_invoice($1,$2,$3) as result",
+      [reserved.upgradeId, account, invoiceId]), true);
+    await db.exec("reset role; set role authenticated");
+    await assert.rejects(prepareUpgrade, /permission denied/);
+    assert.equal((await upgradeWorkspace()).upgradePendingPlan, "growth");
+    assert.equal((await upgradeWorkspace()).currentInterval, "month");
+    assert.equal((await upgradeWorkspace()).plan, "starter");
+    await db.exec("reset role; set role service_role");
+
+    const unconfirmed = await upgradeClaim("evt_UnconfirmedUpgrade");
+    assert.equal(await applyUpgrade("evt_UnconfirmedUpgrade", unconfirmed, growthPrice, false, invoiceId), false);
+    const confirmed = await upgradeClaim("evt_ConfirmedUpgrade");
+    assert.equal(confirmed.upgradeInvoiceId, invoiceId);
+    assert.equal(await applyUpgrade("evt_UnconfirmedUpgrade", unconfirmed, growthPrice, true, invoiceId), false);
+    assert.equal(await applyUpgrade("evt_ConfirmedUpgrade", confirmed, growthPrice, true, "in_WrongInvoice"), false);
+    assert.equal(await applyUpgrade("evt_ConfirmedUpgrade", confirmed, growthPrice, true, invoiceId, { pending: true }), false);
+    assert.equal(await applyUpgrade("evt_ConfirmedUpgrade", confirmed, growthPrice, true, invoiceId), true);
+    assert.equal(await applyUpgrade("evt_ConfirmedUpgrade", confirmed, growthPrice, true, invoiceId), true);
+    await db.exec("reset role");
+    assert.equal(await result("select count(*)::int as result from audit.audit_events where organization_id=$1 and action_code='billing.subscriptionUpgradeApplied'",
+      [freeOrganization]), 1);
+    assert.equal(await result("select count(*)::int as result from private.outbox_events where organization_id=$1 and event_type='subscription.change_requested' and correlation_id in ($2,$3)",
+      [freeOrganization, abandoned.upgradeId, reserved.upgradeId]), 2);
+    await db.exec("set role authenticated");
+    assert.equal((await upgradeWorkspace()).upgradePendingPlan, null);
+    assert.equal((await upgradeWorkspace()).plan, "growth");
   } finally {
     await db.exec("reset role; reset request.jwt.claim.sub; reset crecy.active_organization_id");
   }

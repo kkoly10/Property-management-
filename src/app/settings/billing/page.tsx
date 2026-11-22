@@ -36,9 +36,15 @@ export default async function BillingSettingsPage() {
   const config = getPlatformStripeConfig();
   const prices = workspace ? PRICE_BOOKS[workspace.country] : null;
   const options = workspace && config && prices
-    ? (["starter", "growth", "pro"] as const).filter((plan) => PLAN_ORDER.indexOf(plan) >= PLAN_ORDER.indexOf(workspace.plan))
+    ? (["starter", "growth", "pro"] as const).filter((plan) => {
+        const difference = PLAN_ORDER.indexOf(plan) - PLAN_ORDER.indexOf(workspace.plan);
+        return workspace.hasSubscription
+          ? workspace.status === "active" && !workspace.cancelAtPeriodEnd && difference > 0
+          : difference >= 0;
+      })
         .flatMap((plan: PaidPlan) => (["month", "year"] as const)
-          .filter((interval) => config.priceIds[`${workspace.country}.${plan}.${interval}`])
+          .filter((interval) => config.priceIds[`${workspace.country}.${plan}.${interval}`]
+            && (!workspace.hasSubscription || workspace.currentInterval === interval))
           .map((interval: BillingInterval) => ({
             plan,
             interval,
@@ -62,9 +68,7 @@ export default async function BillingSettingsPage() {
           {workspace.status === "trialing" && workspace.trialEndsAt && <p>Your trial ends {dateLabel(workspace.trialEndsAt)}.</p>}
           {workspace.cancelAtPeriodEnd && workspace.periodEndsAt && <p>Your subscription ends {dateLabel(workspace.periodEndsAt)}.</p>}
           {workspace.hasSubscription && workspace.status !== "active" && <p>Open the billing portal to review your payment and invoices.</p>}
-          {config
-            ? <BillingPanel organizationId={context.active.organizationId} options={options} workspace={workspace} />
-            : <p className="text-sm text-muted-foreground">Subscription checkout is unavailable in this environment.</p>}
+          <BillingPanel organizationId={context.active.organizationId} options={options} workspace={workspace} sandboxEnabled={Boolean(config)} />
         </CardContent>
       </Card> : <Alert variant="info">
         <AlertTitle>Billing details are unavailable</AlertTitle>

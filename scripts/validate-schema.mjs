@@ -13,6 +13,7 @@ import { validateTenancyMoveIn } from "./validate-tenancy-move-in.mjs";
 import { validateImportedTenancyAgreement } from "./validate-imported-tenancy-agreement.mjs";
 import { validateTenancyRenewal } from "./validate-tenancy-renewal.mjs";
 import { validatePrivacyRequestContinuity } from "./validate-privacy-request-continuity.mjs";
+import { validatePrivacyFulfillment } from "./validate-privacy-fulfillment.mjs";
 import { validateTenancyDeposit } from "./validate-tenancy-deposit.mjs";
 import { readFile } from "node:fs/promises";
 import { validateRentalAgreements } from "./validate-rental-agreements.mjs";
@@ -109,8 +110,10 @@ const ownershipInvariantsSql = await readFile(resolve(root, "supabase/migrations
 const platformBillingSql = await readFile(resolve(root, "supabase/migrations/20261122145653_platform_saas_subscriptions.sql"), "utf8");
 const platformBillingUsageSql = await readFile(resolve(root, "supabase/migrations/20261122151451_platform_billing_access_floor_and_usage.sql"), "utf8");
 const platformFreePlanSql = await readFile(resolve(root, "supabase/migrations/20261122152010_allow_verified_free_plan_changes.sql"), "utf8");
+const platformUpgradeSql = await readFile(resolve(root, "supabase/migrations/20261122161850_platform_saas_plan_upgrades.sql"), "utf8");
 const organizationClosureSql = await readFile(resolve(root, "supabase/migrations/20261122152552_organization_closure_readiness.sql"), "utf8");
 const organizationClosureDepositsSql = await readFile(resolve(root, "supabase/migrations/20261122153559_include_external_deposits_in_closure_readiness.sql"), "utf8");
+const workspaceClosureReviewSql = await readFile(resolve(root, "supabase/migrations/20261122162601_phase_8_workspace_closure_review.sql"), "utf8");
 const legacyPaymentExportSql = await readFile(resolve(root, "supabase/migrations/20260725020649_phase_8_payment_csv_export.sql"), "utf8");
 const scopedPaymentExportSql = await readFile(resolve(root, "supabase/migrations/20261122143914_scope_payment_export_to_explicit_organization.sql"), "utf8");
 const retireImplicitPaymentExportSql = await readFile(resolve(root, "supabase/migrations-contract/20261122143918_retire_implicit_payment_export.sql"), "utf8");
@@ -922,6 +925,7 @@ async function validateRecurringCharges() {
   await db.exec(platformBillingSql);
   await db.exec(platformBillingUsageSql);
   await db.exec(platformFreePlanSql);
+  await db.exec(platformUpgradeSql);
   await db.exec(organizationClosureSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
@@ -6370,6 +6374,7 @@ async function validateRecurringCharges() {
   });
   await validatePlatformBilling(db);
   await db.exec(organizationClosureDepositsSql);
+  await db.exec(workspaceClosureReviewSql);
   await validateOrganizationClosure(db);
   // Exercise the legacy fixture paths before retiring the unfenced worker commands.
   await validateRuntimeReliability(db, {
@@ -6379,8 +6384,11 @@ async function validateRecurringCharges() {
   const privacyRequestContinuity = await validatePrivacyRequestContinuity(db, {
     assert, expectDatabaseError, organizationId: organization.organizationId, otherOrganizationId: ctxOrgB.organizationId,
   });
+  const privacyFulfillment = await validatePrivacyFulfillment(db, {
+    assert, expectDatabaseError, organizationId: organization.organizationId, otherOrganizationId: ctxOrgB.organizationId,
+  });
   await db.close();
-  return { tenancyRenewal, signedImport, tenancyDeposit, tenancyMoveIn, privacyRequestContinuity, rentalAgreements, tenancyCloseout, tenancyEpisodes, maintenanceCostApproval, rentalMarketplace, rentalApplication, rentalTour, rentalInquiry, sharedListing, homeownerLease, homeownerRental, generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean , onboardingRowsLeaked: twoOrgOnboarding.rowsLeakedToPriorOrganization , diagnosticDeadLetters: runtimeDiagnostics.deadLetterScans, diagnosticBlocked: runtimeDiagnostics.blockedSchedules };
+  return { tenancyRenewal, signedImport, tenancyDeposit, tenancyMoveIn, privacyFulfillment, privacyRequestContinuity, rentalAgreements, tenancyCloseout, tenancyEpisodes, maintenanceCostApproval, rentalMarketplace, rentalApplication, rentalTour, rentalInquiry, sharedListing, homeownerLease, homeownerRental, generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean , onboardingRowsLeaked: twoOrgOnboarding.rowsLeakedToPriorOrganization , diagnosticDeadLetters: runtimeDiagnostics.deadLetterScans, diagnosticBlocked: runtimeDiagnostics.blockedSchedules };
 }
 
 try {

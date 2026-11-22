@@ -58,6 +58,7 @@ export default async function PrivacySettingsPage({
           authenticatorLevel={workspace.authenticatorLevel}
           organizations={workspace.organizations}
           items={workspace.items}
+          canRecordOutcomes={workspace.canRecordOutcomes}
           returnTo={viewHref(personal ? "personal" : "workspace", before)}
           disabled={workspace.mode !== "ready"}
         />

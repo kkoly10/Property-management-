@@ -48,13 +48,14 @@ export type PrivacyRequestWorkspace = {
   authenticatorLevel: "aal1" | "aal2";
   organizations: PrivacyOrganization[];
   items: PrivacyRequestItem[];
+  canRecordOutcomes?: boolean;
   nextCursor?: string;
   requestId?: string;
 };
 
 type PrivacyReceipt = Pick<PrivacyRequestItem,
   "privacyRequestId" | "organizationName" | "requestType" | "status" | "submittedAt" | "dueAt" | "completedAt">
-  & { identityVerifiedAt: string };
+  & { identityVerifiedAt: string; decisionReason: string | null; canDownloadAccountExport: boolean };
 
 type PrivacyReceiptResult =
   | { status: "ready"; receipt: PrivacyReceipt }
@@ -156,6 +157,7 @@ export async function getPrivacyRequestWorkspace(
       authenticatorLevel: root.authenticatorLevel === "aal2" ? "aal2" : "aal1",
       organizations: list(data, "organizations").map(normalizeOrganization),
       items: list(data, "items").map(normalizeItem),
+      canRecordOutcomes: Boolean(organizationId && root.canRecordOutcomes === true),
       nextCursor: typeof root.nextCursor === "string" ? root.nextCursor : undefined,
     };
   } catch {
@@ -187,6 +189,8 @@ export async function getPrivacyRequestReceipt(privacyRequestId: string): Promis
       dueAt: String(receipt.dueAt),
       completedAt: nullableString(receipt.completedAt),
       identityVerifiedAt: String(receipt.identityVerifiedAt),
+      decisionReason: nullableString(receipt.decisionReason),
+      canDownloadAccountExport: receipt.canDownloadAccountExport === true,
     } };
   } catch {
     return { status: "unavailable" };

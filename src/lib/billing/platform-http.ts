@@ -1,6 +1,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { getOrganizationContext } from "@/lib/organization/context";
+import { appOrigin } from "@/lib/runtime/host";
 import { createClient } from "@/lib/supabase/server";
 import { getPlatformStripeConfig } from "./platform-stripe";
 
@@ -23,6 +24,10 @@ const actionableErrors: Record<string, { error: string; status: number }> = {
   BILLING_DOWNGRADE_UNAVAILABLE: { error: "Plan downgrades are unavailable through sandbox checkout.", status: 409 },
   BILLING_FREE_REVIEW_REQUIRED: { error: "Free conversion is available after your current billing activity is resolved. Contact support for help.", status: 409 },
   BILLING_CUSTOMER_NOT_FOUND: { error: "The billing portal is available once Stripe confirms a customer.", status: 404 },
+  BILLING_UPGRADE_UNAVAILABLE: { error: "The current subscription must be active with no scheduled cancellation to request an upgrade.", status: 409 },
+  BILLING_UPGRADE_TARGET_UNSUPPORTED: { error: "Choose a higher plan with the same billing period.", status: 409 },
+  BILLING_UPGRADE_PENDING: { error: "Continue the upgrade already open for this organization.", status: 409 },
+  BILLING_UPGRADE_RECONCILIATION_REQUIRED: { error: "The previous upgrade needs to be reconciled. Contact support for help.", status: 409 },
 };
 
 export function billingCommandError(message: string | undefined) {
@@ -30,10 +35,10 @@ export function billingCommandError(message: string | undefined) {
   return match ? billingJson({ error: match.error, code: message }, match.status) : billingUnavailable();
 }
 
-export async function authorizeBillingMutation(request: Request) {
+export async function authorizeBillingMutation(request: Request, allowLocalFree = false) {
   const config = getPlatformStripeConfig();
-  if (!config) return { response: billingUnavailable() } as const;
-  if (request.headers.get("origin") !== config.origin) {
+  if (!config && !allowLocalFree) return { response: billingUnavailable() } as const;
+  if (request.headers.get("origin") !== (config?.origin ?? new URL(appOrigin()).origin)) {
     return { response: billingJson({ error: "Open billing on the Crecy application.", code: "INVALID_ORIGIN" }, 403) } as const;
   }
   const supabase = await createClient();

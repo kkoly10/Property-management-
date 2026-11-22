@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { getOrganizationClosureReadiness } from "./organization-closure";
+import { getOrganizationClosureReadiness, recordWorkspaceClosureAction } from "./organization-closure";
 import { routeForHost } from "@/lib/runtime/host-routing";
 
 const bindings = vi.hoisted(() => ({ context: vi.fn(), getUser: vi.fn(), rpc: vi.fn() }));
@@ -10,6 +10,8 @@ vi.mock("@/lib/supabase/server", () => ({
 
 const organizationId = "10000000-0000-4000-8000-000000000001";
 const otherOrganization = "10000000-0000-4000-8000-000000000002";
+const caseId = "10000000-0000-4000-8000-000000000003";
+const idempotencyKey = "10000000-0000-4000-8000-000000000004";
 const counts = {
   occupiedTenancies: 1, scheduledTenancies: 2, pendingAgreements: 0, pendingDocumentSignatures: 0,
   residentLedgerPositions: 2, openCharges: 1, pendingPayments: 1, unreconciledProviderPayments: 0,
@@ -54,6 +56,42 @@ it("fails closed for a mismatched workspace or missing count", async () => {
   expect((await getOrganizationClosureReadiness()).state).toBe("unavailable");
   bindings.rpc.mockResolvedValueOnce({ data: { ...receipt, counts: {} }, error: null });
   expect((await getOrganizationClosureReadiness()).state).toBe("unavailable");
+});
+
+it("loads an owner review separately from general readiness and rejects mixed snapshot scope", async () => {
+  bindings.context.mockResolvedValue({
+    state: "active", active: { organizationId, displayName: "Selected company", roleCode: "org_owner" },
+  });
+  const review = { organizationId, case: {
+    caseId, caseVersion: 2, status: "reviewed", recordedAt: receipt.checkedAt,
+    reviewedReadiness: { caseVersion: 2, readiness: receipt },
+  } };
+  bindings.rpc.mockResolvedValueOnce({ data: receipt, error: null }).mockResolvedValueOnce({ data: review, error: null });
+  expect(await getOrganizationClosureReadiness()).toMatchObject({ state: "ready", review });
+  expect(bindings.rpc).toHaveBeenLastCalledWith("get_workspace_closure_review", { p_organization_id: organizationId });
+  bindings.rpc.mockResolvedValueOnce({ data: receipt, error: null }).mockResolvedValueOnce({ data: {
+    ...review, case: { ...review.case, reviewedReadiness: { caseVersion: 2, readiness: { ...receipt, organizationId: otherOrganization } } },
+  }, error: null });
+  expect(await getOrganizationClosureReadiness()).toMatchObject({ state: "ready", reviewUnavailable: true });
+});
+
+it("rejects a stale workspace form without running a command", async () => {
+  const form = new FormData();
+  form.set("organizationId", otherOrganization);
+  form.set("caseId", caseId);
+  form.set("caseVersion", "1");
+  form.set("closureAction", "review");
+  form.set("idempotencyKey", idempotencyKey);
+  expect(await recordWorkspaceClosureAction(form)).toBe("changed");
+  expect(bindings.rpc).not.toHaveBeenCalled();
+
+  form.set("organizationId", organizationId);
+  bindings.rpc.mockResolvedValueOnce({ data: { caseId, caseVersion: 2, status: "reviewed" }, error: null });
+  expect(await recordWorkspaceClosureAction(form)).toBe("saved");
+  expect(bindings.rpc).toHaveBeenCalledWith("record_workspace_closure_action", {
+    p_organization_id: organizationId, p_expected_case_id: caseId, p_expected_case_version: 1,
+    p_action: "review", p_idempotency_key: idempotencyKey,
+  });
 });
 
 it("serves closure readiness on the operator and development hosts", () => {

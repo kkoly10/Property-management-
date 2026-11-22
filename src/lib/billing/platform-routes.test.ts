@@ -10,7 +10,7 @@ import { getPlatformStripeConfig } from "./platform-stripe";
 const fake = vi.hoisted(() => ({
   admin: vi.fn(), workspace: vi.fn(), context: vi.fn(), user: vi.fn(), assurance: vi.fn(),
   account: vi.fn(), price: vi.fn(), createCheckout: vi.fn(), retrieveCheckout: vi.fn(),
-  portalConfig: vi.fn(), createPortal: vi.fn(), subscription: vi.fn(),
+  portalConfig: vi.fn(), createPortal: vi.fn(), subscription: vi.fn(), updateSubscription: vi.fn(), invoice: vi.fn(),
 }));
 
 vi.mock("@/lib/organization/context", () => ({ getOrganizationContext: fake.context }));
@@ -34,6 +34,8 @@ vi.mock("./platform-stripe", async (importOriginal) => {
       stripe.billingPortal.configurations.retrieve = fake.portalConfig;
       stripe.billingPortal.sessions.create = fake.createPortal;
       stripe.subscriptions.retrieve = fake.subscription;
+      stripe.subscriptions.update = fake.updateSubscription;
+      stripe.invoices.retrieve = fake.invoice;
       return stripe;
     },
   };
@@ -46,11 +48,30 @@ const organizationId = "90000000-0000-4000-8000-000000000001";
 const otherOrganization = "90000000-0000-4000-8000-000000000002";
 const actorId = "90000000-0000-4000-8000-000000000003";
 const attemptId = "90000000-0000-4000-8000-000000000004";
+const upgradeId = "90000000-0000-4000-8000-000000000005";
 const metadata = { crecy_billing_scope: "crecy_platform_saas", crecy_billing_attempt_id: attemptId };
 const plan = { organizationId, targetPlanCode: "growth", billingInterval: "month" };
 const session = {
   id: "cs_test_Synthetic", livemode: false, mode: "subscription", client_reference_id: attemptId,
   customer: null, metadata, status: "open", url: "https://checkout.stripe.com/c/pay/cs_test_Synthetic",
+};
+const originalInvoice = {
+  id: "in_Original", livemode: false, status: "paid", billing_reason: "subscription_cycle", customer: "cus_Synthetic",
+  parent: { subscription_details: { subscription: "sub_Synthetic" } },
+};
+const upgradeInvoice = { ...originalInvoice, id: "in_Proration", status: "open", billing_reason: "subscription_update" };
+const sourceItem = {
+  id: "si_Synthetic", price: { id: "price_Starter" }, quantity: 1, current_period_start: 1700000000, current_period_end: 1702678400,
+};
+const targetItem = { ...sourceItem, price: { id: "price_Synthetic" } };
+const activeSubscription = {
+  id: "sub_Synthetic", livemode: false, metadata, status: "active", customer: "cus_Synthetic", cancel_at_period_end: false,
+  items: { has_more: false, data: [sourceItem] }, latest_invoice: originalInvoice,
+};
+const pendingUpgrade = {
+  ...activeSubscription,
+  latest_invoice: upgradeInvoice,
+  pending_update: { subscription_items: [targetItem] },
 };
 const sandbox = new Stripe("rk_test_Synthetic");
 const options = {
@@ -107,6 +128,12 @@ beforeEach(() => {
       prepare_platform_billing_portal: "cus_Synthetic",
       claim_platform_billing_event: { attemptId, generation: "4", priceId: "price_Synthetic", country: "CA", plan: "growth", interval: "month", customerId: null },
       apply_platform_billing_event: true,
+      prepare_platform_billing_upgrade: {
+        upgradeId, attemptId, subscriptionId: activeSubscription.id, customerId: activeSubscription.customer,
+        sourcePriceId: sourceItem.price.id, invoiceId: null,
+      },
+      record_platform_billing_upgrade_invoice: true,
+      apply_platform_billing_upgrade_event: true,
     }[method],
     error: null,
   }));
@@ -185,7 +212,8 @@ describe("sandbox platform subscription routes", () => {
     expect(fake.createCheckout).not.toHaveBeenCalled();
   });
 
-  it("selects Free with the local billing command and makes no provider calls", async () => {
+  it("selects Free with the local billing command when Stripe is disabled", async () => {
+    vi.stubEnv("CRECY_SAAS_BILLING_MODE", "");
     fake.admin.mockResolvedValueOnce({ data: { status: "free", replayed: false }, error: null });
     const response = await checkout(mutation({ ...plan, targetPlanCode: "free" }));
     expect(response.status).toBe(201);
@@ -197,6 +225,58 @@ describe("sandbox platform subscription routes", () => {
     expect(fake.createCheckout).not.toHaveBeenCalled();
     fake.admin.mockResolvedValueOnce({ error: { message: "BILLING_FREE_REVIEW_REQUIRED" } });
     expect((await checkout(mutation({ ...plan, targetPlanCode: "free" }))).status).toBe(409);
+  });
+
+  it("confirms the proration and reuses the existing subscription and upgrade on retry", async () => {
+    const workspace = await fake.workspace();
+    fake.workspace.mockResolvedValue({
+      ...workspace,
+      data: { ...workspace.data, plan: "starter", status: "active", hasSubscription: true, currentInterval: "month" },
+    });
+    expect(await (await checkout(mutation())).json()).toMatchObject({ code: "BILLING_UPGRADE_CONFIRMATION_REQUIRED" });
+    expect(fake.updateSubscription).not.toHaveBeenCalled();
+    const confirmed = { ...plan, confirmProratedUpgrade: true };
+    fake.subscription.mockResolvedValueOnce(activeSubscription).mockResolvedValueOnce(pendingUpgrade);
+    fake.updateSubscription.mockResolvedValueOnce(pendingUpgrade);
+    const first = await checkout(mutation(confirmed));
+    expect(first.status).toBe(202);
+    expect(await first.json()).toMatchObject({ status: "awaiting_upgrade_confirmation" });
+    expect((await checkout(mutation(confirmed))).status).toBe(202);
+    expect(fake.updateSubscription).toHaveBeenCalledExactlyOnceWith(activeSubscription.id, {
+      items: [{ id: sourceItem.id, price: targetItem.price.id, quantity: 1 }],
+      payment_behavior: "pending_if_incomplete",
+      proration_behavior: "always_invoice",
+      expand: ["latest_invoice"],
+    }, { idempotencyKey: "crecy-platform-upgrade:" + upgradeId });
+    expect(fake.admin).toHaveBeenCalledWith("record_platform_billing_upgrade_invoice", {
+      p_upgrade_id: upgradeId, p_stripe_account_id: account, p_invoice_id: upgradeInvoice.id,
+    });
+    expect(fake.createCheckout).not.toHaveBeenCalled();
+  });
+
+  it("preserves the paid source plan while pending and binds the paid upgrade invoice on delayed delivery", async () => {
+    const claim = {
+      attemptId, generation: "12", priceId: sourceItem.price.id, customerId: activeSubscription.customer,
+      country: "CA", plan: "starter", interval: "month", paidOnce: true,
+      upgradePriceId: targetItem.price.id, upgradeInvoiceId: upgradeInvoice.id,
+    };
+    fake.admin.mockResolvedValueOnce({ data: claim, error: null });
+    fake.subscription.mockResolvedValueOnce(pendingUpgrade);
+    expect((await webhook(eventRequest())).status).toBe(200);
+    expect(fake.admin).toHaveBeenLastCalledWith("apply_platform_billing_event", expect.objectContaining({
+      p_price_id: sourceItem.price.id, p_paid: true,
+    }));
+
+    fake.admin.mockResolvedValueOnce({ data: claim, error: null });
+    fake.subscription.mockResolvedValueOnce({
+      ...activeSubscription, items: { has_more: false, data: [targetItem] },
+    });
+    fake.invoice.mockResolvedValueOnce({ ...upgradeInvoice, status: "paid" });
+    expect((await webhook(eventRequest())).status).toBe(200);
+    expect(fake.invoice).toHaveBeenCalledExactlyOnceWith(upgradeInvoice.id);
+    expect(fake.admin).toHaveBeenLastCalledWith("apply_platform_billing_upgrade_event", expect.objectContaining({
+      p_price_id: targetItem.price.id, p_paid: true, p_invoice_id: upgradeInvoice.id, p_pending_update: false,
+    }));
   });
 
   it("refuses a portal configuration with direct plan editing before creating a session", async () => {

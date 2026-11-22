@@ -58,6 +58,20 @@ export default async function PrivacyRequestReceiptPage({ params }: { params: Pr
                 <div><dt className="text-sm text-muted-foreground">Closed (UTC)</dt><dd>{receiptDate.format(new Date(result.receipt.completedAt))}</dd></div>
               ) : null}
             </dl>
+            {result.receipt.decisionReason ? (
+              <div className="mt-6 space-y-2">
+                <h2 className="text-sm font-semibold">Operator decision</h2>
+                <p className="break-words text-sm">{result.receipt.decisionReason}</p>
+              </div>
+            ) : null}
+            {result.receipt.canDownloadAccountExport ? (
+              <div className="mt-6 space-y-3">
+                <p className="text-sm text-muted-foreground">The JSON file includes your Crecy account profile, notification preferences, and up to 500 platform consent records. Your request status tracks the wider review.</p>
+                <Button asChild>
+                  <a href={`/api/v1/privacy/requests/${privacyRequestId}/account-export`} download>Download account data</a>
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}

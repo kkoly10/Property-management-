@@ -10,6 +10,7 @@ export async function POST(request: Request) {
     const parsed = billingWorkspaceInputSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return billingJson({ error: "Select a workspace.", code: "INVALID_REQUEST" }, 400);
     const { config, actorId, organizationId } = access;
+    if (!config) return billingUnavailable();
     if (parsed.data.organizationId !== organizationId) return billingCommandError("BILLING_WORKSPACE_CHANGED");
     const result = await createAdminClient().rpc("prepare_platform_billing_portal", {
       p_actor_user_id: actorId,

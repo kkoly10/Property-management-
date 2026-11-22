@@ -9,6 +9,7 @@ export const checkoutInputSchema = billingWorkspaceInputSchema.extend({
   targetPlanCode: z.enum(["free", ...paidPlanSchema.options]),
   billingInterval: billingIntervalSchema,
   effectiveMode: z.literal("immediate").default("immediate"),
+  confirmProratedUpgrade: z.literal(true).optional(),
 });
 export const freePlanResultSchema = z.object({ status: z.literal("free"), replayed: z.boolean() });
 
@@ -21,6 +22,8 @@ export const billingWorkspaceSchema = z.object({
   checkoutPending: z.boolean(),
   pendingPlan: paidPlanSchema.nullable(),
   pendingInterval: billingIntervalSchema.nullable(),
+  currentInterval: billingIntervalSchema.nullable().optional(),
+  upgradePendingPlan: paidPlanSchema.nullable().optional(),
   hasSubscription: z.boolean(),
   cancelAtPeriodEnd: z.boolean(),
   portalAvailable: z.boolean(),
@@ -41,6 +44,17 @@ export const billingClaimSchema = reservedBillingAttemptSchema.extend({
   country: billingCountrySchema,
   plan: paidPlanSchema,
   interval: billingIntervalSchema,
+  paidOnce: z.boolean().optional(),
+  upgradePriceId: z.string().regex(/^price_[a-zA-Z0-9]+$/).nullable().optional(),
+  upgradeInvoiceId: z.string().regex(/^in_[a-zA-Z0-9]+$/).nullable().optional(),
+});
+
+export const upgradeReservationSchema = reservedBillingAttemptSchema.extend({
+  upgradeId: z.uuid(),
+  customerId: z.string().regex(/^cus_[a-zA-Z0-9]+$/),
+  subscriptionId: z.string().regex(/^sub_[a-zA-Z0-9]+$/),
+  sourcePriceId: z.string().regex(/^price_[a-zA-Z0-9]+$/),
+  invoiceId: z.string().regex(/^in_[a-zA-Z0-9]+$/).nullable(),
 });
 
 export type BillingCountry = z.infer<typeof billingCountrySchema>;
@@ -49,3 +63,4 @@ export type BillingInterval = z.infer<typeof billingIntervalSchema>;
 export type BillingWorkspace = z.infer<typeof billingWorkspaceSchema>;
 export type CheckoutReservation = z.infer<typeof checkoutReservationSchema>;
 export type BillingClaim = z.infer<typeof billingClaimSchema>;
+export type UpgradeReservation = z.infer<typeof upgradeReservationSchema>;

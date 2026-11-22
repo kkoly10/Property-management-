@@ -3,7 +3,7 @@ import Stripe from "stripe";
 import { z } from "zod";
 import { PRICE_BOOKS } from "@/lib/marketing/pricing";
 import { appOrigin, classifyHost } from "@/lib/runtime/host";
-import type { BillingClaim, BillingCountry, BillingInterval, CheckoutReservation, PaidPlan } from "./platform-contract";
+import type { BillingClaim, BillingCountry, BillingInterval, CheckoutReservation, PaidPlan, UpgradeReservation } from "./platform-contract";
 
 export const platformBillingPath = "/settings/billing";
 const scope = "crecy_platform_saas";
@@ -144,7 +144,54 @@ export async function createBillingPortalSession(stripe: Stripe, config: Platfor
   return stripeHostedBillingUrl(session.url, "portal");
 }
 
-export async function fetchSubscriptionSnapshot(stripe: Stripe, subscriptionId: string, claim: BillingClaim) {
+function boundUpgradeInvoice(invoice: Stripe.Subscription["latest_invoice"], subscriptionId: string, customerId: string) {
+  if (!invoice || typeof invoice === "string" || invoice.livemode !== false || invoice.billing_reason !== "subscription_update"
+    || !/^in_[a-zA-Z0-9]+$/.test(invoice.id)
+    || stripeObjectId(invoice.customer) !== customerId
+    || stripeObjectId(invoice.parent?.subscription_details?.subscription) !== subscriptionId) return null;
+  return invoice;
+}
+
+function upgradeSubscriptionItem(subscription: Stripe.Subscription, reservation: UpgradeReservation, targetPriceId: string) {
+  const [item] = subscription.items.data;
+  const pending = subscription.pending_update?.subscription_items;
+  if (subscription.id !== reservation.subscriptionId || subscription.livemode !== false
+    || billingAttemptId(subscription.metadata) !== reservation.attemptId || stripeObjectId(subscription.customer) !== reservation.customerId
+    || subscription.status !== "active" || subscription.cancel_at_period_end || subscription.cancel_at || subscription.schedule
+    || subscription.items.has_more || subscription.items.data.length !== 1 || !item || item.quantity !== 1
+    || ![reservation.sourcePriceId, targetPriceId].includes(item.price.id)
+    || (subscription.pending_update && (pending?.length !== 1 || pending[0].price.id !== targetPriceId || pending[0].quantity !== 1))) {
+    throw new Error("Billing upgrade subscription binding mismatch");
+  }
+  return item;
+}
+
+export async function requestPlatformUpgrade(stripe: Stripe, reservation: UpgradeReservation, targetPriceId: string) {
+  const current = await stripe.subscriptions.retrieve(reservation.subscriptionId, { expand: ["latest_invoice"] });
+  const item = upgradeSubscriptionItem(current, reservation, targetPriceId);
+  let updated = current;
+  if (item.price.id === reservation.sourcePriceId && !current.pending_update) {
+    const invoice = current.latest_invoice;
+    if (reservation.invoiceId || !invoice || typeof invoice === "string" || invoice.status !== "paid" || invoice.livemode !== false) {
+      throw new Error("Billing upgrade requires a paid current subscription");
+    }
+    updated = await stripe.subscriptions.update(reservation.subscriptionId, {
+      items: [{ id: item.id, price: targetPriceId, quantity: 1 }],
+      payment_behavior: "pending_if_incomplete",
+      proration_behavior: "always_invoice",
+      expand: ["latest_invoice"],
+    }, { idempotencyKey: `crecy-platform-upgrade:${reservation.upgradeId}` });
+  }
+  const updatedItem = upgradeSubscriptionItem(updated, reservation, targetPriceId);
+  const invoice = boundUpgradeInvoice(updated.latest_invoice, updated.id, reservation.customerId);
+  if (!invoice || (reservation.invoiceId && reservation.invoiceId !== invoice.id)
+    || (updatedItem.price.id !== targetPriceId && !updated.pending_update)) {
+    throw new Error("Billing upgrade invoice binding mismatch");
+  }
+  return invoice.id;
+}
+
+export async function fetchSubscriptionSnapshot(stripe: Stripe, subscriptionId: string, claim: BillingClaim, upgradeExpired = false) {
   const subscription = await stripe.subscriptions.retrieve(subscriptionId, { expand: ["latest_invoice"] });
   const [item] = subscription.items.data;
   const customerId = stripeObjectId(subscription.customer);
@@ -152,13 +199,26 @@ export async function fetchSubscriptionSnapshot(stripe: Stripe, subscriptionId: 
     || billingAttemptId(subscription.metadata) !== claim.attemptId || !customerId
     || (claim.customerId && customerId !== claim.customerId)
     || subscription.items.has_more || subscription.items.data.length !== 1
-    || !item || item.price.id !== claim.priceId || item.quantity !== 1) throw new Error("Billing subscription binding mismatch");
+    || !item || (item.price.id !== claim.priceId && item.price.id !== claim.upgradePriceId)
+    || item.quantity !== 1) throw new Error("Billing subscription binding mismatch");
   const latestInvoice = subscription.latest_invoice;
   if (typeof latestInvoice === "string") throw new Error("Latest billing invoice was not expanded");
+  const latestUpgradeInvoice = boundUpgradeInvoice(latestInvoice, subscription.id, customerId);
+  const changingPrice = item.price.id !== claim.priceId;
+  const upgradeInvoice = (changingPrice || upgradeExpired) && claim.upgradeInvoiceId && latestUpgradeInvoice?.id !== claim.upgradeInvoiceId
+    ? boundUpgradeInvoice(await stripe.invoices.retrieve(claim.upgradeInvoiceId), subscription.id, customerId)
+    : latestUpgradeInvoice;
+  const paidInvoice = latestInvoice?.livemode === false && latestInvoice.status === "paid";
+  // The previous paid plan stays in force while a separate, unpaid proration invoice is pending or voided.
+  const previousPlanStillPaid = claim.paidOnce === true && subscription.status === "active" && latestUpgradeInvoice !== null;
   return {
     customerId,
+    priceId: item.price.id,
     status: subscription.status,
-    paid: latestInvoice?.livemode === false && latestInvoice.status === "paid",
+    paid: changingPrice ? upgradeInvoice?.status === "paid" : paidInvoice || previousPlanStillPaid,
+    invoiceId: upgradeInvoice?.id ?? null,
+    invoiceVoid: upgradeInvoice?.status === "void",
+    pendingUpdate: subscription.pending_update != null,
     periodStart: new Date(item.current_period_start * 1000).toISOString(),
     periodEnd: new Date(item.current_period_end * 1000).toISOString(),
     cancelAtPeriodEnd: subscription.cancel_at_period_end,

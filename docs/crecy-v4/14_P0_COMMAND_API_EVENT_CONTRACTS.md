@@ -627,9 +627,15 @@ Request type is access, correction, deletion, export, restriction, objection, wi
 
 `/settings/organization-closure` calls `get_organization_closure_readiness(p_organization_id)` with the current selected workspace and its authenticated session. The query requires MFA (AAL2) and unscoped `organization.manage`. It returns the workspace identifier, recorded status, check time, and counts of tracked obligations. Occupancy and signing counts use current statuses and expiry. Resident and owner ledger positions are counted separately by accounting book and underlying account dimensions, so unrelated debits and credits cannot hide a balance. A recorded privacy hold is a case with at least one job blocked by hold. External obligations and holds require independent review even when every count is zero. The query grants no additional access to source records and remains available to authorized managers of closed workspaces. Actual closure, exports, retention and deletion remain separate policy-controlled operations.
 
+`get_workspace_closure_review` and `record_workspace_closure_action` require an active, unscoped workspace owner and AAL2 in the exact selected workspace. An owner can request a review, record or refresh the current tracked readiness snapshot, and cancel the review. Each action retains its versioned receipt and writes `organization_closure.action_recorded` to the audit trail and outbox. The command binds the expected case and version to the action idempotency key. The latest reviewed snapshot remains accessible on the current case after cancellation. Actual closure requires a database write boundary that distinguishes new operational work from historical access and outstanding settlement or retention obligations.
+
 The external deposit count includes a tenancy once when effective receipts exceed effective dispositions or its latest recorded obligation exceeds effective receipts. Corrected receipts and dispositions are excluded. A fully received and disposed deposit clears from the count. This calculation reflects the register, including historical tenancies, and does not infer a legal due date or release funds.
 
 `/settings/privacy?view=personal` lists cases submitted by the authenticated requester. The selected workspace projection limits review to one current organization. The exact receipt at `/settings/privacy/{id}` requires the original verified requester and AAL2. The receipt describes the recorded case and persists after command idempotency records expire. [Privacy request continuity](../implementation/PRIVACY_REQUEST_CONTINUITY.md)
+
+`GET /api/v1/privacy/requests/{id}/account-export` provides a private JSON attachment for the authenticated, verified requester with AAL2 on a platform access or export case. Its bounded projection covers account profile, notification preferences, and up to 500 platform consent records.
+
+`POST /api/v1/privacy/requests/{id}/outcome` records a reviewed operator decision on the selected workspace's exact verified case. It requires AAL2, unscoped `organization.manage`, the expected version, an idempotency key, a requester-facing explanation, and an internal review reference. It records the decision and preserves jobs blocked by hold. The requester can read the explanation in their verified receipt. [Privacy fulfillment](../implementation/PRIVACY_REQUEST_CONTINUITY.md#account-export-and-workspace-outcomes)
 
 ### 4.26 DeliverDocument / AcknowledgeDocumentDelivery
 
@@ -725,6 +731,7 @@ Operator search is a bounded exception to cursor pagination because it returns a
 | `privacy_request.submitted` | privacyRequestId, requestType, controllerRole, dueAt |
 | `privacy_request.verified` | privacyRequestId, controllerRole, status |
 | `privacy_request.canceled` | privacyRequestId, status |
+| `privacy_request.operator_outcome_recorded` | privacyRequestId, status |
 | `membership.invited` | membershipId, invitationId, roleCode, propertyIds |
 | `membership.activated` | membershipId, invitationId, roleCode |
 | `membership.changed` | membershipId, roleCode, status, version |

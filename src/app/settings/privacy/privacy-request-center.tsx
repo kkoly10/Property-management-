@@ -16,6 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
+import { Textarea } from "@/components/ui/textarea";
 
 const requestTypeLabels: Record<PrivacyRequestType, string> = {
   access: "Access or know",
@@ -63,12 +64,14 @@ export function PrivacyRequestCenter({
   authenticatorLevel,
   organizations,
   items,
+  canRecordOutcomes = false,
   returnTo,
   disabled,
 }: {
   authenticatorLevel: "aal1" | "aal2";
   organizations: PrivacyOrganization[];
   items: PrivacyRequestItem[];
+  canRecordOutcomes?: boolean;
   returnTo: string;
   disabled: boolean;
 }) {
@@ -77,6 +80,7 @@ export function PrivacyRequestCenter({
   const [busy, setBusy] = useState(false);
   const [activeAction, setActiveAction] = useState<string>();
   const [cancelingId, setCancelingId] = useState<string>();
+  const [recordingId, setRecordingId] = useState<string>();
   const [cancellationReason, setCancellationReason] = useState("");
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
@@ -143,6 +147,29 @@ export function PrivacyRequestCenter({
     }
   }
 
+  async function recordOutcome(event: React.FormEvent<HTMLFormElement>, item: PrivacyRequestItem) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setActiveAction(item.privacyRequestId);
+    setError(undefined);
+    setSuccess(undefined);
+    try {
+      await post(`/api/v1/privacy/requests/${item.privacyRequestId}/outcome`, {
+        expectedVersion: item.version,
+        outcome: form.get("outcome"),
+        requesterMessage: form.get("requesterMessage"),
+        reviewReference: form.get("reviewReference"),
+      }, commandRetries.current);
+      setRecordingId(undefined);
+      setSuccess("The workspace decision was recorded on the requester's receipt.");
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The outcome could not be recorded.");
+    } finally {
+      setActiveAction(undefined);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -201,7 +228,11 @@ export function PrivacyRequestCenter({
         </div>
         {items.length ? (
           <div className="grid gap-3">
-            {items.map((item) => (
+            {items.map((item) => {
+              const canRecord = !disabled && canRecordOutcomes && item.controllerRole === "operator"
+                && item.identityVerificationStatus === "verified"
+                && (item.status === "operator_action_required" || item.status === "processing");
+              return (
               <Card key={item.privacyRequestId}>
                 <CardContent className="p-5">
                   <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
@@ -238,8 +269,17 @@ export function PrivacyRequestCenter({
                         </Button>
                       ) : null}
                       {item.canCancel && cancelingId !== item.privacyRequestId ? (
-                        <Button type="button" size="sm" variant="ghost" onClick={() => { setCancelingId(item.privacyRequestId); setCancellationReason(""); }}>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => { setRecordingId(undefined); setCancelingId(item.privacyRequestId); setCancellationReason(""); }}>
                           <X className="h-4 w-4" />Cancel request
+                        </Button>
+                      ) : null}
+                      {canRecord && recordingId !== item.privacyRequestId ? authenticatorLevel === "aal2" ? (
+                        <Button type="button" size="sm" variant="outline" onClick={() => { setCancelingId(undefined); setRecordingId(item.privacyRequestId); }}>
+                          Record outcome
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="outline" asChild>
+                          <Link href={`/settings/security/mfa?${new URLSearchParams({ returnTo })}`}>Verify to record an outcome</Link>
                         </Button>
                       ) : null}
                     </div>
@@ -259,9 +299,39 @@ export function PrivacyRequestCenter({
                       </div>
                     </div>
                   ) : null}
+                  {canRecord && recordingId === item.privacyRequestId ? (
+                    <form className="mt-5 space-y-4 rounded-xl border p-4" onSubmit={(event) => recordOutcome(event, item)}>
+                      <p className="text-sm text-muted-foreground">Record a decision your workspace has reviewed. Record any disclosure or deletion work only after it was handled through your workspace procedure.</p>
+                      <fieldset className="space-y-3" disabled={activeAction === item.privacyRequestId}>
+                        <div className="space-y-2">
+                          <Label htmlFor={`privacy-outcome-${item.privacyRequestId}`}>Outcome</Label>
+                          <NativeSelect id={`privacy-outcome-${item.privacyRequestId}`} name="outcome" defaultValue="" required>
+                            <option value="" disabled>Select an outcome</option>
+                            {item.requestType !== "deletion" && !item.blockedByHold ? <option value="fulfilled">Fulfilled</option> : null}
+                            <option value="partially_fulfilled">Partially fulfilled</option>
+                            <option value="denied">Denied</option>
+                          </NativeSelect>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor={`privacy-reference-${item.privacyRequestId}`}>Internal review reference</Label>
+                          <Input id={`privacy-reference-${item.privacyRequestId}`} name="reviewReference" minLength={3} maxLength={80} required />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor={`privacy-message-${item.privacyRequestId}`}>Explanation for the requester</Label>
+                          <Textarea id={`privacy-message-${item.privacyRequestId}`} name="requesterMessage" maxLength={500} required />
+                          <p className="text-xs text-muted-foreground">This explanation appears in the requester&apos;s verified receipt. Keep personal details about other people and internal records out of it.</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="submit">Save outcome</Button>
+                          <Button type="button" variant="ghost" onClick={() => setRecordingId(undefined)}>Back</Button>
+                        </div>
+                      </fieldset>
+                    </form>
+                  ) : null}
                 </CardContent>
               </Card>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">No privacy requests yet.</CardContent></Card>

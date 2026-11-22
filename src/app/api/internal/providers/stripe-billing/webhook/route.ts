@@ -14,6 +14,8 @@ function subscriptionTarget(event: Stripe.Event) {
     case "customer.subscription.deleted":
     case "customer.subscription.paused":
     case "customer.subscription.resumed":
+    case "customer.subscription.pending_update_applied":
+    case "customer.subscription.pending_update_expired":
       return { subscriptionId: event.data.object.id, attemptId: billingAttemptId(event.data.object.metadata) };
     case "invoice.paid":
     case "invoice.payment_failed": {
@@ -83,21 +85,29 @@ export async function POST(request: Request) {
     if (!claimed.data) return billingJson({ received: true });
     const claim = billingClaimSchema.parse(claimed.data);
     await verifyPlatformStripeAccount(stripe, config);
-    const snapshot = await fetchSubscriptionSnapshot(stripe, target.subscriptionId, claim);
-    const applied = await admin.rpc("apply_platform_billing_event", {
+    const upgradeExpired = event.type === "customer.subscription.pending_update_expired";
+    const snapshot = await fetchSubscriptionSnapshot(stripe, target.subscriptionId, claim, upgradeExpired);
+    const args = {
       p_stripe_account_id: config.account,
       p_event_id: event.id,
       p_attempt_id: claim.attemptId,
       p_generation: claim.generation,
       p_stripe_subscription_id: target.subscriptionId,
       p_customer_id: snapshot.customerId,
-      p_price_id: claim.priceId,
+      p_price_id: snapshot.priceId,
       p_provider_status: snapshot.status,
       p_paid: snapshot.paid,
       p_period_start: snapshot.periodStart,
       p_period_end: snapshot.periodEnd,
       p_cancel_at_period_end: snapshot.cancelAtPeriodEnd,
-    });
+    };
+    const upgradeEvent = snapshot.priceId !== claim.priceId
+      || (claim.upgradePriceId && upgradeExpired);
+    const applied = upgradeEvent
+      ? await admin.rpc("apply_platform_billing_upgrade_event", {
+        ...args, p_invoice_id: snapshot.invoiceId, p_invoice_void: snapshot.invoiceVoid, p_pending_update: snapshot.pendingUpdate,
+      })
+      : await admin.rpc("apply_platform_billing_event", args);
     return !applied.error && applied.data === true ? billingJson({ received: true }) : billingUnavailable();
   } catch {
     return billingUnavailable();

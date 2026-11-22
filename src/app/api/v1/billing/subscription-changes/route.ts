@@ -1,16 +1,15 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { billingWorkspaceSchema, checkoutInputSchema, checkoutReservationSchema, freePlanResultSchema } from "@/lib/billing/platform-contract";
+import { billingWorkspaceSchema, checkoutInputSchema, checkoutReservationSchema, freePlanResultSchema, upgradeReservationSchema } from "@/lib/billing/platform-contract";
 import { authorizeBillingMutation, billingCommandError, billingJson, billingUnavailable } from "@/lib/billing/platform-http";
-import { obtainCheckoutSession, platformStripe, stripeHostedBillingUrl, verifyCheckoutPrice, verifyPlatformStripeAccount } from "@/lib/billing/platform-stripe";
+import { obtainCheckoutSession, platformStripe, requestPlatformUpgrade, stripeHostedBillingUrl, verifyCheckoutPrice, verifyPlatformStripeAccount } from "@/lib/billing/platform-stripe";
 
 export async function POST(request: Request) {
   try {
-    const access = await authorizeBillingMutation(request);
-    if (access.response) return access.response;
     const parsed = checkoutInputSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return billingJson({ error: "Select a plan and billing period.", code: "INVALID_REQUEST" }, 400);
-
     const { targetPlanCode, billingInterval } = parsed.data;
+    const access = await authorizeBillingMutation(request, targetPlanCode === "free");
+    if (access.response) return access.response;
     const { config, supabase, actorId, organizationId } = access;
     if (parsed.data.organizationId !== organizationId) return billingCommandError("BILLING_WORKSPACE_CHANGED");
     if (targetPlanCode === "free") {
@@ -21,14 +20,36 @@ export async function POST(request: Request) {
       const outcome = freePlanResultSchema.parse(result.data);
       return billingJson(outcome, outcome.replayed ? 200 : 201);
     }
+    if (!config) return billingUnavailable();
     const workspace = await supabase.rpc("get_platform_billing_workspace", { p_organization_id: organizationId });
     if (workspace.error) return billingCommandError(workspace.error.message);
     const data = billingWorkspaceSchema.parse(workspace.data);
     const priceId = config.priceIds[`${data.country}.${targetPlanCode}.${billingInterval}`];
     if (!priceId) return billingJson({ error: "This option is unavailable in the sandbox.", code: "PRICE_NOT_CONFIGURED" }, 409);
+    if (data.hasSubscription && !parsed.data.confirmProratedUpgrade) {
+      return billingJson({ error: "Confirm the prorated sandbox invoice before requesting an upgrade.", code: "BILLING_UPGRADE_CONFIRMATION_REQUIRED" }, 400);
+    }
     const stripe = platformStripe(config);
     await verifyPlatformStripeAccount(stripe, config);
-    if (!data.checkoutPending && !data.hasSubscription) {
+    if (data.hasSubscription) {
+      await verifyCheckoutPrice(stripe, data.country, targetPlanCode, billingInterval, priceId);
+      const admin = createAdminClient();
+      const prepared = await admin.rpc("prepare_platform_billing_upgrade", {
+        p_actor_user_id: actorId, p_actor_aal: "aal2", p_organization_id: organizationId,
+        p_stripe_account_id: config.account, p_country: data.country, p_plan_code: targetPlanCode,
+        p_billing_interval: billingInterval, p_stripe_price_id: priceId,
+      });
+      if (prepared.error) return billingCommandError(prepared.error.message);
+      const reservation = upgradeReservationSchema.parse(prepared.data);
+      const invoiceId = await requestPlatformUpgrade(stripe, reservation, priceId);
+      const recorded = await admin.rpc("record_platform_billing_upgrade_invoice", {
+        p_upgrade_id: reservation.upgradeId, p_stripe_account_id: config.account, p_invoice_id: invoiceId,
+      });
+      return !recorded.error && recorded.data === true
+        ? billingJson({ status: "awaiting_upgrade_confirmation" }, 202)
+        : billingUnavailable();
+    }
+    if (!data.checkoutPending) {
       await verifyCheckoutPrice(stripe, data.country, targetPlanCode, billingInterval, priceId);
     }
     const admin = createAdminClient();
