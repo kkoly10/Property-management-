@@ -44,6 +44,11 @@ export const SCAN_WORKER_CONCURRENCY = 3;
 /** Wall clock reserved for claiming, recording outcomes, and the stall sweep around the scans. */
 export const SCAN_WORKER_OVERHEAD_SECONDS = 10;
 
+export const SCAN_SANDBOX_WORKER_BATCH_SIZE = 1;
+export const SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS = 40_000;
+export const SCAN_SANDBOX_CLEANUP_TIMEOUT_MS = 3_000;
+export const SCAN_SANDBOX_SESSION_TIMEOUT_MS = 45_000;
+
 /**
  * The worst case: every job in the batch stalls until its timeout, in `concurrency`-sized waves.
  *

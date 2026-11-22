@@ -8,9 +8,14 @@ import {
   NOTIFICATION_WORKER_MAX_DURATION_SECONDS,
   NOTIFICATION_WORKER_OVERHEAD_SECONDS,
   SCAN_RELAY_TIMEOUT_MS,
+  SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS,
+  SCAN_SANDBOX_CLEANUP_TIMEOUT_MS,
+  SCAN_SANDBOX_SESSION_TIMEOUT_MS,
+  SCAN_SANDBOX_WORKER_BATCH_SIZE,
   SCAN_WORKER_BATCH_SIZE,
   SCAN_WORKER_CONCURRENCY,
   SCAN_WORKER_MAX_DURATION_SECONDS,
+  SCAN_WORKER_OVERHEAD_SECONDS,
   scanBudgetMargin,
   worstCaseScanRunSeconds,
 } from "./budget";
@@ -25,6 +30,14 @@ it("bounds scheduled mail even when every relay call times out", () => {
 });
 
 describe("the scan worker's execution budget", () => {
+  it("caps sandbox creation and leaves time to settle a stalled attempt", () => {
+    expect(SCAN_SANDBOX_WORKER_BATCH_SIZE).toBe(1);
+    const maxAttemptMs = SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS + SCAN_SANDBOX_CLEANUP_TIMEOUT_MS;
+    expect(maxAttemptMs).toBeLessThan(SCAN_SANDBOX_SESSION_TIMEOUT_MS);
+    expect(SCAN_SANDBOX_SESSION_TIMEOUT_MS / 1000 + SCAN_WORKER_OVERHEAD_SECONDS)
+      .toBeLessThan(SCAN_WORKER_MAX_DURATION_SECONDS);
+  });
+
   it("finishes its worst case inside the pinned duration, with real margin", () => {
     // The failure this prevents: a run that exceeds the function's duration is KILLED, and every job
     // it claimed sits in 'scanning' until the stall sweep — so a single timeout strands the whole

@@ -4,10 +4,11 @@ import { getNotificationTransport, type TransportResult } from "@/lib/notificati
 import { hasTemplate, renderNotification } from "@/lib/notifications/templates";
 import { secureLinkUrl } from "@/lib/notifications/secure-link";
 import { getDocumentScanner, type DocumentObjectSource } from "@/lib/documents/scanner";
+import { VERCEL_SCAN_PROVIDER_CODE } from "@/lib/documents/scanner-vercel";
 import { claimedNotificationJobSchema, type ClaimedNotificationJob } from "@/lib/validation/notification-worker";
 import { audienceForRelationshipType } from "@/lib/notifications/sender";
 import { claimedDocumentScanJobSchema } from "@/lib/validation/document-scan-worker";
-import { NOTIFICATION_WORKER_CONCURRENCY, SCAN_WORKER_CONCURRENCY } from "@/lib/runtime/budget";
+import { NOTIFICATION_WORKER_CONCURRENCY, SCAN_SANDBOX_WORKER_BATCH_SIZE, SCAN_WORKER_CONCURRENCY } from "@/lib/runtime/budget";
 
 /**
  * The bodies of the scheduled workers, extracted so the manual POST routes and the cron GET routes run
@@ -222,16 +223,19 @@ export async function runDocumentScanDispatch(
     return {
       ok: false,
       status: 503,
-      error: "No document scanner is configured. Set CRECY_DOCUMENT_SCAN_RELAY_URL and CRECY_DOCUMENT_SCAN_RELAY_SECRET.",
+      error: "No document scanner is configured. Set the relay credentials, Cloudmersive key, or CRECY_VERCEL_SCAN_SNAPSHOT_ID.",
     };
   }
 
   const { error: sweepError } = await supabase.rpc("requeue_stalled_document_scans", { p_stall_minutes: input.stallMinutes });
   if (sweepError) return { ok: false, status: 422, error: "Stalled document scans could not be swept." };
 
+  const limit = scanner.providerCode === VERCEL_SCAN_PROVIDER_CODE
+    ? Math.min(input.limit, SCAN_SANDBOX_WORKER_BATCH_SIZE)
+    : input.limit;
   const claimRunId = crypto.randomUUID();
   const { data: claim, error: claimError } = await supabase.rpc("claim_document_scan_jobs", {
-    p_limit: input.limit,
+    p_limit: limit,
     p_worker_run_id: claimRunId,
   });
   if (claimError || !claim) {
@@ -245,8 +249,8 @@ export async function runDocumentScanDispatch(
   if (!jobs.success) return { ok: false, status: 422, error: "The scan queue returned an unreadable job." };
 
   const source: DocumentObjectSource = {
-    async download(bucket, path) {
-      const { data, error } = await supabase.storage.from(bucket).download(path);
+    async download(bucket, path, signal) {
+      const { data, error } = await supabase.storage.from(bucket).download(path, undefined, { signal });
       if (error || !data) return { bytes: null, error: error?.message ?? "OBJECT_MISSING" };
       return { bytes: Buffer.from(await data.arrayBuffer()), error: null };
     },

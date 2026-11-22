@@ -2,16 +2,14 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { TransportFailure } from "@/lib/notifications/transport";
 import { classifyScannerStatus } from "./scanner-failure";
-import { SCAN_RELAY_TIMEOUT_MS } from "@/lib/runtime/budget";
+import { SCAN_RELAY_TIMEOUT_MS, SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS } from "@/lib/runtime/budget";
+import { scanInVercelSandbox, VERCEL_SCAN_PROVIDER_CODE } from "./scanner-vercel";
 
 /**
  * Provider-neutral malware scanning for uploaded document versions.
  *
- * Crecy does not embed a scanning vendor and does not invent a provider identifier. The operator points
- * CRECY_DOCUMENT_SCAN_RELAY_URL at their own scanning service; this worker fetches the stored object,
- * computes the digest of the bytes it actually read, and asks the relay for a verdict. With no relay
- * configured the route reports "not configured" rather than pretending anything was scanned — a
- * document then stays quarantined, which is the safe direction to fail.
+ * The worker fetches the stored object, computes the digest of the bytes it actually read, and asks
+ * the configured scanner for a verdict. When no scanner is configured, documents stay quarantined.
  *
  * The observed digest is computed HERE, from the downloaded bytes, and is re-proved against both the
  * scan job and the live version row by complete_document_scan. That is what makes a verdict bind to a
@@ -35,7 +33,7 @@ export type ScanTarget = {
 
 /** Just enough of the storage client to fetch one object, so the scanner stays unit-testable. */
 export type DocumentObjectSource = {
-  download(bucket: string, path: string): Promise<{ bytes: Buffer | null; error: string | null }>;
+  download(bucket: string, path: string, signal?: AbortSignal): Promise<{ bytes: Buffer | null; error: string | null }>;
 };
 
 export type DocumentScanner = {
@@ -73,8 +71,10 @@ export function readCloudmersiveVerdict(body: unknown): "clean" | "infected" | n
 async function readTargetBytes(
   target: ScanTarget,
   source: DocumentObjectSource,
+  signal?: AbortSignal,
 ): Promise<{ bytes: Buffer; observedSha256Hex: string } | ScanFailure> {
-  const { bytes, error } = await source.download(target.storageBucket, target.storagePath);
+  const { bytes, error } = await source.download(target.storageBucket, target.storagePath, signal);
+  signal?.throwIfAborted();
   if (error || !bytes) return { ok: false, errorCode: "OBJECT_UNREADABLE", retryable: true };
   if (bytes.byteLength > MAXIMUM_SCANNABLE_BYTES) {
     return { ok: false, errorCode: "OBJECT_TOO_LARGE_TO_SCAN", retryable: false };
@@ -181,10 +181,37 @@ function cloudmersiveScanner(config: { url: string; apiKey: string }): DocumentS
   };
 }
 
+function vercelSandboxScanner(snapshotId: string): DocumentScanner {
+  return {
+    providerCode: VERCEL_SCAN_PROVIDER_CODE,
+    async scan(target, source) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS);
+      try {
+        const loaded = await readTargetBytes(target, source, controller.signal);
+        if ("ok" in loaded) return loaded;
+        return await scanInVercelSandbox(snapshotId, loaded.bytes, loaded.observedSha256Hex, controller.signal);
+      } catch {
+        return {
+          ok: false,
+          errorCode: controller.signal.aborted ? "SCANNER_TIMEOUT" : "SCANNER_UNREACHABLE",
+          retryable: true,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  };
+}
+
 export function getDocumentScanner(): DocumentScanner | null {
   const relay = getDocumentScanRelayConfig();
   if (relay) return relayScanner(relay);
   const cloudmersive = getCloudmersiveScannerConfig();
   if (cloudmersive) return cloudmersiveScanner(cloudmersive);
+  const snapshotId = process.env.CRECY_VERCEL_SCAN_SNAPSHOT_ID?.trim() ?? "";
+  if (/^snap_[a-zA-Z0-9_-]{1,180}$/.test(snapshotId) && !snapshotId.includes("replace_")) {
+    return vercelSandboxScanner(snapshotId);
+  }
   return null;
 }

@@ -38,6 +38,23 @@ function jobFixture(index: number) {
   };
 }
 
+it("caps an opt-in Sandbox dispatch at one claim and starts no scan when the queue is empty", async () => {
+  vi.stubEnv("CRECY_DOCUMENT_SCAN_RELAY_URL", "");
+  vi.stubEnv("CRECY_DOCUMENT_SCAN_RELAY_SECRET", "");
+  vi.stubEnv("CLOUDMERSIVE_API_KEY", "");
+  vi.stubEnv("CRECY_VERCEL_SCAN_SNAPSHOT_ID", "snap_crecy_scanner");
+  try {
+    const calls: Rpc[] = [];
+    const result = await runDocumentScanDispatch(supabaseDouble([], calls), {
+      limit: 100, workerRunId: "sandbox-queue-empty", stallMinutes: 30,
+    });
+    expect(result).toMatchObject({ ok: true, summary: { claimed: 0, cleaned: 0, failed: 0 } });
+    expect(calls.find(({ name }) => name === "claim_document_scan_jobs")?.args).toMatchObject({ p_limit: 1 });
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
 describe("runDocumentScanDispatch under a partial transport stall", () => {
   const saved = { ...process.env };
   beforeEach(() => {
