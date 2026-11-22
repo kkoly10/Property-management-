@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { resolveEsignConsent } from "@/lib/data/signatures";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { signDocumentSchema } from "@/lib/validation/documents";
 
@@ -14,30 +16,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ del
   if (authError || !auth.user) return errorResponse("Sign in to sign this document.", 401);
 
   const input = parsed.data;
-  // Captured server-side, never from the request body: a signer must not be able to author their own
-  // evidence. x-forwarded-for is set by the Vercel edge and is the observed client address; the command
-  // parses the first entry of the list and never fails on a malformed header.
-  const ipAddress = request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip");
-  const userAgent = request.headers.get("user-agent");
+  const consent = resolveEsignConsent();
+  if (!consent) return errorResponse("The published signing disclosure is unavailable.", 503);
+  if (input.esignConsentVersion !== consent.version) {
+    return errorResponse("The signing disclosure changed. Reload and review it again.", 409);
+  }
 
-  const { data, error } = await supabase.rpc("sign_document", {
-    p_organization_id: input.organizationId,
-    p_document_delivery_id: deliveryId,
-    p_signer_name: input.signerName,
-    p_esign_consent_agreed: input.esignConsentAgreed,
-    p_esign_consent_version: input.esignConsentVersion,
-    p_intent_affirmed: input.intentAffirmed,
-    p_intent_statement: input.intentStatement,
-    p_ip_address: ipAddress,
-    p_user_agent: userAgent,
-    p_idempotency_key: request.headers.get("idempotency-key") ?? crypto.randomUUID(),
-  });
+  const result = await recordSignature(deliveryId, auth.user.id, input, consent.version, request.headers.get("idempotency-key"));
+  if (!result) return errorResponse("Signing is temporarily unavailable. Retry to check the signing result.", 503);
+  const { data, error } = result;
 
   if (error || !data) {
     const code = error?.message ?? "";
     if (code.includes("DOCUMENT_DELIVERY_FORBIDDEN")) return errorResponse("This document was delivered to a different recipient.", 403);
     if (code.includes("DOCUMENT_DELIVERY_NOT_FOUND") || code.includes("DOCUMENT_VERSION_NOT_FOUND")) return errorResponse("That document was not found.", 404);
     if (code.includes("DOCUMENT_ALREADY_SIGNED")) return errorResponse("You have already signed this document.", 409);
+    if (code.includes("DOCUMENT_REVIEW_CHANGED")) return errorResponse("The reviewed document changed. Reload and review it again.", 409);
+    if (code.includes("ESIGN_CONSENT_VERSION_CHANGED")) return errorResponse("The signing disclosure changed. Reload and review it again.", 409);
     if (code.includes("IDEMPOTENCY_CONFLICT")) return errorResponse("This retry no longer matches the original signing.", 409);
     if (code.includes("COMMAND_IN_PROGRESS")) return errorResponse("This signature is already being recorded. Try again in a moment.", 409);
     if (code.includes("DOCUMENT_NOT_SIGNABLE")) return errorResponse("This document is not available to sign yet.", 422);
@@ -50,4 +45,27 @@ export async function POST(request: Request, { params }: { params: Promise<{ del
   }
 
   return NextResponse.json(data, { status: 201, headers: { "cache-control": "no-store" } });
+}
+
+async function recordSignature(
+  deliveryId: string,
+  actorId: string,
+  input: ReturnType<typeof signDocumentSchema.parse>,
+  version: string,
+  idempotencyKey: string | null,
+) {
+  try {
+    return await createAdminClient().rpc("sign_reviewed_document", {
+      p_actor_user_id: actorId,
+      p_organization_id: input.organizationId,
+      p_document_delivery_id: deliveryId,
+      p_reviewed_version_id: input.reviewedVersionId,
+      p_reviewed_sha256: input.reviewedSha256,
+      p_signer_name: input.signerName,
+      p_esign_consent_version: version,
+      p_idempotency_key: idempotencyKey ?? crypto.randomUUID(),
+    });
+  } catch {
+    return null;
+  }
 }

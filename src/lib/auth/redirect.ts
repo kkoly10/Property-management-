@@ -14,8 +14,13 @@
 export function safeRedirectPath(value: string | null | undefined, fallback: string): string {
   if (typeof value !== "string") return fallback;
   const trimmed = value.trim();
-  // "/\..." and "/%2F..." are rejected with everything else that is not a plain relative path: the
-  // check is a positive one (must start with exactly one "/") rather than a blocklist of tricks.
+  // Use the URL parser too. It can turn a path such as slash-tab-slash into a network location
+  // when the browser resolves it.
   if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.startsWith("/\\")) return fallback;
-  return trimmed;
+  const origin = "https://crecy.invalid";
+  try {
+    return new URL(trimmed, origin).origin === origin ? trimmed : fallback;
+  } catch {
+    return fallback;
+  }
 }

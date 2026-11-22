@@ -16,7 +16,7 @@ type Result = { workOrderId: string; publicReference: string; status: string; ow
 const toMinor = (value: string) => { if (!value.trim()) return null; const number = Number(value); return Number.isFinite(number) && Number.isSafeInteger(Math.round(number * 100)) ? Math.round(number * 100) : null; };
 
 /**
- * Triage, assign, and — when there is nobody to assign to yet — add the vendor without leaving.
+ * Triage work for the in-house team or for a vendor that can be added without leaving the form.
  *
  * The zero-vendor state used to be a sentence telling the operator to go and do something else. For a
  * brand-new organization that is every first work order, and the scope, priority and cost they had
@@ -46,7 +46,7 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
   const [result, setResult] = useState<Result | null>(null);
   const idempotencyKey = useRef<string | null>(null);
 
-  // Open by default when there is nobody to assign, because that is the only way forward from here.
+  // Keep inline vendor setup visible when the directory is empty.
   const [addingVendor, setAddingVendor] = useState(vendors.length === 0);
   const [vendorName, setVendorName] = useState("");
   const [vendorEmail, setVendorEmail] = useState("");
@@ -61,7 +61,7 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
   const vendorChanged = (set: (value: string) => void) => (value: string) => { vendorKey.current = null; set(value); };
 
   async function createVendor() {
-    if (disabled || vendorPending || !vendorName.trim()) return;
+    if (disabled || pending || vendorPending || !vendorName.trim()) return;
     setVendorPending(true); setVendorError(null);
     vendorKey.current ??= crypto.randomUUID();
     try {
@@ -100,7 +100,7 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled || !vendorId) return;
+    if (disabled || pending || vendorPending) return;
     const estimatedCostMinor = toMinor(estimatedCost);
     if (estimatedCost.trim() && estimatedCostMinor === null) { setError("Enter a valid estimated cost."); return; }
     setPending(true); setError(null);
@@ -109,7 +109,7 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
       const response = await fetch("/api/v1/work-orders", {
         method: "POST", headers: { "content-type": "application/json", "idempotency-key": idempotencyKey.current },
         body: JSON.stringify({
-          organizationId, maintenanceRequestId, vendorId, scope,
+          organizationId, maintenanceRequestId, vendorId: vendorId || undefined, scope,
           estimatedCostMinor: estimatedCostMinor ?? undefined, currencyCode: estimatedCostMinor !== null ? currencyCode : undefined,
           ownerApprovalRequired, officialPriority: priority,
         }),
@@ -125,30 +125,31 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
     }
   }
 
-  if (result) return <Alert className="border-[#abefc6] bg-[#ecfdf3] text-success"><CheckCircle2 className="h-5 w-5" /><AlertTitle>Work order {result.publicReference} created</AlertTitle><AlertDescription>Status: {result.status.replaceAll("_", " ")}{result.ownerApprovalStatus ? " · awaiting owner approval before it can complete" : ""}.</AlertDescription></Alert>;
+  if (result) return <Alert className="border-[#abefc6] bg-[#ecfdf3] text-success"><CheckCircle2 className="h-5 w-5" /><AlertTitle>Work order {result.publicReference} created</AlertTitle><AlertDescription>{result.status === "draft" ? "Assign the draft in-house to schedule the work." : `Status: ${result.status.replaceAll("_", " ")}.`}{result.ownerApprovalStatus ? " Completion requires owner approval." : ""}</AlertDescription></Alert>;
 
   const busy = disabled || pending;
 
   return <form onSubmit={submit} className="space-y-5">
     <WorkspacePanel
       title="Triage and assign"
-      description="Set the official priority and assign a vendor to open the work-order lifecycle."
+      description="Set the official priority and choose who will handle the work."
       bodyClassName="space-y-4 p-5 sm:p-6"
     >
       <div className="space-y-2"><Label htmlFor="wo-priority">Official priority</Label><NativeSelect id="wo-priority" value={priority} disabled={busy} onChange={(event) => setPriority(event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="emergency">Emergency</option></NativeSelect></div>
 
       <div className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <Label htmlFor="wo-vendor">Vendor</Label>
+          <Label htmlFor="wo-vendor">Vendor or in-house team</Label>
           {!addingVendor ? (
             <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => { setAddingVendor(true); requestAnimationFrame(() => vendorNameField.current?.focus()); }}>
               <Plus aria-hidden="true" className="h-4 w-4" />Add vendor
             </Button>
           ) : null}
         </div>
-        {options.length
-          ? <NativeSelect ref={vendorSelect} id="wo-vendor" required value={vendorId} disabled={busy} onChange={(event) => setVendorId(event.target.value)}>{options.map((vendor) => <option key={vendor.vendorId} value={vendor.vendorId}>{vendor.displayName}</option>)}</NativeSelect>
-          : <p className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground"><UserPlus aria-hidden="true" className="mr-1 inline h-4 w-4" />No vendors yet. Add the first one below — the rest of this form is kept as you left it.</p>}
+        <NativeSelect ref={vendorSelect} id="wo-vendor" value={vendorId} disabled={busy || vendorPending} onChange={(event) => setVendorId(event.target.value)}>
+          <option value="">In-house team</option>
+          {options.map((vendor) => <option key={vendor.vendorId} value={vendor.vendorId}>{vendor.displayName}</option>)}
+        </NativeSelect>
 
         {addingVendor ? (
           /* Not a <form>: this sits inside the work-order form, and nesting forms is invalid markup. */
@@ -194,7 +195,7 @@ export function AssignVendorForm({ maintenanceRequestId, organizationId, vendors
       </div>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={ownerApprovalRequired} disabled={busy} onChange={(event) => setOwnerApprovalRequired(event.target.checked)} />Require owner approval before this can be marked complete</label>
       {error ? <Alert variant="destructive"><AlertTitle>Work order not created</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
-      <Button className="w-full" size="lg" disabled={busy || !scope.trim() || !vendorId}>{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}{pending ? "Creating…" : "Create work order"}</Button>
+      <Button className="w-full" size="lg" disabled={busy || vendorPending || !scope.trim()}>{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}{pending ? "Creating…" : "Create work order"}</Button>
     </WorkspacePanel>
   </form>;
 }

@@ -31,10 +31,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     if (code.includes("PROPERTY_SCOPE_DENIED")) return errorResponse("You do not have maintenance access for this property.", 403);
     if (code.includes("WORK_ORDER_NOT_FOUND")) return errorResponse("That work order was not found.", 404);
     if (code.includes("WORK_ORDER_VERSION_CONFLICT")) return errorResponse("This work order changed since you opened it. Refresh and try again.", 409);
+    if (code.includes("IN_HOUSE_ASSIGNMENT_UNAVAILABLE")) return errorResponse("Only a draft without a vendor can be assigned in-house.", 422);
     if (code.includes("WORK_ORDER_ALREADY_CLOSED") || code.includes("INVALID_TRANSITION")) return errorResponse("That update is not valid for the work order's current status.", 422);
     if (code.includes("COMPLETION_EVIDENCE_REQUIRED")) return errorResponse("Attach completion evidence before marking this work order complete.", 422);
     if (code.includes("COMPLETION_SUMMARY_REQUIRED")) return errorResponse("Describe the completed work.", 422);
     if (code.includes("EVIDENCE_NOT_AVAILABLE")) return errorResponse("One or more evidence files are unavailable. Remove them and try again.", 422);
+    if (code.includes("OWNER_APPROVER_NOT_CONFIGURED")) return errorResponse("Add an active owner interest for this property and try again.", 422);
+    if (code.includes("INVALID_COST_AMOUNT")) return errorResponse("Enter a valid actual cost.", 422);
+    if (code.includes("WORK_ORDER_COST_CURRENCY_MISMATCH")) return errorResponse("Check the property's accounting book currency before recording the actual cost.", 422);
     if (code.includes("CANCEL_REASON_REQUIRED")) return errorResponse("Explain why the work order is being canceled.", 422);
     if (code.includes("IDEMPOTENCY_CONFLICT")) return errorResponse("This retry no longer matches the original update.", 409);
     return errorResponse("The work order could not be updated.", 422);

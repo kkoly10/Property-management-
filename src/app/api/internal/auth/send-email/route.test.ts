@@ -93,6 +93,23 @@ describe("the Supabase Send Email Auth Hook", () => {
     expect(String(message.html)).not.toContain("/auth/v1/verify");
   });
 
+  it("issues an intent-bound recovery link on the canonical product host", async () => {
+    vi.stubEnv("CRECY_PASSWORD_RECOVERY_SECRET", "local-fixture-recovery-secret");
+    const request = () => hookRequest({
+      emailData: { email_action_type: "recovery", redirect_to: "https://owner.crecyos.com/untrusted-return" },
+    });
+    try {
+      expect((await POST(request())).status).toBe(200);
+      expect((await POST(request())).status).toBe(200);
+      expect(messages()[0]).toEqual(messages()[1]);
+      expect(String(messages()[0].text)).toContain("https://owner.crecyos.com/auth/confirm?type=recovery");
+      expect(String(messages()[0].text)).toContain("recovery_proof=");
+      expect(String(messages()[0].text)).not.toContain("untrusted-return");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("refuses an unsigned request and sends nothing", async () => {
     const response = await POST(hookRequest({ signature: "v1,not-a-real-signature" }));
     expect(response.status).toBe(401);

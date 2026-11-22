@@ -31,7 +31,7 @@ export default async function SignDocumentPage({ params }: { params: Promise<{ d
     <div>
       <p className="text-sm text-muted-foreground">Electronic signature</p>
       <h1 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">Sign {delivery.title}</h1>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">This is a legally binding electronic signature under the ESIGN Act and UETA. You will consent, review the document, then sign.</p>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Review the electronic signing disclosure and the delivered document before signing.</p>
     </div>
     {!delivery.signable && state.mode === "ready" ? <Alert variant="warning"><CircleAlert className="h-5 w-5" /><AlertTitle>Not ready to sign</AlertTitle><AlertDescription>This document has not finished security scanning, or is not available to you to sign.</AlertDescription></Alert> : null}
     <Card><CardContent className="p-4 sm:p-6">
@@ -39,7 +39,8 @@ export default async function SignDocumentPage({ params }: { params: Promise<{ d
         deliveryId={delivery.deliveryId}
         organizationId={delivery.organizationId}
         documentTitle={delivery.title}
-        documentId={delivery.documentId}
+        versionId={delivery.versionId}
+        sha256Hex={delivery.sha256Hex}
         versionNumber={delivery.versionNumber}
         esignConsent={delivery.esignConsent}
         disabled={state.mode !== "ready" || !delivery.signable}

@@ -13,6 +13,9 @@ describe("post-authentication redirect targets", () => {
     expect(safeRedirectPath("https://evil.example/steal", "/app")).toBe("/app");
     expect(safeRedirectPath("//evil.example/steal", "/app")).toBe("/app");
     expect(safeRedirectPath("/\\evil.example", "/app")).toBe("/app");
+    expect(safeRedirectPath("/\t/evil.example", "/app")).toBe("/app");
+    expect(safeRedirectPath("/\n\\evil.example", "/app")).toBe("/app");
+    expect(safeRedirectPath("/\t/", "/app")).toBe("/app");
     expect(safeRedirectPath("javascript:alert(1)", "/app")).toBe("/app");
     expect(safeRedirectPath("http://evil.example", "/app")).toBe("/app");
   });

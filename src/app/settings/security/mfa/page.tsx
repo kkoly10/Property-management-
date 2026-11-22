@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { safeRedirectPath } from "@/lib/auth/redirect";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 import { MfaSetup } from "./mfa-setup";
 
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function MfaSettingsPage({ searchParams }: { searchParams: Promise<{ returnTo?: string }> }) {
   const query = await searchParams;
-  const returnTo = query.returnTo?.startsWith("/") && !query.returnTo.startsWith("//") ? query.returnTo : "/settings/payments";
+  const returnTo = safeRedirectPath(query.returnTo, "/settings/payments");
   const configured = Boolean(getPublicSupabaseConfig());
   return <main className="min-h-screen gutter-5 py-5 lg:gutter-8 lg:py-10"><div className="mx-auto max-w-xl space-y-6">
     <Button variant="ghost" asChild><Link href={returnTo}><ArrowLeft className="h-4 w-4" />Back</Link></Button>

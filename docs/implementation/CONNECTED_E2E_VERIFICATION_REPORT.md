@@ -179,10 +179,15 @@ invitation invite delivery (both blocked on external config — server secret ke
 
 ## Connected certification harness
 
+Both suites require `NEXT_PUBLIC_SUPABASE_URL` and `CRECY_E2E_SUPABASE_ORIGIN` to identify the same
+dedicated synthetic Supabase project or loopback instance. The runner rejects the known Crecy
+production project before starting a web server. Use synthetic accounts, workspace data and provider
+sandbox credentials for the connected run.
+
 - **Two commands, deliberately distinct — do not call the partial one a certification:**
   - `npm run test:e2e:connected` (partial / developer run, `playwright.connected.config.ts`). The
     config **throws at load** (before any build/webServer) if the base connection env
-    (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `E2E_EMAIL`, `E2E_PASSWORD`)
+    (`NEXT_PUBLIC_SUPABASE_URL`, `CRECY_E2E_SUPABASE_ORIGIN`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `E2E_EMAIL`, `E2E_PASSWORD`)
     is missing or a placeholder — so it cannot silently pass by skipping every test — but the per-spec
     `test.skip` still self-skips fixture-specific legs (e.g. `E2E_CONV_ID`), so a run with a green
     result but skipped legs is **not** a certified pilot pass.

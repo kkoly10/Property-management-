@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scheduledRunStatus } from "./health";
+import { runtimeJobStatus, runtimeQueueIsDelayed, scheduledRunStatus } from "./health";
 
 describe("scheduledRunStatus", () => {
   it("reports a healthy run for an empty queue or a clean sweep", () => {
@@ -39,5 +39,25 @@ describe("scheduledRunStatus with skipped work", () => {
   it("leaves a genuinely clean run at 200", () => {
     expect(scheduledRunStatus(0, 0, 0)).toBe(200);
     expect(scheduledRunStatus(5, 0, 0)).toBe(200);
+  });
+});
+
+describe("platform scheduler health", () => {
+  const now = Date.parse("2026-11-22T13:30:00.000Z");
+  const lastRun = { finishedAt: "2026-11-22T13:15:00.000Z", status: 200 };
+
+  it("distinguishes no recent record, failed work, partial work and a healthy tick", () => {
+    expect(runtimeJobStatus("recurring-charges", undefined, now)).toBe("No recent record");
+    expect(runtimeJobStatus("recurring-charges", lastRun, now)).toBe("On schedule");
+    expect(runtimeJobStatus("recurring-charges", { ...lastRun, status: 207 }, now)).toBe("Needs attention");
+    expect(runtimeJobStatus("recurring-charges", { ...lastRun, status: 502 }, now)).toBe("Failed");
+  });
+
+  it("uses the worker cadence and measures the age of ready work", () => {
+    const past = "2026-11-22T13:00:00.000Z";
+    expect(runtimeJobStatus("notifications", { ...lastRun, finishedAt: past }, now)).toBe("Overdue");
+    expect(runtimeJobStatus("recurring-charges", { ...lastRun, finishedAt: past }, now)).toBe("On schedule");
+    expect(runtimeQueueIsDelayed(past, now)).toBe(true);
+    expect(runtimeQueueIsDelayed(null, now)).toBe(false);
   });
 });

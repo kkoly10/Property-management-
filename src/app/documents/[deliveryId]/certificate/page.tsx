@@ -47,7 +47,7 @@ export default async function SignatureCertificatePage({ params }: { params: Pro
             <div>
               <div className="flex items-center gap-2 text-primary"><FileSignature className="h-5 w-5" /><p className="text-sm font-semibold uppercase tracking-wide">Certificate of Completion</p></div>
               <h1 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">{c.documentTitle}</h1>
-              <p className="mt-1 text-sm text-muted-foreground">Electronic signature record · ESIGN Act &amp; UETA</p>
+              <p className="mt-1 text-sm text-muted-foreground">Electronic signature record</p>
             </div>
             <Badge variant="success" className="gap-1 whitespace-nowrap"><BadgeCheck className="h-3.5 w-3.5" />Signed</Badge>
           </div>
@@ -55,29 +55,27 @@ export default async function SignatureCertificatePage({ params }: { params: Pro
           <div className="rounded-lg border bg-muted/30 p-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Verification code</p>
             <p className="mt-1 font-mono text-lg font-semibold tracking-wider">{c.verificationCode}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Anyone holding this certificate can compare this code against the record on file.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Use this code to reference the signature record.</p>
           </div>
 
           <dl className="divide-y">
             <Row label="Signer">{c.signerName}{c.signerEmail ? <span className="text-muted-foreground"> · {c.signerEmail}</span> : null}</Row>
             <Row label="Statement signed">{c.intentStatement}</Row>
             <Row label="Signed at">{fmtUtc(c.signedAt)}</Row>
-            <Row label="Document delivered">{fmtUtc(c.deliveredAt)}</Row>
-            <Row label="First opened by signer">{fmtUtc(c.firstViewedAt)}</Row>
+            <Row label="Portal delivery recorded">{fmtUtc(c.deliveredAt)}</Row>
+            <Row label="First recorded acknowledgment">{fmtUtc(c.firstViewedAt)}</Row>
             <Row label="Document version">{c.versionNumber ? `Version ${c.versionNumber}` : "—"} · {c.documentType.replaceAll("_", " ")}</Row>
             <Row label="Document fingerprint (SHA-256)" mono>{c.documentSha256}</Row>
             <Row label="Signer IP address">{c.ipAddress ?? "Not recorded"}</Row>
             <Row label="Signer device">{c.userAgent ?? "Not recorded"}</Row>
-            <Row label="Authentication level">{c.authAssuranceLevel ? c.authAssuranceLevel.toUpperCase() : "Portal account (single factor)"}</Row>
+            <Row label="Authentication level">{c.authAssuranceLevel ? c.authAssuranceLevel.toUpperCase() : "Not recorded"}</Row>
             <Row label="Consent disclosure">{c.esignConsentVersion.split("#")[0]}</Row>
             <Row label="Tamper-evident seal (SHA-256)" mono>{c.signatureSeal}</Row>
           </dl>
 
           <div className="rounded-lg border border-dashed p-4 text-xs leading-5 text-muted-foreground">
-            This certificate records an electronic signature executed under the U.S. ESIGN Act (15 U.S.C. §7001)
-            and the Uniform Electronic Transactions Act. The seal is a SHA-256 hash over every field of the
-            signature record; any later alteration of the record would fail to reproduce it. Crecy provides the
-            signing software and is not a party to the signed document.
+            This certificate identifies the signature record and its delivered document version.
+            The seal binds the signature details, document fingerprint, consent binding, and signing time.
           </div>
         </CardContent></Card>;
       })() : null}

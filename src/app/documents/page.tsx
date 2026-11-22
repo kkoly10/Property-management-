@@ -12,7 +12,7 @@ import { DocumentAcknowledgeForm } from "./document-acknowledge-form";
 export const dynamic = "force-dynamic";
 
 export default async function ResidentDocumentsPage() {
-  const deliveries = await getRecipientDocumentDeliveries();
+  const deliveries = await getRecipientDocumentDeliveries("resident_person");
 
   return (
     <LivingShell maxWidth="max-w-5xl">
@@ -22,6 +22,8 @@ export default async function ResidentDocumentsPage() {
           description="Leases and notices shared by your property manager. Signed documents keep their electronic-signature certificate with the delivery record."
           meta={deliveries.mode !== "error" ? `${deliveries.items.length} delivered document${deliveries.items.length === 1 ? "" : "s"}` : undefined}
         />
+
+        <Button asChild variant="outline"><Link href="/documents/agreements">Rental agreements to sign</Link></Button>
 
         {deliveries.mode === "setup" ? (
           <Alert variant="info">
@@ -56,7 +58,7 @@ export default async function ResidentDocumentsPage() {
                         ) : acknowledged ? (
                           <Badge variant="success" className="gap-1"><ShieldCheck aria-hidden="true" className="h-3.5 w-3.5" />Acknowledged</Badge>
                         ) : (
-                          <Badge variant="warning">Awaiting your response</Badge>
+                          <Badge variant="warning">{item.signable ? "Signature requested" : item.signatureRequested ? "Signing unavailable" : "Awaiting your response"}</Badge>
                         )}
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">
@@ -67,9 +69,9 @@ export default async function ResidentDocumentsPage() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 sm:max-w-[260px] sm:justify-end">
-                      {item.documentId ? (
+                      {item.downloadable ? (
                         <Button asChild variant="outline" size="sm">
-                          <Link href={`/api/v1/documents/${item.documentId}/download`}>
+                          <Link href={`/api/v1/document-deliveries/${item.deliveryId}/download`}>
                             <Download aria-hidden="true" className="h-4 w-4" />
                             Download
                           </Link>
@@ -85,12 +87,12 @@ export default async function ResidentDocumentsPage() {
                         </Button>
                       ) : (
                         <>
-                          <Button asChild size="sm">
+                          {item.signable ? <Button asChild size="sm">
                             <Link href={`/documents/${item.deliveryId}/sign`}>
                               <PenLine aria-hidden="true" className="h-4 w-4" />
                               Review & sign
                             </Link>
-                          </Button>
+                          </Button> : null}
                           <DocumentAcknowledgeForm
                             deliveryId={item.deliveryId}
                             organizationId={item.organizationId}

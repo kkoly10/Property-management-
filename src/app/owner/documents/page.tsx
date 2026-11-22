@@ -17,7 +17,7 @@ const delivered = (value: string | null) => value
   : "Delivery pending";
 
 export default async function OwnerDocumentsPage() {
-  const deliveries = await getRecipientDocumentDeliveries();
+  const deliveries = await getRecipientDocumentDeliveries("owner_entity");
 
   return (
     <OwnerShell chromeTitle="Ownership records" chromeDescription="Delivered documents, signatures, and certificates">
@@ -85,13 +85,13 @@ export default async function OwnerDocumentsPage() {
                         <Badge variant="success"><PenLine aria-hidden="true" className="h-3.5 w-3.5" />Signed</Badge>
                       ) : acknowledged ? (
                         <Badge variant="success"><ShieldCheck aria-hidden="true" className="h-3.5 w-3.5" />Acknowledged</Badge>
-                      ) : <Badge variant="warning">Awaiting response</Badge>}
+                      ) : <Badge variant="warning">{item.signable ? "Signature requested" : item.signatureRequested ? "Signing unavailable" : "Awaiting response"}</Badge>}
                     </div>
 
                     <div className="grid gap-2 sm:flex sm:flex-wrap lg:max-w-[210px] lg:justify-end">
-                      {item.documentId ? (
+                      {item.downloadable ? (
                         <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
-                          <Link href={`/api/v1/documents/${item.documentId}/download`}><Download aria-hidden="true" className="h-4 w-4" />Download</Link>
+                          <Link href={`/api/v1/document-deliveries/${item.deliveryId}/download`}><Download aria-hidden="true" className="h-4 w-4" />Download</Link>
                         </Button>
                       ) : null}
                       {signed ? (
@@ -100,9 +100,9 @@ export default async function OwnerDocumentsPage() {
                         </Button>
                       ) : (
                         <>
-                          <Button asChild size="sm" className="w-full sm:w-auto">
+                          {item.signable ? <Button asChild size="sm" className="w-full sm:w-auto">
                             <Link href={`/documents/${item.deliveryId}/sign`}><PenLine aria-hidden="true" className="h-4 w-4" />Review &amp; sign</Link>
-                          </Button>
+                          </Button> : null}
                           <DocumentAcknowledgeForm
                             deliveryId={item.deliveryId}
                             organizationId={item.organizationId}

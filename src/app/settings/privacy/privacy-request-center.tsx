@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CheckCircle2, FileLock2, LoaderCircle, Send, ShieldCheck, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type {
@@ -36,17 +36,26 @@ const statusVariant = (status: PrivacyRequestItem["status"]) =>
       ? "neutral"
       : "warning";
 
-async function post(url: string, body: unknown) {
+async function post(url: string, body: unknown, retries: Map<string, string>) {
+  const payload = JSON.stringify(body);
+  const command = `${url}:${payload}`;
+  const key = retries.get(command) ?? crypto.randomUUID();
+  retries.set(command, key);
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": key,
     },
-    body: JSON.stringify(body),
+    body: payload,
   });
   const result = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(result?.error ?? "The privacy request action failed.");
+  if (!response.ok) {
+    if (response.status < 500 && result?.code !== "COMMAND_IN_PROGRESS") retries.delete(command);
+    throw new Error(result?.error ?? "The privacy request action failed.");
+  }
+  if (!result?.privacyRequestId) throw new Error("Retry to confirm your privacy request update.");
+  retries.delete(command);
   return result;
 }
 
@@ -54,14 +63,17 @@ export function PrivacyRequestCenter({
   authenticatorLevel,
   organizations,
   items,
+  returnTo,
   disabled,
 }: {
   authenticatorLevel: "aal1" | "aal2";
   organizations: PrivacyOrganization[];
   items: PrivacyRequestItem[];
+  returnTo: string;
   disabled: boolean;
 }) {
   const router = useRouter();
+  const commandRetries = useRef(new Map<string, string>());
   const [busy, setBusy] = useState(false);
   const [activeAction, setActiveAction] = useState<string>();
   const [cancelingId, setCancelingId] = useState<string>();
@@ -83,7 +95,7 @@ export function PrivacyRequestCenter({
         organizationId: controller === "platform" ? null : controller,
         requestType: form.get("requestType"),
         jurisdictionCode: form.get("jurisdictionCode"),
-      });
+      }, commandRetries.current);
       formElement.reset();
       setSuccess("Your request was recorded. Its status and verification steps appear below.");
       router.refresh();
@@ -101,8 +113,8 @@ export function PrivacyRequestCenter({
     try {
       await post(`/api/v1/privacy/requests/${item.privacyRequestId}/verify`, {
         expectedVersion: item.version,
-      });
-      setSuccess("Identity verification was recorded and eligible jobs are now queued.");
+      }, commandRetries.current);
+      setSuccess("Identity verification was recorded. You can now open your request receipt.");
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Identity verification could not be recorded.");
@@ -119,7 +131,7 @@ export function PrivacyRequestCenter({
       await post(`/api/v1/privacy/requests/${item.privacyRequestId}/cancel`, {
         expectedVersion: item.version,
         reason: cancellationReason,
-      });
+      }, commandRetries.current);
       setCancelingId(undefined);
       setCancellationReason("");
       setSuccess("The request and its pending jobs were canceled.");
@@ -211,13 +223,18 @@ export function PrivacyRequestCenter({
                       {item.blockedByHold ? <p className="mt-3 text-sm font-medium text-warning">One or more jobs are blocked by a legal or retention hold.</p> : null}
                     </div>
                     <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
+                      {item.canViewReceipt ? (
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href={`/settings/privacy/${item.privacyRequestId}`}>View receipt</Link>
+                        </Button>
+                      ) : null}
                       {item.canVerify ? authenticatorLevel === "aal2" ? (
                         <Button type="button" size="sm" variant="outline" disabled={activeAction === item.privacyRequestId} onClick={() => verifyRequest(item)}>
                           <ShieldCheck className="h-4 w-4" />Verify identity
                         </Button>
                       ) : (
                         <Button size="sm" variant="outline" asChild>
-                          <Link href="/settings/security/mfa?returnTo=/settings/privacy"><ShieldCheck className="h-4 w-4" />Verify identity</Link>
+                          <Link href={`/settings/security/mfa?${new URLSearchParams({ returnTo })}`}><ShieldCheck className="h-4 w-4" />Verify identity</Link>
                         </Button>
                       ) : null}
                       {item.canCancel && cancelingId !== item.privacyRequestId ? (

@@ -21,6 +21,14 @@ export type OperatorWorkOrder = {
   canceledReason: string | null; version: number; evidenceCount: number;
   cost: { journalTransactionId: string; amountMinor: number; currencyCode: string } | null;
 };
+
+export function workOrderAssignee(workOrder: OperatorWorkOrder | null) {
+  if (workOrder?.vendorName) return workOrder.vendorName;
+  const activeInHouse = workOrder && !workOrder.vendorId
+    && ["accepted", "scheduled", "in_progress", "awaiting_approval", "completed", "closed"].includes(workOrder.status);
+  return activeInHouse ? "In-house team" : "Assignment pending";
+}
+
 export type OperatorMaintenanceItem = {
   maintenanceRequestId: string; organizationId: string; publicReference: string; propertyName: string; unitCode: string; category: string;
   title: string; description: string; priorityRequested: string | null; officialPriority: string; status: string;

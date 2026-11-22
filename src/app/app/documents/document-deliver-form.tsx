@@ -12,11 +12,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 type Channel = "portal" | "email";
 
 /**
- * Puts a clean document in front of a resident or owner so they can open and sign it. This is the step
- * that closes the loop between an operator uploading a policy and a resident signing it — without it the
- * recipient never sees the document. Delivery is only offered once malware scanning has passed (the
- * parent renders this only for `clean` versions), and only to people with active portal access, since
- * `deliver_document` resolves the recipient through their active relationship.
+ * Sends a clean document to an active portal recipient. The operator can explicitly request a signature.
  */
 export function DocumentDeliverForm({
   organizationId,
@@ -35,9 +31,10 @@ export function DocumentDeliverForm({
   const [open, setOpen] = useState(false);
   const [recipientKey, setRecipientKey] = useState("");
   const [channel, setChannel] = useState<Channel>("portal");
+  const [signatureRequested, setSignatureRequested] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [deliveredTo, setDeliveredTo] = useState<string | null>(null);
+  const [deliveryMessage, setDeliveryMessage] = useState<string | null>(null);
   const idempotencyKey = useRef<string | null>(null);
 
   const residents = useMemo(() => recipients.filter((recipient) => recipient.kind === "Resident"), [recipients]);
@@ -47,8 +44,8 @@ export function DocumentDeliverForm({
 
   function reset() { idempotencyKey.current = null; setError(null); }
 
-  if (deliveredTo) {
-    return <div className="flex items-center gap-2 text-sm text-success"><CheckCircle2 className="h-4 w-4" />Delivered to {deliveredTo}</div>;
+  if (deliveryMessage) {
+    return <div className="flex items-center gap-2 text-sm text-success"><CheckCircle2 className="h-4 w-4" />{deliveryMessage}</div>;
   }
 
   if (!open) {
@@ -73,14 +70,24 @@ export function DocumentDeliverForm({
           recipientRelationshipType: selected.relationshipType,
           recipientRelationshipId: selected.relationshipId,
           deliveryChannel: channel,
+          signatureRequested,
         }),
       });
-      const body = await response.json().catch(() => ({})) as { error?: string };
+      const body = await response.json().catch(() => ({})) as { error?: string; documentDeliveryId?: string; status?: string };
       if (!response.ok) {
-        idempotencyKey.current = null;
+        if (response.status < 500 && response.status !== 409) idempotencyKey.current = null;
         throw new Error(body.error ?? "The document could not be delivered.");
       }
-      setDeliveredTo(selected.label);
+      if (!body.documentDeliveryId || !body.status) throw new Error("Retry to confirm the delivery result.");
+      const message = channel === "portal" && body.status === "delivered"
+        ? `Delivered to ${selected.label}`
+        : channel === "email" && body.status === "queued"
+          ? `Email queued for ${selected.label}`
+          : channel === "email" && body.status === "sent"
+            ? `Email accepted by the provider for ${selected.label}`
+            : null;
+      if (!message) throw new Error("Retry to confirm the delivery result.");
+      setDeliveryMessage(message);
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The document could not be delivered.");
@@ -112,6 +119,10 @@ export function DocumentDeliverForm({
       </NativeSelect>
       {emailUnavailable ? <p className="text-xs text-warning">This recipient has no email on file. Use their portal instead.</p> : null}
     </div>
+    <label className="flex items-start gap-2 text-sm">
+      <input type="checkbox" checked={signatureRequested} disabled={pending || disabled} onChange={(event) => { setSignatureRequested(event.target.checked); reset(); }} className="mt-0.5 h-4 w-4 shrink-0 accent-primary" />
+      <span>Request electronic signature</span>
+    </label>
     {disabled ? <p className="text-xs text-muted-foreground">Delivery becomes available once this workspace is connected.</p> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Not delivered</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     <div className="flex items-center gap-2">

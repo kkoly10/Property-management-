@@ -7,13 +7,20 @@ import { signupSchema } from "@/lib/validation/auth";
 import type { ActionState } from "@/lib/actions/state";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlausibleTokenHash } from "@/lib/auth/invitation-link";
-import { renderAuthEmail, type AuthEmailActionType } from "@/lib/notifications/auth-email";
-import { renderEmailHtml } from "@/lib/notifications/html-email";
-import { sendViaResend } from "@/lib/notifications/resend";
-import { senderFor } from "@/lib/notifications/sender";
-import { originForAudience } from "@/lib/runtime/host";
+import { sendAuthLink } from "@/lib/auth/send-auth-link";
 
 const SIGNUP_SUCCESS_PATH = "/signup?check_email=1";
+
+function onboardingDestination(customerPath: "property_manager" | "self_managing", existingAccount = false) {
+  if (customerPath === "self_managing") return "/onboarding/landlord";
+  return existingAccount ? "/app" : "/onboarding/organization";
+}
+
+function signupSuccessPath(customerPath: "property_manager" | "self_managing") {
+  return customerPath === "self_managing"
+    ? "/signup?check_email=1&path=self_managing"
+    : SIGNUP_SUCCESS_PATH;
+}
 
 function authErrorCode(error: unknown): string {
   if (!error || typeof error !== "object" || !("code" in error)) return "";
@@ -65,65 +72,12 @@ async function claimSignupAttempt(
   return (data as { allowed?: unknown } | null)?.allowed === true ? "allowed" : "limited";
 }
 
-async function sendAuthLink(input: {
-  email: string;
-  actionType: Extract<AuthEmailActionType, "signup" | "magiclink">;
-  tokenHash: string;
-  next: string;
-  idempotencyKey: string;
-}): Promise<boolean> {
-  const origin = originForAudience("operator");
-  if (!origin) return false;
-
-  const confirmUrl = new URL("/auth/confirm", origin);
-  confirmUrl.searchParams.set("token_hash", input.tokenHash);
-  confirmUrl.searchParams.set("type", input.actionType);
-  confirmUrl.searchParams.set("next", input.next);
-
-  const rendered = renderAuthEmail({
-    actionType: input.actionType,
-    language: "en",
-    confirmUrl: confirmUrl.toString(),
-  });
-  const sender = senderFor("auth_email", "operator");
-  const message = {
-    from: sender.from,
-    to: input.email,
-    subject: rendered.subject,
-    text: rendered.body,
-    html: renderEmailHtml({
-      subject: rendered.subject,
-      body: rendered.body,
-      audience: sender.audience,
-      language: "en" as const,
-      preheader: rendered.preheader,
-      paragraphs: rendered.paragraphs,
-      heading: rendered.heading,
-      ctaLabel: rendered.ctaLabel,
-      ctaUrl: rendered.ctaUrl,
-      details: rendered.details,
-      securityNote: rendered.securityNote,
-      unsubscribeUrl: null,
-    }),
-    replyTo: sender.replyTo,
-    tags: [
-      { name: "auth_action", value: input.actionType },
-      { name: "audience", value: "operator" },
-    ],
-    idempotencyKey: input.idempotencyKey,
-  };
-
-  let delivered = await sendViaResend(message);
-  if (!delivered.ok && delivered.retryable) {
-    // Same key makes the retry safe even if the first request reached Resend and only the response was
-    // lost.
-    delivered = await sendViaResend(message);
-  }
-  return delivered.ok;
-}
-
 export async function signupAction(_previousState: ActionState, formData: FormData): Promise<ActionState> {
-  const result = signupSchema.safeParse({ email: formData.get("email"), password: formData.get("password") });
+  const result = signupSchema.safeParse({
+    email: formData.get("email"),
+    password: formData.get("password"),
+    customerPath: formData.get("customerPath") ?? undefined,
+  });
 
   if (!result.success) {
     return { status: "error", message: "Check the highlighted fields.", fieldErrors: result.error.flatten().fieldErrors };
@@ -156,47 +110,35 @@ export async function signupAction(_previousState: ActionState, formData: FormDa
       const tokenHash = signIn.data?.properties?.hashed_token;
       const userId = signIn.data?.user?.id;
       if (!signIn.error && isPlausibleTokenHash(tokenHash) && userId) {
-        // /app is the canonical existing-operator landing point. Its layout redirects a signed-in user
-        // with no membership to /onboarding/organization, while an onboarded user reaches their
-        // workspace.
+        // Preserve the acquisition intent without creating or selecting an organization implicitly.
+        // Professional signups return to /app; a self-managing signup lands on the landlord resolver,
+        // which either enters an explicitly selected rental workspace or offers workspace creation.
         await sendAuthLink({
           email: result.data.email,
           actionType: "magiclink",
           tokenHash,
-          next: "/app",
-          idempotencyKey: `signup-existing-${userId}`,
+          next: onboardingDestination(result.data.customerPath, true),
+          audience: "operator",
         });
       }
       // Fail closed on account enumeration: even if the recovery link could not be minted or sent, the
       // browser gets the same neutral completion state as a new signup.
-    } else if (error) {
-      return signupFailure("We could not start account setup. Please try again.");
-    } else {
+    } else if (!error) {
       const tokenHash = data?.properties?.hashed_token;
-      const userId = data?.user?.id;
-      if (!isPlausibleTokenHash(tokenHash) || !userId) {
-        return signupFailure("We could not prepare the confirmation email. Please try again.");
-      }
-
-      const delivered = await sendAuthLink({
-        email: result.data.email,
-        actionType: "signup",
-        tokenHash,
-        next: "/onboarding/organization",
-        idempotencyKey: `signup-${userId}`,
-      });
-
-      if (!delivered) {
-        // A confirmation email that did not leave Crecy is not a completed signup. Best-effort cleanup
-        // prevents a mail/configuration failure from leaving an unconfirmed account that blocks a later
-        // retry.
-        await admin.auth.admin.deleteUser(userId).catch(() => undefined);
-        return signupFailure("We could not send the confirmation email. Please try again.");
+      if (isPlausibleTokenHash(tokenHash) && data?.user?.id) {
+        await sendAuthLink({
+          email: result.data.email,
+          actionType: "signup",
+          tokenHash,
+          next: onboardingDestination(result.data.customerPath),
+          audience: "operator",
+        });
       }
     }
   } catch {
-    return signupFailure("Unable to create the account right now. Please try again.");
+    // A lost acknowledgement can still mean mail was accepted. Keep pending identities so a received
+    // link can work and a later request can recover. Keep the result neutral for every email address.
   }
 
-  redirect(SIGNUP_SUCCESS_PATH);
+  redirect(signupSuccessPath(result.data.customerPath));
 }

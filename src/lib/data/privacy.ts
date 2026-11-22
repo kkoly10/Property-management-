@@ -40,6 +40,7 @@ export type PrivacyRequestItem = {
   blockedByHold: boolean;
   canVerify: boolean;
   canCancel: boolean;
+  canViewReceipt: boolean;
 };
 
 export type PrivacyRequestWorkspace = {
@@ -47,8 +48,17 @@ export type PrivacyRequestWorkspace = {
   authenticatorLevel: "aal1" | "aal2";
   organizations: PrivacyOrganization[];
   items: PrivacyRequestItem[];
+  nextCursor?: string;
   requestId?: string;
 };
+
+type PrivacyReceipt = Pick<PrivacyRequestItem,
+  "privacyRequestId" | "organizationName" | "requestType" | "status" | "submittedAt" | "dueAt" | "completedAt">
+  & { identityVerifiedAt: string };
+
+type PrivacyReceiptResult =
+  | { status: "ready"; receipt: PrivacyReceipt }
+  | { status: "not_found" | "step_up_required" | "unavailable" };
 
 const previewOrganization: PrivacyOrganization = {
   organizationId: "10000000-0000-4000-8000-000000000001",
@@ -74,6 +84,7 @@ const previewItem: PrivacyRequestItem = {
   blockedByHold: false,
   canVerify: true,
   canCancel: true,
+  canViewReceipt: false,
 };
 
 const list = (value: unknown, key: string) => {
@@ -113,15 +124,15 @@ function normalizeItem(value: unknown): PrivacyRequestItem {
     blockedByHold: Boolean(item.blockedByHold),
     canVerify: Boolean(item.canVerify),
     canCancel: Boolean(item.canCancel),
+    canViewReceipt: Boolean(item.canViewReceipt),
   };
 }
 
-/**
- * Two contracts, not one filter. Residents and owners have a privacy right regardless of any operator
- * membership, so with no context this uses the RELATIONSHIP projection — organizations they hold an
- * active relationship with, and nothing else. An operator supplies their active organization.
- */
-export async function getPrivacyRequestWorkspace(organizationId: string | null = null): Promise<PrivacyRequestWorkspace> {
+/** The personal projection stays available independently of the selected operator workspace. */
+export async function getPrivacyRequestWorkspace(
+  organizationId: string | null = null,
+  beforeRequestId?: string,
+): Promise<PrivacyRequestWorkspace> {
   if (!getPublicSupabaseConfig()) {
     return {
       mode: "setup",
@@ -135,7 +146,9 @@ export async function getPrivacyRequestWorkspace(organizationId: string | null =
     const supabase = await createClient();
     const { data, error } = organizationId
       ? await supabase.rpc("get_privacy_request_workspace", { p_organization_id: organizationId })
-      : await supabase.rpc("get_relationship_privacy_request_workspace");
+      : await supabase.rpc("get_relationship_privacy_request_workspace", beforeRequestId
+        ? { p_before_request_id: beforeRequestId }
+        : undefined);
     if (error || !data) throw error ?? new Error("Privacy requests are unavailable.");
     const root = data as Record<string, unknown>;
     return {
@@ -143,6 +156,7 @@ export async function getPrivacyRequestWorkspace(organizationId: string | null =
       authenticatorLevel: root.authenticatorLevel === "aal2" ? "aal2" : "aal1",
       organizations: list(data, "organizations").map(normalizeOrganization),
       items: list(data, "items").map(normalizeItem),
+      nextCursor: typeof root.nextCursor === "string" ? root.nextCursor : undefined,
     };
   } catch {
     return {
@@ -152,5 +166,29 @@ export async function getPrivacyRequestWorkspace(organizationId: string | null =
       items: [],
       requestId: crypto.randomUUID(),
     };
+  }
+}
+
+export async function getPrivacyRequestReceipt(privacyRequestId: string): Promise<PrivacyReceiptResult> {
+  if (!getPublicSupabaseConfig()) return { status: "unavailable" };
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("get_own_privacy_request_receipt", { p_privacy_request_id: privacyRequestId });
+    if (error?.message === "PRIVACY_REQUEST_NOT_FOUND") return { status: "not_found" };
+    if (error?.message === "MFA_STEP_UP_REQUIRED") return { status: "step_up_required" };
+    if (error || !data) return { status: "unavailable" };
+    const receipt = data as Record<string, unknown>;
+    return { status: "ready", receipt: {
+      privacyRequestId,
+      organizationName: nullableString(receipt.organizationName),
+      requestType: receipt.requestType as PrivacyRequestType,
+      status: receipt.status as PrivacyRequestStatus,
+      submittedAt: String(receipt.submittedAt),
+      dueAt: String(receipt.dueAt),
+      completedAt: nullableString(receipt.completedAt),
+      identityVerifiedAt: String(receipt.identityVerifiedAt),
+    } };
+  } catch {
+    return { status: "unavailable" };
   }
 }

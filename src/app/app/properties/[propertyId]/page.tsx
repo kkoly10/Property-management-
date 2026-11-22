@@ -53,7 +53,14 @@ export default async function PropertyWorkspacePage({
   }
 
   const property = workspace.property;
-  const occupancyByUnit = new Map(workspace.occupancies.map((occupancy) => [occupancy.unitId, occupancy]));
+  const occupancyByUnit = new Map<string, (typeof workspace.occupancies)[number]>();
+  for (const occupancy of workspace.occupancies) {
+    const displayed = occupancyByUnit.get(occupancy.unitId);
+    if (!displayed || (displayed.tenancyStatus === "scheduled"
+      && (occupancy.tenancyStatus !== "scheduled" || occupancy.leaseStart < displayed.leaseStart))) {
+      occupancyByUnit.set(occupancy.unitId, occupancy);
+    }
+  }
   const occupancyRate = property.unitCount > 0
     ? Math.round((workspace.occupancies.length / property.unitCount) * 100)
     : null;
@@ -328,9 +335,14 @@ export default async function PropertyWorkspacePage({
                           {rent(occupancy.rentAmountMinor, occupancy.currencyCode)}
                         </p>
                       </div>
-                      <Badge variant={occupancy.tenancyStatus === "active" ? "success" : "neutral"}>
-                        {occupancy.tenancyStatus.replaceAll("_", " ")}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        <Badge variant={occupancy.tenancyStatus === "active" ? "success" : "neutral"}>
+                          {occupancy.tenancyStatus.replaceAll("_", " ")}
+                        </Badge>
+                        <Button asChild size="sm" variant="outline">
+                          <Link href={`/app/tenancies/${occupancy.tenancyId}/closeout`}>Closeout</Link>
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -347,6 +359,21 @@ export default async function PropertyWorkspacePage({
                   }
                 />
               )}
+              {!!workspace.pastTenancies?.length && <section className="border-t">
+                <h3 className="px-5 pt-4 text-sm font-semibold sm:px-6">Past tenancies</h3>
+                <ul className="divide-y">
+                  {workspace.pastTenancies.map((tenancy) => <li key={tenancy.tenancyId}
+                    className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 sm:px-6">
+                    <div className="min-w-0 break-words">
+                      <p className="text-sm font-medium">{tenancy.householdName} · Unit {tenancy.unitCode}</p>
+                      <p className="text-xs text-muted-foreground">{tenancy.leaseStart} to {tenancy.leaseEnd ?? "open-ended"}</p>
+                    </div>
+                    <Button asChild size="sm" variant="outline">
+                      <Link href={`/app/tenancies/${tenancy.tenancyId}/closeout`}>View closeout</Link>
+                    </Button>
+                  </li>)}
+                </ul>
+              </section>}
             </div>
           </WorkspacePanel>
         </div>

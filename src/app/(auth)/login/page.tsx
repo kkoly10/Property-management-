@@ -6,8 +6,9 @@ import { LivingCommunityIdentity } from "@/components/crecy/living-community-ide
 import { classifyHost } from "@/lib/runtime/host";
 import { AUTH_SURFACE_COPY, authSurfaceFor } from "@/lib/auth/surface-copy";
 import { getPublicLivingCommunityPresentation } from "@/lib/data/living-community";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; auth_error?: string; password_reset?: string; session_notice?: string }> }) {
   const params = await searchParams;
   const requestHeaders = await headers();
   const classification = classifyHost(requestHeaders.get("host"));
@@ -61,7 +62,19 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         </p>
       </div>
 
-      <div className="pt-7">
+      <div className="space-y-5 pt-7">
+        {params.auth_error === "1" ? (
+          <Alert variant="destructive"><AlertTitle>That link could not be verified</AlertTitle><AlertDescription>Request a new sign-in or password reset link.</AlertDescription></Alert>
+        ) : null}
+        {params.password_reset === "1" ? (
+          <Alert variant={params.session_notice === "1" ? "info" : "success"}>
+            <AlertTitle>Password updated</AlertTitle>
+            <AlertDescription>
+              Sign in with your new password.
+              {params.session_notice === "1" ? " We could not confirm that other sessions ended." : ""}
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <LoginForm next={params.next} emailLabel={copy.emailLabel} showTrialLink={copy.showTrialLink} />
       </div>
 

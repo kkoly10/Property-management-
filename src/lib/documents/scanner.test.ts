@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAXIMUM_SCANNABLE_BYTES,
+  getCloudmersiveScannerConfig,
   getDocumentScanRelayConfig,
   getDocumentScanner,
+  readCloudmersiveVerdict,
   readScanVerdict,
   type DocumentObjectSource,
 } from "./scanner";
@@ -176,6 +178,79 @@ describe("getDocumentScanner().scan", () => {
     expect(await getDocumentScanner()!.scan(target, sourceOf(Buffer.from("x")))).toEqual({
       ok: false,
       errorCode: "SCANNER_UNREACHABLE",
+      retryable: true,
+    });
+  });
+});
+
+describe("Cloudmersive scanner adapter", () => {
+  const saved = { ...process.env };
+
+  beforeEach(() => {
+    delete process.env.CRECY_DOCUMENT_SCAN_RELAY_URL;
+    delete process.env.CRECY_DOCUMENT_SCAN_RELAY_SECRET;
+    process.env.CLOUDMERSIVE_API_KEY = "cloudmersive-test-key-0123456789abcdef";
+    delete process.env.CRECY_CLOUDMERSIVE_SCAN_URL;
+  });
+
+  afterEach(() => {
+    process.env = { ...saved };
+    vi.unstubAllGlobals();
+  });
+
+  it("requires a real HTTPS key and prefers no provider when the key is missing", () => {
+    expect(getCloudmersiveScannerConfig()).toEqual({
+      url: "https://api.cloudmersive.com/virus/scan/file",
+      apiKey: "cloudmersive-test-key-0123456789abcdef",
+    });
+    delete process.env.CLOUDMERSIVE_API_KEY;
+    expect(getCloudmersiveScannerConfig()).toBeNull();
+    expect(getDocumentScanner()).toBeNull();
+  });
+
+  it("accepts only an explicit CleanResult boolean", () => {
+    expect(readCloudmersiveVerdict({ CleanResult: true })).toBe("clean");
+    expect(readCloudmersiveVerdict({ CleanResult: false })).toBe("infected");
+    expect(readCloudmersiveVerdict({ CleanResult: "true" })).toBeNull();
+    expect(readCloudmersiveVerdict({})).toBeNull();
+  });
+
+  it("binds a clean verdict to the bytes downloaded from private storage", async () => {
+    const bytes = Buffer.from("signed lease bytes");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>).Apikey).toBe("cloudmersive-test-key-0123456789abcdef");
+      expect(init?.body).toBeInstanceOf(FormData);
+      return relayResponse(200, { CleanResult: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const scanner = getDocumentScanner();
+    expect(scanner?.providerCode).toBe("cloudmersive");
+    await expect(scanner!.scan(target, sourceOf(bytes))).resolves.toEqual({
+      ok: true,
+      verdict: "clean",
+      observedSha256Hex: createHash("sha256").update(bytes).digest("hex"),
+      providerCode: "cloudmersive",
+      providerReference: null,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.cloudmersive.com/virus/scan/file",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("treats an infected verdict as infected and ambiguous JSON as a failed attempt", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => relayResponse(200, { CleanResult: false })));
+    await expect(getDocumentScanner()!.scan(target, sourceOf(Buffer.from("eicar")))).resolves.toMatchObject({
+      ok: true,
+      verdict: "infected",
+      providerCode: "cloudmersive",
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async () => relayResponse(200, { CleanResult: "unknown" })));
+    await expect(getDocumentScanner()!.scan(target, sourceOf(Buffer.from("x")))).resolves.toEqual({
+      ok: false,
+      errorCode: "UNREADABLE_SCAN_VERDICT",
       retryable: true,
     });
   });

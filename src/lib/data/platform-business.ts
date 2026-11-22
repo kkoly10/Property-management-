@@ -2,6 +2,7 @@ import "server-only";
 
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
+import { RUNTIME_JOB_FRESHNESS_MINUTES, type RuntimeHealthSnapshot, type RuntimeJob } from "@/lib/runtime/health";
 
 /**
  * The founder's view of the whole business.
@@ -36,6 +37,7 @@ export type BusinessOverview = {
     chargeRunsByState: CountsByKey;
     lastCompletedChargeRunAt: string | null;
     openSupportSessions: number;
+    runtime: RuntimeHealthSnapshot | null;
   };
 };
 
@@ -54,6 +56,24 @@ function counts(raw: unknown): CountsByKey {
   const out: CountsByKey = {};
   for (const [key, value] of Object.entries((raw ?? {}) as Record<string, unknown>)) out[key] = n(value);
   return out;
+}
+
+function normalizeRuntime(raw: unknown): RuntimeHealthSnapshot | null {
+  if (!raw || typeof raw !== "object") return null;
+  const dto = raw as Record<string, unknown>;
+  const source = (dto.heartbeats ?? {}) as Record<string, unknown>;
+  const heartbeats: RuntimeHealthSnapshot["heartbeats"] = {};
+  for (const name of Object.keys(RUNTIME_JOB_FRESHNESS_MINUTES) as RuntimeJob[]) {
+    const heartbeat = source[name] as { finishedAt?: unknown; status?: unknown } | undefined;
+    if (heartbeat && typeof heartbeat.finishedAt === "string" && typeof heartbeat.status === "number") {
+      heartbeats[name] = { finishedAt: heartbeat.finishedAt, status: heartbeat.status };
+    }
+  }
+  return {
+    heartbeats,
+    oldestDueNotificationAt: s(dto.oldestDueNotificationAt),
+    oldestDueScanAt: s(dto.oldestDueScanAt),
+  };
 }
 
 function normalize(raw: unknown): BusinessOverview {
@@ -104,6 +124,7 @@ function normalize(raw: unknown): BusinessOverview {
       chargeRunsByState: counts(operations.chargeRunsByState),
       lastCompletedChargeRunAt: s(operations.lastCompletedChargeRunAt),
       openSupportSessions: n(operations.openSupportSessions),
+      runtime: normalizeRuntime(operations.runtime),
     },
   };
 }
@@ -138,7 +159,11 @@ export async function getBusinessOverview(): Promise<BusinessOverviewState> {
   if (!getPublicSupabaseConfig()) return { mode: "setup", overview: previewOverview };
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("platform_business_overview");
+    let { data, error } = await supabase.rpc("platform_business_overview_with_runtime");
+    if (error?.code === "PGRST202") {
+      // Keep the overview available while rollout has not installed the heartbeat migration.
+      ({ data, error } = await supabase.rpc("platform_business_overview"));
+    }
     if (error) {
       // The database is the authority on both gates; these only decide which explanation to render.
       if (error.message.includes("MFA_STEP_UP_REQUIRED")) return { mode: "mfa_required" };

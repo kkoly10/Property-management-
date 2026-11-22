@@ -9,25 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { EsignConsentSummary } from "@/lib/data/signatures";
-
-/**
- * The signing ceremony. Its job is to produce the four things ESIGN/UETA require an enforceable
- * electronic signature to demonstrate, in an order the signer cannot skip:
- *   1. Consent — the full ESIGN disclosure is shown and affirmatively accepted before anything else.
- *   2. Review  — the exact document is available to open and read.
- *   3. Intent  — the signer adopts their name and deliberately signs against a stated affirmation.
- * The affirmation shown here is the exact `intentStatement` recorded on the signature, so the evidence
- * reflects precisely what the signer agreed to. IP, device, the document's authoritative hash, and the
- * consent version are captured server-side.
- */
-const INTENT_STATEMENT =
-  "I have read and agree to this document, and I intend my electronic signature below to legally bind me to it.";
+import { documentSigningIntent } from "@/lib/documents/signing";
 
 export function SignCeremony({
   deliveryId,
   organizationId,
   documentTitle,
-  documentId,
+  versionId,
+  sha256Hex,
   versionNumber,
   esignConsent,
   disabled,
@@ -35,7 +24,8 @@ export function SignCeremony({
   deliveryId: string;
   organizationId: string;
   documentTitle: string;
-  documentId: string | null;
+  versionId: string | null;
+  sha256Hex: string | null;
   versionNumber: number | null;
   esignConsent: EsignConsentSummary | null;
   disabled: boolean;
@@ -43,6 +33,7 @@ export function SignCeremony({
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [consented, setConsented] = useState(false);
+  const [reviewed, setReviewed] = useState(false);
   const [signerName, setSignerName] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,10 +41,13 @@ export function SignCeremony({
 
   const steps = ["Consent", "Review", "Sign"];
   const canContinueConsent = consented && Boolean(esignConsent);
-  const canSign = signerName.trim().length >= 2;
+  const canSign = Boolean(reviewed && versionId && sha256Hex && signerName.trim().length >= 2);
 
   async function sign() {
-    if (!esignConsent) { setError("The signing disclosure is unavailable. Refresh and try again."); return; }
+    if (!esignConsent || !versionId || !sha256Hex || !canSign) {
+      setError("Review the disclosure and the pinned document version before signing.");
+      return;
+    }
     setPending(true);
     setError(null);
     idempotencyKey.current ??= crypto.randomUUID();
@@ -66,15 +60,18 @@ export function SignCeremony({
           signerName: signerName.trim(),
           esignConsentAgreed: true,
           esignConsentVersion: esignConsent.version,
+          reviewedVersionId: versionId,
+          reviewedSha256: sha256Hex,
+          documentReviewConfirmed: true,
           intentAffirmed: true,
-          intentStatement: INTENT_STATEMENT,
         }),
       });
-      const body = await response.json().catch(() => ({})) as { error?: string };
+      const body = await response.json().catch(() => ({})) as { error?: string; signatureId?: string };
       if (!response.ok) {
-        idempotencyKey.current = null;
+        if (response.status < 500 && response.status !== 409) idempotencyKey.current = null;
         throw new Error(body.error ?? "Your signature could not be recorded.");
       }
+      if (!body.signatureId) throw new Error("The signing result could not be confirmed. Retry to check the result.");
       router.replace(`/documents/${deliveryId}/certificate`);
       router.refresh();
     } catch (caught) {
@@ -100,7 +97,7 @@ export function SignCeremony({
 
     {step === 0 ? <section className="space-y-4">
       <div className="flex items-center gap-2"><LockKeyhole className="h-5 w-5 text-primary" /><h2 className="text-lg font-semibold">Consent to sign electronically</h2></div>
-      <p className="text-sm leading-6 text-muted-foreground">Before you sign, please read this disclosure of your rights. Signing electronically is legally the same as signing on paper.</p>
+      <p className="text-sm leading-6 text-muted-foreground">Read the electronic signing disclosure and confirm that you can keep the records.</p>
       {esignConsent ? <div className="max-h-72 overflow-y-auto rounded-lg border bg-muted/30 p-4 text-sm leading-6">
         {esignConsent.body.split("\n").map((line, index) => {
           const heading1 = line.startsWith("# ");
@@ -123,10 +120,14 @@ export function SignCeremony({
     {step === 1 ? <section className="space-y-4">
       <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" /><h2 className="text-lg font-semibold">Review the document</h2></div>
       <p className="text-sm leading-6 text-muted-foreground">Open and read <span className="font-medium text-foreground">{documentTitle}</span>{versionNumber ? ` (version ${versionNumber})` : ""} before you sign. Your signature will be bound to this exact version.</p>
-      {documentId ? <Button asChild variant="outline" className="w-full sm:w-auto"><Link href={`/api/v1/documents/${documentId}/download`} target="_blank" rel="noreferrer"><Download className="h-4 w-4" />Open the document</Link></Button> : <Alert variant="info"><AlertTitle>Document</AlertTitle><AlertDescription>This document will open for review once the workspace is connected.</AlertDescription></Alert>}
+      {versionId && !disabled ? <Button asChild variant="outline" className="w-full sm:w-auto"><Link href={`/api/v1/document-deliveries/${deliveryId}/download?version=${versionId}`} target="_blank" rel="noreferrer"><Download className="h-4 w-4" />Open delivered version</Link></Button> : <Alert variant="info"><AlertTitle>Document unavailable</AlertTitle><AlertDescription>Return to your documents to check the delivery.</AlertDescription></Alert>}
+      <label className="flex items-start gap-2.5 text-sm">
+        <input type="checkbox" checked={reviewed} disabled={disabled} onChange={(event) => setReviewed(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary" />
+        <span>I reviewed the delivered version shown above.</span>
+      </label>
       <div className="space-y-1.5">
         <Label htmlFor="signer-name">Adopt your signature — type your full legal name</Label>
-        <Input id="signer-name" value={signerName} disabled={disabled} onChange={(event) => setSignerName(event.target.value)} placeholder="Jordan Q. Rivera" autoComplete="name" maxLength={160} />
+        <Input id="signer-name" value={signerName} disabled={disabled} onChange={(event) => { setSignerName(event.target.value); idempotencyKey.current = null; }} placeholder="Jordan Q. Rivera" autoComplete="name" maxLength={160} />
         {signerName.trim() ? <p className="pt-1 font-[cursive] text-2xl text-foreground">{signerName.trim()}</p> : null}
       </div>
       <div className="grid grid-cols-2 gap-3"><Button className="w-full" variant="ghost" onClick={() => setStep(0)}>Back</Button><Button className="w-full" disabled={!canSign || disabled} onClick={() => setStep(2)}>Continue</Button></div>
@@ -135,11 +136,11 @@ export function SignCeremony({
     {step === 2 ? <section className="space-y-4">
       <div className="flex items-center gap-2"><FileSignature className="h-5 w-5 text-primary" /><h2 className="text-lg font-semibold">Sign</h2></div>
       <div className="rounded-lg border bg-muted/30 p-4">
-        <p className="text-sm leading-6">{INTENT_STATEMENT}</p>
+        <p className="text-sm leading-6">{documentSigningIntent}</p>
         <p className="mt-3 font-[cursive] text-2xl">{signerName.trim()}</p>
-        <p className="mt-1 text-xs text-muted-foreground">Signing records your name, this device and network address, the exact document version, and the date and time.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Signing records your authenticated account, typed name, disclosure version, document fingerprint, and signing time.</p>
       </div>
-      {error ? <Alert variant="destructive"><AlertTitle>Not signed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
+      {error ? <Alert variant="destructive"><AlertTitle>Check the signing result</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       <div className="grid grid-cols-2 gap-3">
         <Button className="w-full" variant="ghost" disabled={pending} onClick={() => setStep(1)}>Back</Button>
         <Button className="w-full" disabled={pending || disabled || !canSign} onClick={sign}>

@@ -39,7 +39,10 @@ export async function POST(request: Request) {
     if (code.includes("IDEMPOTENCY_CONFLICT")) {
       return errorResponse("IDEMPOTENCY_CONFLICT", "This retry no longer matches the original privacy request.", 409);
     }
-    return errorResponse("REQUEST_FAILED", "The privacy request could not be submitted.", 422);
+    if (code.includes("COMMAND_IN_PROGRESS")) {
+      return errorResponse("COMMAND_IN_PROGRESS", "Your request is still being recorded. Try again shortly.", 409);
+    }
+    return errorResponse("REQUEST_UNCONFIRMED", "Retry to confirm whether your privacy request was recorded.", 502);
   }
   return NextResponse.json(data, { status: 201 });
 }

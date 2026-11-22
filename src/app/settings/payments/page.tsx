@@ -25,6 +25,7 @@ export default async function PaymentSettingsPage() {
       <Alert variant="info"><ShieldCheck className="h-5 w-5" /><AlertTitle>Operator-controlled funds flow</AlertTitle><AlertDescription>Rent is processed on your connected merchant account. Crecy does not hold your rent.</AlertDescription></Alert>
       {workspace.mode === "error" ? <Alert variant="destructive"><AlertTitle>Payment settings are unavailable</AlertTitle><AlertDescription>Try again shortly. Support reference: {workspace.requestId}</AlertDescription></Alert> : null}
       <Card><CardHeader className="flex-row items-start gap-4 border-b"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-secondary text-secondary-foreground"><Landmark className="h-6 w-6" /></span><div><CardTitle>Stripe Connect</CardTitle><CardDescription>Stripe-hosted verification for each operating entity. Crecy never asks for or stores full banking credentials here.</CardDescription></div></CardHeader><CardContent className="pt-6"><PaymentConnectionPanel items={workspace.items} authenticatorLevel={workspace.authenticatorLevel} setupMode={workspace.mode === "setup"} /></CardContent></Card>
+      {organizationId && <Link href="/settings/organization-closure" className="inline-block text-sm font-medium text-primary hover:underline">Organization closure readiness</Link>}
     </div></main>
   );
 }

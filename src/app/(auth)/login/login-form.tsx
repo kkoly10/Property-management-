@@ -14,10 +14,7 @@ import { initialActionState } from "@/lib/actions/state";
 /**
  * Two ways in, because one of them was impossible for a whole class of user.
  *
- * Residents and owners are created by the invitation route with `email_confirm: false` and no
- * password, and this application has no reset route — so a password-only form meant an invited person
- * whose one-time magic link had expired could never reach their portal again, and the operator had to
- * re-invite them. The link option is what makes a 72-hour invitation redeemable for 72 hours.
+ * Residents and owners may start with an email link before they set a password.
  */
 export function LoginForm({ next, emailLabel, showTrialLink }: { next?: string; emailLabel: string; showTrialLink: boolean }) {
   const [mode, setMode] = useState<"password" | "link">("password");
@@ -75,7 +72,10 @@ export function LoginForm({ next, emailLabel, showTrialLink }: { next?: string; 
         <FieldError messages={state.fieldErrors?.email} />
       </div>
       <div>
-        <Label htmlFor="password">Password</Label>
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="password">Password</Label>
+          <Link href="/forgot-password" className="text-sm font-semibold text-primary hover:underline">Forgot password?</Link>
+        </div>
         <Input id="password" name="password" type="password" autoComplete="current-password" className="mt-2" required />
         <FieldError messages={state.fieldErrors?.password} />
       </div>

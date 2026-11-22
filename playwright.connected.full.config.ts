@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 import { existsSync } from "node:fs";
+import { connectedSupabaseOrigin } from "./src/test/connected-target";
 
 /**
  * The container image this repo is developed in ships a preinstalled Chromium at a fixed path. A
@@ -32,6 +33,7 @@ const launchOptions = existsSync(preinstalledChromium) ? { executablePath: prein
 const REQUIRED = [
   // Base connection + seeded operator.
   "NEXT_PUBLIC_SUPABASE_URL",
+  "CRECY_E2E_SUPABASE_ORIGIN",
   "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
   "E2E_EMAIL",
   "E2E_PASSWORD",
@@ -49,6 +51,7 @@ const REQUIRED = [
   "E2E_PAYMENT_ID",
   "E2E_OWNER_ENTITY_ID",
   "E2E_CONV_ID",
+  "E2E_SECOND_ORGANIZATION_NAME",
 ] as const;
 const PLACEHOLDER = /your-project|replace_me|replace_with|0000-0000-0000-0000-000000000000|example\.test/i;
 const missing = REQUIRED.filter((key) => !process.env[key] || PLACEHOLDER.test(process.env[key] as string));
@@ -63,7 +66,7 @@ if (missing.length) {
   );
 }
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const url = connectedSupabaseOrigin(process.env);
 const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
 
 export default defineConfig({

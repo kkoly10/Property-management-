@@ -65,3 +65,9 @@ export function worstCaseScanRunSeconds(
 export function scanBudgetMargin(): number {
   return (SCAN_WORKER_MAX_DURATION_SECONDS - worstCaseScanRunSeconds()) / SCAN_WORKER_MAX_DURATION_SECONDS;
 }
+
+export const NOTIFICATION_WORKER_MAX_DURATION_SECONDS = 60;
+export const NOTIFICATION_RELAY_TIMEOUT_MS = 15_000;
+export const NOTIFICATION_WORKER_CONCURRENCY = 3;
+export const NOTIFICATION_WORKER_BATCH_SIZE = 6;
+export const NOTIFICATION_WORKER_OVERHEAD_SECONDS = 14;

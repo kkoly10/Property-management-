@@ -47,7 +47,7 @@ describe("the session proxy, with Supabase configured", () => {
     // Set-Cookie onto the response; a marketing page is shared-cacheable, so a cached response
     // carrying that header would hand one visitor's session to the next. The page needs no session,
     // so it must not reach the client at all — not merely avoid caching afterwards.
-    for (const path of ["/", "/product", "/pricing", "/crecy-living", "/security", "/pilot", "/legal", "/legal/operator-terms"]) {
+    for (const path of ["/", "/product", "/landlords", "/pricing", "/crecy-living", "/security", "/pilot", "/legal", "/legal/operator-terms"]) {
       const response = await updateSession(request(path));
       expect(created.count, `${path} constructed a session client`).toBe(0);
       expect(response.headers.get("set-cookie"), `${path} carries a cookie`).toBeNull();

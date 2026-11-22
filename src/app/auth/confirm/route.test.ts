@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderNotification } from "@/lib/notifications/templates";
+import { passwordRecoveryUrl, readPasswordRecovery, PASSWORD_RECOVERY_COOKIES } from "@/lib/auth/password-recovery";
 
 /**
  * The token-hash confirmation boundary.
@@ -45,10 +46,39 @@ describe("the token-hash confirmation route", () => {
     // The destination URL is what the browser puts in the address bar, sends as a Referer, and hands
     // to any analytics on the next page. Carrying the incoming query string through would publish a
     // live credential to all three.
-    const response = await GET(confirmRequest(`?token_hash=${GOOD_HASH}&type=recovery&next=%2Fhome`));
+    const response = await GET(confirmRequest(`?token_hash=${GOOD_HASH}&type=magiclink&next=%2Fhome`));
     const location = response.headers.get("location") ?? "";
     expect(location).not.toContain(GOOD_HASH);
     expect(location).not.toContain("token_hash");
+  });
+
+  it("stages an app-issued recovery link without redeeming it or carrying the URL credential forward", async () => {
+    vi.stubEnv("CRECY_PASSWORD_RECOVERY_SECRET", "fixture-only-recovery-proof-secret");
+    const link = passwordRecoveryUrl("https://app.crecyos.com", GOOD_HASH);
+    link.searchParams.set("next", "//elsewhere.invalid");
+    const response = await GET(confirmRequest(link.search));
+
+    expect(verifyOtp).not.toHaveBeenCalled();
+    expect(response.headers.get("location")).toBe("https://app.crecyos.com/reset-password");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    const cookie = response.cookies.get(PASSWORD_RECOVERY_COOKIES[0]);
+    expect(cookie).toMatchObject({ secure: true, httpOnly: true, sameSite: "lax", path: "/", maxAge: 600 });
+    expect(readPasswordRecovery(response.cookies)).toMatchObject({ tokenHash: GOOD_HASH });
+  });
+
+  it("rejects a rewritten or token-swapped recovery link before setting a cookie", async () => {
+    vi.stubEnv("CRECY_PASSWORD_RECOVERY_SECRET", "fixture-only-recovery-proof-secret");
+    const proof = passwordRecoveryUrl("https://app.crecyos.com", GOOD_HASH).searchParams.get("recovery_proof");
+    for (const query of [
+      `?type=recovery&token_hash=${GOOD_HASH}`,
+      `?type=recovery&token_hash=${"c".repeat(48)}&recovery_proof=${proof}`,
+    ]) {
+      const response = await GET(confirmRequest(query));
+      expect(response.headers.get("location")).toContain("/login?auth_error=1");
+      expect(response.cookies.getAll()).toEqual([]);
+    }
+    expect(verifyOtp).not.toHaveBeenCalled();
   });
 
   it("refuses to leave this origin, however the destination is disguised", async () => {

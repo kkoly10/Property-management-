@@ -27,6 +27,10 @@ export type OperatorOrganization = {
   displayName: string;
   slug: string;
   roleCode: string;
+  /** Presentation only, not authorization. */
+  customerPath?: "self_managing" | "property_manager";
+  defaultTimeZone?: string;
+  headquartersCountryCode?: "US" | "CA" | "MX";
 };
 
 export type OrganizationContext =
@@ -45,6 +49,7 @@ export function normalizeOperatorOrganizations(data: unknown): OperatorOrganizat
   const raw = (data as { organizations?: unknown } | null)?.organizations;
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const record = entry as Record<string, unknown>;
     const organizationId = typeof record.organizationId === "string" ? record.organizationId : null;
     if (!organizationId) return [];
@@ -53,6 +58,10 @@ export function normalizeOperatorOrganizations(data: unknown): OperatorOrganizat
       displayName: typeof record.displayName === "string" ? record.displayName : "Untitled organization",
       slug: typeof record.slug === "string" ? record.slug : "",
       roleCode: typeof record.roleCode === "string" ? record.roleCode : "",
+      customerPath: record.customerPath === "self_managing" ? "self_managing" : "property_manager",
+      ...(typeof record.defaultTimeZone === "string" ? { defaultTimeZone: record.defaultTimeZone } : {}),
+      ...(["US", "CA", "MX"].includes(String(record.headquartersCountryCode))
+        ? { headquartersCountryCode: record.headquartersCountryCode as "US" | "CA" | "MX" } : {}),
     }];
   });
 }

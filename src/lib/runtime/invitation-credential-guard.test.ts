@@ -75,9 +75,9 @@ describe("the invitation credential guard", () => {
 
     expect(result.ok).toBe(true);
     expect(relayCalls, "a dead-end invitation reached the mail relay").toHaveLength(0);
-    expect(called("complete_notification_job"), "the job was marked sent").toHaveLength(0);
+    expect(called("complete_notification_attempt"), "the job was marked sent").toHaveLength(0);
 
-    const failures = called("fail_notification_job");
+    const failures = called("fail_notification_attempt");
     expect(failures).toHaveLength(1);
     expect(failures[0].args.p_error_code).toBe("INVITATION_CREDENTIAL_MISSING");
     // Retryable: the honest case is a race with the service-role attach, and the next attempt finds it.
@@ -94,7 +94,7 @@ describe("the invitation credential guard", () => {
       rpcCalls = [];
       await runNotificationDispatch(supabaseWith([job({ authTokenRequired: true, authTokenHash })]), DISPATCH);
       expect(relayCalls, `hash ${JSON.stringify(authTokenHash)} was mailed`).toHaveLength(0);
-      expect(called("complete_notification_job"), `hash ${JSON.stringify(authTokenHash)}`).toHaveLength(0);
+      expect(called("complete_notification_attempt"), `hash ${JSON.stringify(authTokenHash)}`).toHaveLength(0);
     }
   });
 
@@ -107,8 +107,31 @@ describe("the invitation credential guard", () => {
 
     expect(result.ok).toBe(true);
     expect(relayCalls).toHaveLength(1);
-    expect(called("complete_notification_job")).toHaveLength(1);
-    expect(called("fail_notification_job")).toHaveLength(0);
+    expect(called("complete_notification_attempt")).toHaveLength(1);
+    expect(called("fail_notification_attempt")).toHaveLength(0);
+    expect(called("complete_notification_attempt")[0].args.p_worker_run_id)
+      .toBe(called("claim_notification_jobs")[0].args.p_worker_run_id);
+  });
+
+  it("retries an ambiguous relay acknowledgement with the same message idempotency key", async () => {
+    const fetchRelay = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+      async () => Response.json({ messageId: "   " }),
+    );
+    vi.stubGlobal("fetch", fetchRelay);
+    const client = supabaseWith([job({ invitationToken: "tok-abc_123" })]);
+    await runNotificationDispatch(client, DISPATCH);
+    await runNotificationDispatch(client, DISPATCH);
+    expect(called("complete_notification_attempt")).toHaveLength(0);
+    const claims = called("claim_notification_jobs").map(call => call.args.p_worker_run_id);
+    expect(new Set(claims).size).toBe(2);
+    expect(called("fail_notification_attempt").map(call => call.args)).toEqual(claims.map(run => ({
+      p_notification_job_id: "11111111-1111-4111-8111-111111111111",
+      p_worker_run_id: run,
+      p_error_code: "RELAY_RECEIPT_MISSING",
+      p_retryable: true,
+    })));
+    expect(fetchRelay.mock.calls.map(([, init]) => new Headers(init.headers).get("idempotency-key")))
+      .toEqual(["11111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111"]);
   });
 
   it("leaves a genuinely pre-migration job on the legacy path", async () => {
@@ -119,7 +142,7 @@ describe("the invitation credential guard", () => {
 
     expect(result.ok).toBe(true);
     expect(relayCalls, "a pre-migration invitation was blocked").toHaveLength(1);
-    expect(called("complete_notification_job")).toHaveLength(1);
+    expect(called("complete_notification_attempt")).toHaveLength(1);
   });
 
   it("does not apply the guard to messages that make no such promise", async () => {
@@ -132,6 +155,6 @@ describe("the invitation credential guard", () => {
 
     expect(result.ok).toBe(true);
     expect(relayCalls).toHaveLength(1);
-    expect(called("fail_notification_job")).toHaveLength(0);
+    expect(called("fail_notification_attempt")).toHaveLength(0);
   });
 });

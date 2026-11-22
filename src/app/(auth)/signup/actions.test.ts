@@ -46,10 +46,15 @@ vi.mock("@/lib/notifications/auth-email", () => ({
 
 const { signupAction } = await import("./actions");
 
-function form(email = "new@example.com", password = "a-secure-password-123") {
+function form(
+  email = "new@example.com",
+  password = "a-secure-password-123",
+  customerPath?: "property_manager" | "self_managing" | string,
+) {
   const data = new FormData();
   data.set("email", email);
   data.set("password", password);
+  if (customerPath) data.set("customerPath", customerPath);
   return data;
 }
 
@@ -111,7 +116,25 @@ describe("signup activation", () => {
     expect(body).toContain(`token_hash=${GOOD_HASH}`);
     expect(body).toContain("type=signup");
     expect(body).toContain("next=%2Fonboarding%2Forganization");
-    expect(message.idempotencyKey).toBe("signup-user-123");
+    expect(message.idempotencyKey).toMatch(/^auth-signup-/);
+  });
+
+  it("preserves self-managing intent through signup confirmation", async () => {
+    generateLink.mockResolvedValue({
+      data: { user: { id: "homeowner-user" }, properties: { hashed_token: GOOD_HASH } },
+      error: null,
+    });
+
+    await expect(
+      signupAction(
+        { status: "idle" },
+        form("homeowner@example.com", "a-secure-password-123", "self_managing"),
+      ),
+    ).rejects.toThrow("REDIRECT:/signup?check_email=1&path=self_managing");
+
+    expect(sendViaResend).toHaveBeenCalledTimes(1);
+    const message = sendViaResend.mock.calls[0][0];
+    expect(String(message.text)).toContain("next=%2Fonboarding%2Flandlord");
   });
 
   it("gives an existing account the same neutral completion state and sends a one-time sign-in link", async () => {
@@ -134,8 +157,46 @@ describe("signup activation", () => {
     const message = sendViaResend.mock.calls[0][0];
     expect(String(message.text)).toContain("type=magiclink");
     expect(String(message.text)).toContain("next=%2Fapp");
-    expect(message.idempotencyKey).toBe("signup-existing-existing-user");
+    expect(message.idempotencyKey).toMatch(/^auth-magiclink-/);
     expect(deleteUser).not.toHaveBeenCalled();
+  });
+
+  it("preserves landlord intent for an existing account without selecting a workspace", async () => {
+    generateLink
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: "user_already_exists", message: "User already registered" },
+      })
+      .mockResolvedValueOnce({
+        data: { user: { id: "existing-homeowner" }, properties: { hashed_token: GOOD_HASH } },
+        error: null,
+      });
+
+    await expect(
+      signupAction(
+        { status: "idle" },
+        form("existing-homeowner@example.com", "a-secure-password-123", "self_managing"),
+      ),
+    ).rejects.toThrow("REDIRECT:/signup?check_email=1&path=self_managing");
+
+    const message = sendViaResend.mock.calls[0][0];
+    expect(String(message.text)).toContain("type=magiclink");
+    expect(String(message.text)).toContain("next=%2Fonboarding%2Flandlord");
+  });
+
+  it("sends separate mail intents when the same account requests fresh links", async () => {
+    const anotherHash = "0123456789abcdef0123456789abcdef";
+    for (const hashed_token of [GOOD_HASH, anotherHash]) {
+      generateLink
+        .mockResolvedValueOnce({ data: null, error: { code: "email_exists" } })
+        .mockResolvedValueOnce({ data: { user: { id: "existing-user" }, properties: { hashed_token } }, error: null });
+      await expect(signupAction({ status: "idle" }, form("existing@example.com"))).rejects.toThrow("REDIRECT:/signup?check_email=1");
+    }
+    expect(sendViaResend).toHaveBeenCalledTimes(2);
+    const [first, second] = sendViaResend.mock.calls.map(([message]) => message);
+    expect(first.idempotencyKey).not.toBe(second.idempotencyKey);
+    expect(first.text).toContain(GOOD_HASH);
+    expect(second.text).toContain(anotherHash);
   });
 
   it("does not expose an existing account when its recovery link cannot be minted", async () => {
@@ -169,12 +230,11 @@ describe("signup activation", () => {
     await expect(signupAction({ status: "idle" }, form())).rejects.toThrow("REDIRECT:/signup?check_email=1");
 
     expect(sendViaResend).toHaveBeenCalledTimes(2);
-    expect(sendViaResend.mock.calls[0][0].idempotencyKey).toBe("signup-user-retry");
-    expect(sendViaResend.mock.calls[1][0].idempotencyKey).toBe("signup-user-retry");
+    expect(sendViaResend.mock.calls[0][0]).toEqual(sendViaResend.mock.calls[1][0]);
     expect(deleteUser).not.toHaveBeenCalled();
   });
 
-  it("does not promise an email when provider delivery definitively fails", async () => {
+  it("keeps a pending identity after a rejected send and returns a neutral result", async () => {
     generateLink.mockResolvedValue({
       data: { user: { id: "user-fail" }, properties: { hashed_token: GOOD_HASH } },
       error: null,
@@ -186,12 +246,23 @@ describe("signup activation", () => {
       retryable: false,
     });
 
-    const result = await signupAction({ status: "idle" }, form());
+    await expect(signupAction({ status: "idle" }, form())).rejects.toThrow("REDIRECT:/signup?check_email=1");
+    expect(deleteUser).not.toHaveBeenCalled();
+    expect(sendViaResend).toHaveBeenCalledTimes(1);
+  });
 
-    expect(result.status).toBe("error");
-    expect(result.message).toContain("could not send");
-    expect(deleteUser).toHaveBeenCalledWith("user-fail");
-    expect(redirect).not.toHaveBeenCalled();
+  it("keeps a pending identity when both provider acknowledgements are unknown", async () => {
+    generateLink.mockResolvedValue({
+      data: { user: { id: "user-pending" }, properties: { hashed_token: GOOD_HASH } },
+      error: null,
+    });
+    sendViaResend.mockResolvedValue({
+      ok: false, code: "MAIL_PROVIDER_UNREACHABLE", detail: "timeout", retryable: true,
+    });
+    await expect(signupAction({ status: "idle" }, form())).rejects.toThrow("REDIRECT:/signup?check_email=1");
+    expect(sendViaResend).toHaveBeenCalledTimes(2);
+    expect(sendViaResend.mock.calls[0][0]).toEqual(sendViaResend.mock.calls[1][0]);
+    expect(deleteUser).not.toHaveBeenCalled();
   });
 
   it("never sends a malformed Supabase credential", async () => {
@@ -200,10 +271,8 @@ describe("signup activation", () => {
       error: null,
     });
 
-    const result = await signupAction({ status: "idle" }, form());
-
-    expect(result.status).toBe("error");
+    await expect(signupAction({ status: "idle" }, form())).rejects.toThrow("REDIRECT:/signup?check_email=1");
     expect(sendViaResend).not.toHaveBeenCalled();
-    expect(redirect).not.toHaveBeenCalled();
+    expect(deleteUser).not.toHaveBeenCalled();
   });
 });

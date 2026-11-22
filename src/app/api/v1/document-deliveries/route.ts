@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   if (authError || !auth.user) return errorResponse("Sign in to deliver a document.", 401);
 
   const delivery = parsed.data;
-  const { data, error } = await supabase.rpc("deliver_document", {
+  const { data, error } = await supabase.rpc("deliver_document_with_purpose", {
     p_organization_id: delivery.organizationId,
     p_document_version_id: delivery.documentVersionId,
     p_recipient_relationship_type: delivery.recipientRelationshipType,
@@ -22,6 +22,7 @@ export async function POST(request: Request) {
     p_delivery_channel: delivery.deliveryChannel,
     p_secure_link_ttl_hours: delivery.deliveryChannel === "secure_link" ? delivery.secureLinkTtlHours : null,
     p_idempotency_key: request.headers.get("idempotency-key") ?? crypto.randomUUID(),
+    p_signature_requested: delivery.signatureRequested,
   });
 
   if (error || !data) {

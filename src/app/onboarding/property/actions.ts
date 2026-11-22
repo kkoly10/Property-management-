@@ -36,7 +36,12 @@ export async function createPropertyAction(_previousState: ActionState, formData
       p_time_zone: result.data.timeZone,
       p_idempotency_key: result.data.idempotencyKey,
     });
-    if (error) return { status: "error", message: error.message, requestId: crypto.randomUUID() };
+    if (error) {
+      const message = error.message === "PLAN_UNAVAILABLE"
+        ? "Your workspace cannot add properties on its current subscription. Ask an owner or administrator to open subscription settings."
+        : error.message;
+      return { status: "error", message, requestId: crypto.randomUUID() };
+    }
     redirect(`/app/properties/${data.propertyId}`);
   } catch (error) {
     if (error && typeof error === "object" && "digest" in error) throw error;

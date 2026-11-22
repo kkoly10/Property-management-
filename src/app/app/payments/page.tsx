@@ -14,7 +14,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getOperatorPaymentWorkspace, type ReceivableSummaryItem } from "@/lib/data/finance";
+import { getPaymentExportProperties } from "@/lib/data/payment-exports";
 import { getActiveOrganizationId } from "@/lib/organization/context";
+import { PaymentExportForm } from "./payment-export-form";
 import { ResolveExceptionControl } from "./resolve-exception-control";
 import { WriteOffChargesForm } from "./write-off-charges-form";
 
@@ -48,7 +50,10 @@ function totals(items: ReceivableSummaryItem[]) {
 
 export default async function PaymentsPage() {
   const organizationId = await getActiveOrganizationId();
-  const workspace = await getOperatorPaymentWorkspace(organizationId);
+  const [workspace, exportProperties] = await Promise.all([
+    getOperatorPaymentWorkspace(organizationId),
+    getPaymentExportProperties(organizationId),
+  ]);
   const outstanding = totals(workspace.items);
   const outstandingEntries = Object.entries(outstanding);
   const collected = workspace.payments.filter((payment) => ["succeeded", "partially_refunded", "refunded"].includes(payment.status)).length;
@@ -132,6 +137,8 @@ export default async function PaymentsPage() {
       ) : null}
 
       <MetricStrip items={metrics} />
+
+      {organizationId ? <PaymentExportForm organizationId={organizationId} properties={exportProperties} /> : null}
 
       <WorkspacePanel
         title="Recent payments"

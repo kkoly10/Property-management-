@@ -26,6 +26,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ app
     if (code.includes("OWNER_APPROVAL_SCOPE_DENIED")) return errorResponse("This approval is not assigned to your owner entity.", 403);
     if (code.includes("MFA_STEP_UP_REQUIRED")) return errorResponse("Verify your identity with multi-factor authentication before deciding this high-value request.", 403);
     if (code.includes("OWNER_APPROVAL_NOT_FOUND")) return errorResponse("That approval request was not found.", 404);
+    if (code.includes("OWNER_APPROVAL_ROSTER_CHANGED")) return errorResponse("The property ownership changed. Ask the property team for a current approval request.", 409);
+    if (code.includes("OWNER_APPROVAL_INACTIVE")) return errorResponse("This approval request has been closed. Refresh to see the current request.", 409);
     if (code.includes("VERSION_CONFLICT") || code.includes("OWNER_APPROVAL_ALREADY_DECIDED")) return errorResponse("This request changed since you opened it. Refresh to see the recorded decision.", 409);
     if (code.includes("IDEMPOTENCY_CONFLICT")) return errorResponse("This retry no longer matches the original decision.", 409);
     return errorResponse("The approval decision could not be recorded.", 422);

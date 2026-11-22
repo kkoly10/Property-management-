@@ -11,8 +11,9 @@ import { WorkspacePanel } from "@/components/crecy/workspace-panel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import type { TransitionWorkOrderInput } from "@/lib/validation/maintenance";
 
-type Transition = "accept" | "schedule" | "start" | "complete" | "close" | "cancel";
+type Transition = TransitionWorkOrderInput["transition"];
 type Result = { workOrderId: string; status: string; version: number };
 
 /** The scan states an evidence document can be in, collapsed to the three the operator needs to act on. */
@@ -20,9 +21,12 @@ type EvidencePhase = "scanning" | "clean" | "rejected";
 type Evidence = { documentId: string; filename: string; phase: EvidencePhase };
 
 const nextTransition: Record<string, Transition | null> = {
-  assigned: "accept", accepted: "schedule", scheduled: "start", in_progress: "complete", completed: "close",
+  draft: "assign_in_house", assigned: "accept", accepted: "schedule", scheduled: "start", in_progress: "complete", completed: "close",
 };
-const actionLabel: Record<Transition, string> = { accept: "Mark vendor accepted", schedule: "Schedule visit", start: "Mark started", complete: "Mark complete", close: "Close work order", cancel: "Cancel work order" };
+const actionLabel: Record<Transition, string> = {
+  assign_in_house: "Assign in-house", accept: "Mark vendor accepted", schedule: "Schedule visit",
+  start: "Mark started", complete: "Mark complete", close: "Close work order", cancel: "Cancel work order",
+};
 const toMinor = (value: string) => { if (!value.trim()) return null; const number = Number(value); return Number.isFinite(number) && Number.isSafeInteger(Math.round(number * 100)) ? Math.round(number * 100) : null; };
 
 /** quarantined/scanning → still scanning; clean → clean; rejected/deleted/anything else → cannot be used. */
@@ -132,6 +136,10 @@ export function WorkOrderActions({ workOrderId, organizationId, status, version,
   }
 
   async function run(transition: Transition, extra: Record<string, unknown> = {}) {
+    if (transition === "complete" && actualCost.trim() && toMinor(actualCost) === null) {
+      setError("Enter a valid actual cost.");
+      return;
+    }
     setPending(transition); setError(null);
     idempotencyKey.current ??= crypto.randomUUID();
     try {

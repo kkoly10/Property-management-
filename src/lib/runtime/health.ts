@@ -24,3 +24,33 @@ export function scheduledRunStatus(attempted: number, failed: number, degraded =
   if (degraded > 0) return 207;
   return 200;
 }
+
+const minuteMs = 60_000;
+export const RUNTIME_JOB_FRESHNESS_MINUTES = {
+  "recurring-charges": 130,
+  notifications: 25,
+  "document-scans": 25,
+  "operational-sweep": 26 * 60,
+} as const;
+
+export type RuntimeJob = keyof typeof RUNTIME_JOB_FRESHNESS_MINUTES;
+export type RuntimeHeartbeat = { finishedAt: string; status: number };
+export type RuntimeHealthSnapshot = {
+  heartbeats: Partial<Record<RuntimeJob, RuntimeHeartbeat>>;
+  oldestDueNotificationAt: string | null;
+  oldestDueScanAt: string | null;
+};
+
+export function runtimeJobStatus(job: RuntimeJob, heartbeat: RuntimeHeartbeat | undefined, nowMs: number) {
+  if (!heartbeat) return "No recent record";
+  const finishedMs = Date.parse(heartbeat.finishedAt);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(finishedMs) || finishedMs > nowMs + minuteMs) return "Status unavailable";
+  if (nowMs - finishedMs > RUNTIME_JOB_FRESHNESS_MINUTES[job] * minuteMs) return "Overdue";
+  if (heartbeat.status === 207) return "Needs attention";
+  if (heartbeat.status < 200 || heartbeat.status >= 300) return "Failed";
+  return "On schedule";
+}
+
+export function runtimeQueueIsDelayed(oldestDueAt: string | null, nowMs: number): boolean {
+  return oldestDueAt !== null && nowMs - Date.parse(oldestDueAt) > 25 * minuteMs;
+}

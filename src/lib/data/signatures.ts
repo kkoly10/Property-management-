@@ -2,6 +2,7 @@ import "server-only";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 import { buildConsentBinding, findLegalDocument } from "@/lib/legal/registry";
+import { isDocumentDeliveryAvailable } from "@/lib/documents/signing";
 
 function firstOf<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
@@ -14,9 +15,9 @@ export type EsignConsentSummary = { version: string; title: string; route: strin
  * The exact ESIGN disclosure a signer must be shown and consent to, resolved from the versioned legal
  * registry so the version string recorded on the signature pins the precise bytes that were presented.
  */
-function resolveEsignConsent(): EsignConsentSummary | null {
+export function resolveEsignConsent(): EsignConsentSummary | null {
   const doc = findLegalDocument("esign_consent", { locale: "en-US" });
-  if (!doc) return null;
+  if (!doc || doc.state !== "published") return null;
   const binding = buildConsentBinding([doc]);
   return { version: binding.version, title: doc.title, route: doc.route, effectiveDate: doc.effectiveDate, body: doc.body };
 }
@@ -24,7 +25,7 @@ function resolveEsignConsent(): EsignConsentSummary | null {
 export type SignableDelivery = {
   deliveryId: string;
   organizationId: string;
-  documentId: string | null;
+  versionId: string | null;
   title: string;
   documentType: string;
   versionNumber: number | null;
@@ -44,34 +45,55 @@ export async function getSignableDelivery(deliveryId: string): Promise<SignableD
       mode: "setup",
       delivery: {
         deliveryId, organizationId: "20000000-0000-4000-8000-000000000002",
-        documentId: "preview-document", title: "Residential Lease — Unit 101", documentType: "signed_lease",
+        versionId: "preview-version", title: "Residential Lease — Unit 101", documentType: "signed_lease",
         versionNumber: 1, sha256Hex: "a".repeat(64), signable: true, alreadySignedId: null, esignConsent,
       },
     };
   }
   try {
     const supabase = await createClient();
+    const { data: auth, error: authError } = await supabase.auth.getUser();
+    if (authError || !auth.user) return { mode: "missing", delivery: null };
     const { data, error } = await supabase
       .from("document_deliveries")
-      .select("id,organization_id,status,document_version_id,document_versions(version_number,sha256_hex,upload_status,document_id,documents!document_versions_document_id_fkey(id,title,document_type)),document_signatures(id)")
+      .select("id,organization_id,recipient_relationship_type,recipient_relationship_id,status,expires_at,signature_requested_at,document_version_id,document_versions(version_number,sha256_hex,upload_status,documents!document_versions_document_id_fkey(title,document_type,status)),document_signatures(id),document_acknowledgements(acknowledgement_type)")
       .eq("id", deliveryId)
+      .eq("recipient_user_id", auth.user.id)
       .maybeSingle();
     if (error) throw error;
     if (!data) return { mode: "missing", delivery: null };
     const version = firstOf(data.document_versions as never) as { version_number?: number; sha256_hex?: string; upload_status?: string; documents?: unknown } | null;
-    const document = version ? firstOf(version.documents as never) as { id?: string; title?: string; document_type?: string } | null : null;
+    const document = version ? firstOf(version.documents as never) as { title?: string; document_type?: string; status?: string } | null : null;
     const signature = firstOf(data.document_signatures as never) as { id?: string } | null;
+    const acknowledgements = Array.isArray(data.document_acknowledgements) ? data.document_acknowledgements : [];
+    const declined = acknowledgements.some(
+      (ack: { acknowledgement_type: string }) => ack.acknowledgement_type === "declined",
+    );
+    const eligible = Boolean(data.signature_requested_at && esignConsent
+      && isDocumentDeliveryAvailable(data.status, data.expires_at)
+      && version?.upload_status === "clean" && document?.status === "active" && !signature?.id && !declined);
+    let activeRelationship = false;
+    if (eligible && data.recipient_relationship_type && data.recipient_relationship_id) {
+      const relationship = await supabase.from("user_relationships").select("relationship_id")
+        .eq("organization_id", data.organization_id)
+        .eq("user_id", auth.user.id)
+        .eq("relationship_type", data.recipient_relationship_type)
+        .eq("relationship_id", data.recipient_relationship_id)
+        .eq("status", "active")
+        .maybeSingle();
+      activeRelationship = Boolean(relationship.data);
+    }
     return {
       mode: "ready",
       delivery: {
         deliveryId: data.id as string,
         organizationId: data.organization_id as string,
-        documentId: document?.id ?? null,
+        versionId: version ? data.document_version_id as string : null,
         title: document?.title ?? "Delivered document",
         documentType: document?.document_type ?? "document",
         versionNumber: version?.version_number ?? null,
-        sha256Hex: version?.sha256_hex ?? null,
-        signable: version?.upload_status === "clean" && !signature?.id,
+        sha256Hex: version?.sha256_hex?.toLowerCase() ?? null,
+        signable: eligible && activeRelationship,
         alreadySignedId: signature?.id ?? null,
         esignConsent,
       },

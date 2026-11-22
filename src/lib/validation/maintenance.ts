@@ -62,7 +62,7 @@ export const createAndAssignWorkOrderSchema = z.object({
 
 export const transitionWorkOrderSchema = z.object({
   expectedVersion: z.number().int().positive(),
-  transition: z.enum(["accept", "schedule", "start", "complete", "close", "cancel"]),
+  transition: z.enum(["assign_in_house", "accept", "schedule", "start", "complete", "close", "cancel"]),
   reason: z.string().trim().min(3).max(1000).optional(),
   scheduledStart: z.iso.datetime({ offset: true }).optional(),
   scheduledEnd: z.iso.datetime({ offset: true }).optional(),
@@ -99,6 +99,11 @@ export const recordWorkOrderCostSchema = z.object({
   amountMinor: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   currencyCode: z.enum(["USD", "CAD", "MXN"]),
   memo: z.string().trim().min(1).max(240).optional(),
+});
+
+export const workOrderCostApprovalSchema = recordWorkOrderCostSchema.extend({
+  amountMinor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  expectedVersion: z.number().int().positive(),
 });
 
 export type CreateVendorInput = z.infer<typeof createVendorSchema>;

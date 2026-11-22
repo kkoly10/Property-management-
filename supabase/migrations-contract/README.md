@@ -58,9 +58,31 @@ migration. Steps 1–5 are all repeatable.
 
 ## What is in here
 
+For `20261122143918_retire_implicit_payment_export.sql`, apply the scope expansion first. Smoke the
+Payments export in the selected workspace with date, property, accounting book and MFA filters.
+Then remove the legacy RPC grant and verify the scoped CSV and organization-switch tests again.
+
 | File | Removes | Safe only after |
 | --- | --- | --- |
 | `20260828130000_phase_8_close_unscoped_operator_surfaces.sql` | `EXECUTE` for `authenticated` on 11 unscoped operator **collection** RPCs, and on the browser `create_organization` | the build whose fetchers pass an explicit organization, and whose onboarding creates organizations through the server boundary |
+| `20261122144145_retire_unfenced_queue_settlement.sql` | `EXECUTE` for `service_role` on four legacy job settlement RPCs | scheduled and manual workers use the fenced RPCs and the previous workers have finished or been recovered. See [runtime worker recovery](../../docs/implementation/RUNTIME_WORKER_RECOVERY.md). |
+| `20261122072946_retire_unbound_signing_and_broad_download.sql` | Direct execution of `sign_document`, delivery-based access to sibling versions and nonclean storage objects, and declining a signed delivery | the build using `sign_reviewed_document` and delivery-specific downloads |
+| `20261122144712_enable_independent_tenancy_episodes.sql` | The two unit-only homeowner setup writers and their superseded uniqueness constraints | the build using explicit setup IDs for save, activation, and application handoff |
+
+## Tenancy episode release sequence
+
+1. Confirm `btree_gist` is available and apply `20261122144708_tenancy_episodes_and_temporal_guards.sql`. Both old uniqueness rules still apply. The new date and physical-possession guards must exist before removing either.
+2. Deploy and smoke-test the compatible app. Check existing episode read, resume, activation and applicant handoff with exact IDs. Retain the verified compatible build after contracting.
+3. Apply `20261122144712_enable_independent_tenancy_episodes.sql`, then verify a distinct successor draft, nonoverlapping future reservation, overlap denial, delayed possession and old receipt access. Reinstating the old uniqueness rules is unsafe once separate drafts or reservations exist; repair forward.
+
+## Signing release sequence
+
+1. Apply the additive `20261122072817_signing_review_and_access.sql` migration. Existing delivery, acknowledgment, download, and signature paths still work with the previous application.
+2. Deploy the compatible build and verify its server credential calls the guarded write. Verify an ordinary delivery, an explicit signature request, review of the exact delivered version, a completed signature and replay, and a preexisting certificate.
+3. Apply `20261122072946_retire_unbound_signing_and_broad_download.sql`. This step is required before treating the legacy signing and broad Storage paths as closed. Keep the compatible build deployed after contracting. Restoring a legacy grant or policy would require a separately reviewed forward migration.
+4. Repeat the smoke checks with a recipient who holds only a delivery grant, and verify sibling and quarantined objects are inaccessible at the Storage boundary. Confirm the upload grant still permits upload verification before finalization.
+
+Existing completed signatures and their certificates remain intact. Existing unsigned deliveries can still be acknowledged or downloaded when delivered. An operator who needs a signature on a previously delivered document can send a new delivery with the signature option selected.
 
 ## How this is enforced
 

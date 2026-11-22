@@ -22,6 +22,7 @@ export default async function OperatorLayout({ children }: { children: React.Rea
 
   return (
     <AppShell
+      experience={context.active?.customerPath ?? "property_manager"}
       organizationName={activeLabel}
       organizations={context.organizations}
       activeOrganizationId={context.active?.organizationId ?? null}

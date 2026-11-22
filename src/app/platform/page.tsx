@@ -7,6 +7,7 @@ import { MetricStrip, type MetricStripItem } from "@/components/crecy/metric-str
 import { PageHeader } from "@/components/crecy/page-header";
 import { WorkspacePanel } from "@/components/crecy/workspace-panel";
 import { getBusinessOverview } from "@/lib/data/platform-business";
+import { runtimeJobStatus, runtimeQueueIsDelayed, type RuntimeJob } from "@/lib/runtime/health";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,13 @@ const money = (amountMinor: number, currency: string) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amountMinor / 100);
 
 const whole = (value: number) => new Intl.NumberFormat("en-US").format(value);
+
+const cronLabels: Record<RuntimeJob, string> = {
+  "recurring-charges": "Rent scheduler",
+  notifications: "Mail worker",
+  "document-scans": "Document scanner",
+  "operational-sweep": "Daily housekeeping",
+};
 
 function when(value: string | null): string {
   return value ? new Date(value).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }) : "never";
@@ -91,8 +99,26 @@ export default async function PlatformOverviewPage() {
 
   const { overview } = state;
   const { customers, plans, portfolio, money: ledger, operations } = overview;
-  const undelivered = (operations.notificationJobsByStatus.dead_letter ?? 0) + (operations.notificationJobsByStatus.failed ?? 0);
-  const needsAttention = undelivered > 0 || operations.documentsQuarantined > 0;
+  const mailFailures = (operations.notificationJobsByStatus.dead_letter ?? 0) + (operations.notificationJobsByStatus.failed ?? 0);
+  const nowMs = Date.parse(overview.generatedAt ?? "");
+  const runtime = operations.runtime;
+  const cronHealth: MetricStripItem[] = runtime ? (Object.keys(cronLabels) as RuntimeJob[]).map((job) => {
+    const heartbeat = runtime.heartbeats[job];
+    const value = runtimeJobStatus(job, heartbeat, nowMs);
+    return {
+      label: cronLabels[job],
+      value,
+      detail: heartbeat ? when(heartbeat.finishedAt) : undefined,
+      emphasis: value === "On schedule" ? "default" : "warning",
+    };
+  }) : [];
+  const mailDelayed = runtimeQueueIsDelayed(runtime?.oldestDueNotificationAt ?? null, nowMs);
+  const scansDelayed = runtimeQueueIsDelayed(runtime?.oldestDueScanAt ?? null, nowMs);
+  const needsAttention = mailFailures > 0 || operations.documentsQuarantined > 0
+    || mailDelayed || scansDelayed || cronHealth.some(item => item.value !== "On schedule");
+  const healthSummary = state.mode === "setup" ? "Preview"
+    : needsAttention ? "Needs attention"
+    : runtime ? "On schedule" : "Scheduler status unavailable";
 
   const headline: MetricStripItem[] = [
     { label: "Customers", value: whole(customers.total), detail: `${whole(customers.newLast30Days)} joined in the last 30 days`, emphasis: "brand" },
@@ -102,9 +128,10 @@ export default async function PlatformOverviewPage() {
   ];
 
   const health: MetricStripItem[] = [
-    { label: "Last rent run", value: operations.lastCompletedChargeRunAt ? "Completed" : "Never", detail: when(operations.lastCompletedChargeRunAt), emphasis: operations.lastCompletedChargeRunAt ? "default" : "danger" },
-    { label: "Mail not delivered", value: whole(undelivered), detail: "failed or dead-lettered jobs", emphasis: undelivered > 0 ? "danger" : "default" },
-    { label: "Quarantined files", value: whole(operations.documentsQuarantined), detail: `${whole(operations.documentsRejected)} rejected by the scanner`, emphasis: operations.documentsQuarantined > 0 ? "warning" : "default" },
+    ...cronHealth,
+    { label: "Last charge generation", value: operations.lastCompletedChargeRunAt ? "Completed" : "No recorded charges", detail: operations.lastCompletedChargeRunAt ? when(operations.lastCompletedChargeRunAt) : undefined },
+    { label: "Mail job failures", value: whole(mailFailures), detail: mailDelayed ? "Ready mail has been waiting more than 25 minutes" : "Failed or dead-lettered jobs", emphasis: mailFailures > 0 || mailDelayed ? "warning" : "default" },
+    { label: "Quarantined files", value: whole(operations.documentsQuarantined), detail: scansDelayed ? "Ready scans have been waiting more than 25 minutes" : `${whole(operations.documentsRejected)} rejected by the scanner`, emphasis: operations.documentsQuarantined > 0 || scansDelayed ? "warning" : "default" },
     { label: "Open support sessions", value: whole(operations.openSupportSessions), detail: "active grants into customer data" },
   ];
 
@@ -115,7 +142,7 @@ export default async function PlatformOverviewPage() {
         title="How Crecy is doing"
         description={<>Every customer at once. To look inside one of them, open an audited support session from the <Link href="/platform/support" className="font-semibold text-primary hover:underline">support console</Link>.</>}
         meta={overview.generatedAt ? `Figures as of ${when(overview.generatedAt)}` : undefined}
-        actions={<Badge variant={needsAttention ? "warning" : "success"}>{needsAttention ? "Needs attention" : "All healthy"}</Badge>}
+        actions={<Badge variant={healthSummary === "Needs attention" ? "warning" : healthSummary === "On schedule" ? "success" : "neutral"}>{healthSummary}</Badge>}
       />
 
       {state.mode === "setup" ? (

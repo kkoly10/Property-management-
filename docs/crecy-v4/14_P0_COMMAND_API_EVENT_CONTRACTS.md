@@ -290,6 +290,60 @@ Permission: property-scoped `lease.manage`; `finance.manage` required when openi
 Rules: one primary contact; no overlapping active tenancy; currency equals property book; signed document is active/scanned; opening balance posts balanced journal; operator-supplied disclaimer retained.  
 Events: `lease.recorded`, `tenancy.activated`, `charge_schedule.created`, optionally `opening_balance.posted`.
 
+#### Exact tenancy closeout
+
+`POST /api/v1/tenancies/{tenancyId}/closeout`
+
+The body carries `organizationId`, `expectedVersion`, and `idempotencyKey`.
+Use `action: "plan"` with an `effectiveOn` date, `action: "cancel"` without a date,
+or `action: "record_return"` with an `effectiveOn` date and `returnConfirmed: true`.
+The exact tenancy receipt returns its closeout state, version, and any planned
+or recorded handback dates. An identical retry returns the original receipt.
+
+The transition requires property-scoped `lease.manage`. The closeout read also
+accepts `lease.read` and only includes accounting with independently scoped
+`finance.read` or `finance.manage`. Recorded handback is terminal, uses the
+property's local date and ends future rent schedules. Posted ledger entries and
+signed lease dates are preserved. Events are `tenancy.closeout_planned`,
+`tenancy.closeout_canceled`, and `tenancy.possession_returned`.
+
+#### External security deposit register
+
+`POST /api/v1/tenancies/{tenancyId}/deposit`
+
+Pass the active `organizationId`, an `operationKey`, the register's
+`expectedVersion`, and one entry. The entry is an obligation, external receipt,
+refund, deduction, other disposition, or correction. Dates follow ISO format and
+amounts use integer minor units in the tenancy's deposit currency. The first
+entry records that currency and later entries enforce it. Each disposition draws
+from an identified receipt and requires confirmation that the activity occurred
+outside Crecy. A deduction additionally requires a clean evidence version, a
+notice reference, an approval reference, and itemized details.
+
+Property-scoped `finance.manage` authorizes writes. Scoped `finance.read` or
+`finance.manage` authorizes the register read. Existing document permissions
+control evidence uploads and selection. The first deduction pins the exact
+document version to the tenancy. All corrections preserve the original entries
+and require a reason. An unchanged retry returns the original receipt.
+
+Each accepted entry emits one audit and outbox event. The external deposit
+register is independent of the receivable ledger and payment providers. It
+records the operator's evidence and applies no jurisdictional rule or deadline.
+
+#### Same-tenancy fixed-term renewal
+
+`POST /api/v1/tenancies/{tenancyId}/renewal`
+
+The request carries the active `organizationId` and an `operationKey`.
+To schedule, submit the current lease ID, renewed end date, confirmed first
+charge date or null for zero rent, and the clean signed document version with
+explicit confirmation. To apply or cancel, submit the scheduled renewal ID.
+An unchanged retry returns the same receipt.
+
+Events are `tenancy.renewal_scheduled`, `tenancy.renewal_effective`, and
+`tenancy.renewal_canceled`. The [renewal contract](TENANCY_RENEWAL_CONTRACT.md)
+specifies property scope, the original charge cadence, and date guards.
+
 ### 4.7 InviteRelationshipUser
 
 `POST /api/v1/invitations`
@@ -459,7 +513,7 @@ Events: `work_order.created`, `work_order.assigned`, optionally `owner_approval.
 ```ts
 interface TransitionWorkOrderRequest {
   expectedVersion:number;
-  transition:'accept'|'schedule'|'start'|'request_approval'|'approve'|'reject'|'complete'|'close'|'cancel';
+  transition:'assign_in_house'|'accept'|'schedule'|'start'|'request_approval'|'approve'|'reject'|'complete'|'close'|'cancel';
   reason?:string;
   scheduledStart?:string; scheduledEnd?:string;
   actualCostMinor?:number;
@@ -470,8 +524,17 @@ interface TransitionWorkOrderResponse { workOrderId:string; status:string; versi
 ```
 
 Permission varies by transition: operator `maintenance.manage`; owner relationship only `approve/reject` on owned property; vendor workspace future only assigned vendor transitions.  
-Rules: explicit state machine; completion requires summary and evidence when configured; optimistic version.  
+Rules: explicit state machine; completion requires summary and evidence when configured; optimistic version. Costs requiring owner review move to `awaiting_approval` until all recipients in the current round approve the applicable amount and currency.
+
+`assign_in_house` moves a vendor-free draft to `accepted` under property-scoped `maintenance.manage`, using the existing audit, status event, and idempotent response. Assigned in-house work follows the same schedule, completion-evidence, and cost approval rules.
+
 Events: `work_order.status_changed`, `work_order.completed`, `owner_approval.responded`.
+
+#### RequestWorkOrderCostApproval
+
+`POST /api/v1/work-orders/{id}/cost-approval`
+
+The request carries `organizationId`, `expectedVersion`, `currencyCode`, optional `amountMinor` and `memo`, and an idempotency key. The receipt includes `workOrderId`, `version`, `approvalStatus`, `approvalRound`, `amountMinor`, and `currencyCode`. Property-scoped finance can request review for completed and closed orders. Property-scoped maintenance can request a replacement while completion is awaiting approval. The cost posting endpoint returns `WORK_ORDER_COST_APPROVAL_REQUIRED` with HTTP 422 if the amount still needs approval. [Maintenance cost approval operations](../implementation/MAINTENANCE_COST_APPROVAL.md)
 
 ### 4.16 FinalizeOwnerStatementSnapshot
 
@@ -560,11 +623,21 @@ Request: `{ targetPlanCode:'free'|'starter'|'growth'|'pro'; billingInterval:'mon
 
 Request type is access, correction, deletion, export, restriction, objection, withdrawal, or appeal. The command persists jurisdiction, controller routing, due date, identity-verification state, audit evidence, and jobs. It does not promise deletion where legal holds or operator instructions apply.
 
+#### Review organization closure readiness
+
+`/settings/organization-closure` calls `get_organization_closure_readiness(p_organization_id)` with the current selected workspace and its authenticated session. The query requires MFA (AAL2) and unscoped `organization.manage`. It returns the workspace identifier, recorded status, check time, and counts of tracked obligations. Occupancy and signing counts use current statuses and expiry. Resident and owner ledger positions are counted separately by accounting book and underlying account dimensions, so unrelated debits and credits cannot hide a balance. A recorded privacy hold is a case with at least one job blocked by hold. External obligations and holds require independent review even when every count is zero. The query grants no additional access to source records and remains available to authorized managers of closed workspaces. Actual closure, exports, retention and deletion remain separate policy-controlled operations.
+
+The external deposit count includes a tenancy once when effective receipts exceed effective dispositions or its latest recorded obligation exceeds effective receipts. Corrected receipts and dispositions are excluded. A fully received and disposed deposit clears from the count. This calculation reflects the register, including historical tenancies, and does not infer a legal due date or release funds.
+
+`/settings/privacy?view=personal` lists cases submitted by the authenticated requester. The selected workspace projection limits review to one current organization. The exact receipt at `/settings/privacy/{id}` requires the original verified requester and AAL2. The receipt describes the recorded case and persists after command idempotency records expire. [Privacy request continuity](../implementation/PRIVACY_REQUEST_CONTINUITY.md)
+
 ### 4.26 DeliverDocument / AcknowledgeDocumentDelivery
 
 **DeliverDocument** — RPC command `deliver_document(p_organization_id, p_document_version_id, p_recipient_relationship_type, p_recipient_relationship_id, p_delivery_channel, p_idempotency_key)`. Operator posts a finalized (`upload_status='clean'`) document version to a portal recipient identified by their active `user_relationship`; requires parent-scoped `documents.manage` (`PROPERTY_SCOPE_DENIED`/`DOCUMENTS_SCOPE_DENIED`). Only `delivery_channel='portal'` is accepted this pilot (`UNSUPPORTED_DELIVERY_CHANNEL` otherwise — email/secure_link await a delivery worker); `DOCUMENT_VERSION_NOT_FOUND`, `DOCUMENT_NOT_DELIVERABLE` (unscanned), and `DELIVERY_RECIPIENT_NOT_FOUND` (no active relationship user) guard the rest. Creates a `document_deliveries` row (`status='delivered'`), idempotent per (org, actor, `DeliverDocument`, key), and emits `document.delivered`. `POST /api/v1/document-deliveries`. Delivery also grants the recipient RLS read on the delivered document (`private.is_document_delivery_recipient`), so they can view and download it in their portal.
 
 **AcknowledgeDocumentDelivery** — `POST /api/v1/document-deliveries/{id}/acknowledgements` with acknowledgement type and evidence hash. Actor must be the delivery's recipient (`DOCUMENT_DELIVERY_FORBIDDEN`). Creates an append-only acknowledgement (`viewed|received|accepted|declined|signed_external`, unique per delivery+user+type — `DOCUMENT_DELIVERY_ALREADY_ACKNOWLEDGED`, checked after the idempotency short-circuit) and emits `document.acknowledged`.
+
+**Request and record one electronic signature** — The delivery API accepts an explicit `signatureRequested` option and uses `deliver_document_with_purpose`. The same delivery key cannot change purpose on retry. The recipient reviews the pinned clean version at `GET /api/v1/document-deliveries/{id}/download`. `POST /api/v1/document-deliveries/{id}/signature` authenticates the recipient and checks the published disclosure displayed by the ceremony, the confirmed version ID and fingerprint, and affirmative intent. The service-only `sign_reviewed_document` command locks the delivery and checks the exact actor and active relationship, requested purpose, delivered state, expiration, decline, and active clean document. A completed matching replay returns its receipt. The existing immutable signature, consent, audit, and outbox records remain the authority. New signatures omit client network/device claims. Receipt-only, unsigned legacy, and signed historical delivery reads are separate from eligibility for a new signature. Release follows the signing expansion and contraction procedure.
 
 ### 4.27 RespondToOwnerApproval
 
@@ -681,3 +754,61 @@ Provider events cannot move a terminal state backward without an explicit correc
 ## 8. Idempotency persistence
 
 Store the exact command lifecycle in `private.idempotency_records`: `{organization_id, actor_user_id, route, idempotency_key, request_hash, state, response_status, response_body, resource_type, resource_id, created_at, completed_at, expires_at}`. Same key + same request returns prior result; same key + different request returns `IDEMPOTENCY_CONFLICT`.
+
+
+## Homeowner expansion — September 25, 2026
+
+See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` for the additive command, persistence,
+screen states, security tests, and traceability approved under FD-HR-001–005.
+
+
+## Homeowner A3/A4 — existing signed rental
+See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
+upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
+
+## Homeowner B1 — shared-listing command contract
+
+- `SaveRentalListing(organizationId, unitId, expectedVersion, details, idempotencyKey)` is self-managing-only, property-scoped, version checked and durably idempotent. It snapshots only approved advertising fields and exact clean photo versions. Saving changes to a live listing returns that record to `draft`; a closed historical listing is never edited, and a later relisting starts a new record. Event: `rental_listing.saved`.
+- `SetRentalListingStatus(organizationId, listingId, expectedVersion, status, idempotencyKey)` permits `published`, `paused`, or terminal `closed`. Publish refuses discoverable visibility and requires a description plus scanner-clean media. Event: `rental_listing.status_changed`.
+- `RotateRentalListingLink(organizationId, listingId, expectedVersion, idempotencyKey)` replaces the public UUID without changing the private listing id. Event: `rental_listing.link_rotated`.
+- `GetPublicRentalListing(publicId)` is service-role-only. It returns a sanitized published advertising DTO for explicitly public `unlisted|discoverable` listings; the server converts only its explicitly selected scanner-clean photo paths to short-lived signed URLs.
+- `rental_listing_photo` is advertising media. It may not enter `document_deliveries`.
+
+
+## Homeowner B2 — verified rental inquiries (September 26, 2026)
+
+- `SubmitPublicRentalInquiry` is service-role-only behind the public HTTP validator. It derives
+  organization/property/unit from the published unlisted `public_id`; none are accepted from the visitor.
+- `VerifyPublicRentalInquiry` consumes an opaque email-verification token only on POST. GET renders the
+  verification surface and never changes inquiry state.
+- `CloseRentalInquiry` requires an authenticated current operator with `lease.manage` or
+  `property.manage` on the exact property and an expected inquiry version.
+- Submit and close are durably idempotent. Public submit namespaces its stored idempotency key to the
+  listing/email actor scope so the legacy NULL-user uniqueness key cannot collide across visitors.
+- Events: `rental_inquiry.pending_verification`, `rental_inquiry.verified`, `rental_inquiry.closed`.
+
+## Homeowner B3 — verified rental tours (October 7, 2026)
+
+- **Submit:** `POST /api/v1/rental-tours` accepts contact identity plus 1–3 preferred local date/times for a currently published unlisted listing. The public route derives listing/property/unit scope; the browser never supplies an organization or property id.
+- **Verify:** `POST /api/v1/rental-tours/verify` consumes a hashed, expiring email-verification credential only after explicit visitor action. Opening the verification page does not mutate state.
+- **Confirm:** `POST /api/v1/rental-tours/confirm` requires a current scoped operator, optimistic version, one of the visitor's exact submitted preferences, and a private meeting location. Confirmation schedules a 30-minute tour and queues the verified visitor's confirmation email.
+- **Time rules:** visitor-local fields are interpreted in the rental property's IANA time zone, round-trip validated through UTC, and rejected when duplicated, in the past, beyond the allowed horizon, or inside a daylight-saving gap.
+- **Boundary:** tour confirmation is logistics only. It does not rank, qualify, approve, reserve, or create an application or tenancy.
+
+## Homeowner B5 — rental marketplace discovery
+
+- `SetRentalListingVisibility(organizationId, listingId, expectedVersion, visibility, idempotencyKey)` is an authenticated self-managing operator command. `discoverable` requires the exact listing to already be published with a meaningful description and at least one scanner-clean approved photo. Event: `rental_listing.visibility_changed`.
+- `SearchPublicRentalListings(filters, cursor, limit)` is service-role-only. It returns only `published + discoverable` sanitized listing snapshots, one approved clean hero image, and a bounded `(discovered_at,id)` keyset cursor.
+- Discovery filters are country, region, locality, rent range, minimum bedrooms, space type and available-by date. B5 has no relevance scoring, paid placement or applicant ranking.
+- Editing a live listing saves it back as `draft + unlisted`; pausing or closing also clears discovery. Republishing does not restore discovery without a fresh explicit visibility command.
+- Search-result CTAs reuse `/l/:publicId` and the existing B2/B3/B4 inquiry, tour and application paths.
+
+## November 22, 2026 rental agreement and move-in commands
+
+- `issue_rental_agreement` creates a single signing request for an exact rental and clean private PDF version. A verified current workspace owner at AAL2 names the verified renters and confirms signing authority. Agreement idempotency binds the source version, rental, named parties, and expiration choice.
+- `issue_rental_application_agreement` uses the verified applicant's stored address, exact prepared lease setup, application version, and existing confirmed signer account. The operator chooses the source PDF. Closure or withdrawal voids pending requests. When linked, exact agreement filing and application conversion must commit together at activation. [Application agreement handoff](../implementation/APPLICANT_AGREEMENT_HANDOFF.md)
+- `get_rental_agreement`, `list_rental_agreements`, and `get_rental_agreement_artifacts` bind the caller to the selected workspace and property or the exact named participant. The artifact endpoint resolves an authorized PDF download and returns the hashed execution evidence bytes only once every party has signed. `sign_rental_agreement` is service-only and accepts the actor from a verified server session, the exact reviewed version and digest, and the published consent identifier. A pending request can end through an MFA-approved void, a named renter’s decline, or expiry.
+- `file_executed_rental_agreement` uses AAL2 and exact workspace scope. Filing makes the PDF available to the existing explicit lease activation transaction. The binding trigger requires the exact clean source, unit, and responsible signers, rechecks that addresses remain verified, and links a package to one tenancy. The operator supplies confirmed lease and financial terms through the existing form.
+- `record_tenancy_move_in` accepts the selected workspace, exact tenancy, expected version, and operation UUID. It records a planned or missed appointment and a confirmed handover with keys, condition and existing financial date acknowledgement. The due-tenancy worker holds planned or missed handovers, checks the pinned clean lease source, and enforces vacant possession. `get_tenancy_move_in` returns recent appointment history to current property-scoped lease operators.
+
+- Imported tenancies can use `get_imported_tenancy_agreement` and `attach_imported_tenancy_agreement` to file an exact, latest clean PDF version uploaded to that unit. An authorized operator confirms that the externally signed copy matches the imported household and terms. Filing preserves the existing tenancy, lease terms, rent schedule and receivable. The scheduler applies its existing eligibility checks after filing.

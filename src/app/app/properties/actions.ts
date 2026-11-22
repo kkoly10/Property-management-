@@ -22,7 +22,12 @@ export async function createUnitAction(_previousState: ActionState, formData: Fo
       p_square_feet: result.data.squareFeet ?? null,
       p_idempotency_key: result.data.idempotencyKey,
     });
-    if (error) return { status: "error", message: error.message, requestId: crypto.randomUUID() };
+    if (error) {
+      const message = error.message === "PLAN_UNAVAILABLE"
+        ? "Your workspace cannot add units on its current subscription. Ask an owner or administrator to open subscription settings."
+        : error.message;
+      return { status: "error", message, requestId: crypto.randomUUID() };
+    }
     redirect(`/app/properties/${result.data.propertyId}?unit_created=1`);
   } catch (error) {
     if (error && typeof error === "object" && "digest" in error) throw error;

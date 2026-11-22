@@ -42,7 +42,10 @@ export async function POST(
     if (code.includes("IDEMPOTENCY_CONFLICT")) {
       return errorResponse("IDEMPOTENCY_CONFLICT", "This retry no longer matches the original cancellation.", 409);
     }
-    return errorResponse("REQUEST_FAILED", "The privacy request could not be canceled.", 422);
+    if (code.includes("COMMAND_IN_PROGRESS")) {
+      return errorResponse("COMMAND_IN_PROGRESS", "The cancellation is still being recorded. Try again shortly.", 409);
+    }
+    return errorResponse("REQUEST_UNCONFIRMED", "Retry to confirm whether your cancellation was recorded.", 502);
   }
   return NextResponse.json(data);
 }

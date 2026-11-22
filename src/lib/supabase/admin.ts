@@ -55,8 +55,7 @@ function integrationMatchesConfiguredProject(configuredUrl: string): boolean {
   }
 }
 
-export function createAdminClient() {
-  const { url } = requirePublicSupabaseConfig();
+export function requireServerSupabaseCredential(url: string) {
   const names = integrationMatchesConfiguredProject(url)
     ? ADMIN_CREDENTIALS
     : ADMIN_CREDENTIALS.filter((name) => name !== "SUPABASE_SERVICE_ROLE_KEY");
@@ -70,7 +69,12 @@ export function createAdminClient() {
     );
   }
 
-  return createSupabaseClient(url, secretKey, {
+  return secretKey;
+}
+
+export function createAdminClient() {
+  const { url } = requirePublicSupabaseConfig();
+  return createSupabaseClient(url, requireServerSupabaseCredential(url), {
     auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
   });
 }

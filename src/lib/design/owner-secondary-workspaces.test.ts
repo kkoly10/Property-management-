@@ -52,8 +52,8 @@ describe("Crecy Owner secondary workspaces", () => {
 
   it("uses continuous Owner registers for documents and messages", () => {
     expect(documents).toContain('aria-label="Owner document register"');
-    expect(documents).toContain("getRecipientDocumentDeliveries()");
-    expect(documents).toContain("/api/v1/documents/${item.documentId}/download");
+    expect(documents).toContain('getRecipientDocumentDeliveries("owner_entity")');
+    expect(documents).toContain("/api/v1/document-deliveries/${item.deliveryId}/download");
     expect(documents).toContain("<DocumentAcknowledgeForm");
     expect(messages).toContain('presentation="owner"');
     expect(conversationList).toContain('aria-label="Owner correspondence register"');

@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { isPlausibleTokenHash } from "@/lib/auth/invitation-link";
+import { isPasswordRecoveryProof, passwordRecoveryCookieOptions, PASSWORD_RECOVERY_COOKIES, PASSWORD_RECOVERY_TTL_SECONDS } from "@/lib/auth/password-recovery";
 import { safeRedirectPath } from "@/lib/auth/redirect";
+import { classifyHost } from "@/lib/runtime/host";
 
 /**
  * Token-hash confirmation for Crecy-rendered authentication email.
@@ -43,8 +46,10 @@ function isEmailOtpType(value: string | null): value is EmailOtpType {
  * Supabase's token hashes are URL-safe text of modest length. Checking the SHAPE before redeeming
  * keeps an oversized or structured value from ever reaching the auth client.
  */
-function isPlausibleTokenHash(value: string | null): value is string {
-  return typeof value === "string" && value.length >= 16 && value.length <= 512 && /^[A-Za-z0-9_-]+$/.test(value);
+function privateRedirect(destination: URL) {
+  return NextResponse.redirect(destination, {
+    headers: { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" },
+  });
 }
 
 export async function GET(request: NextRequest) {
@@ -54,9 +59,26 @@ export async function GET(request: NextRequest) {
 
   // A failure must not say WHICH check failed: "bad type" and "bad token" are different answers to
   // someone probing the endpoint. One destination for every rejection.
-  const failure = NextResponse.redirect(new URL("/login?auth_error=1", request.url));
+  const failure = privateRedirect(new URL("/login?auth_error=1", request.url));
 
   if (!isEmailOtpType(type) || !isPlausibleTokenHash(tokenHash)) return failure;
+  if (type === "recovery") {
+    const host = classifyHost(request.nextUrl.host);
+    const proof = request.nextUrl.searchParams.get("recovery_proof");
+    if (host.kind === "unknown" || host.kind === "vendor" || host.kind === "marketing"
+      || !proof || !isPasswordRecoveryProof(tokenHash, proof)) return failure;
+
+    // Mail previews may follow GET links. Stage the capability on this origin and let the user
+    // redeem it only when submitting a new password. The flow ID stops a second link silently
+    // changing which account an already-open reset form will update.
+    const secure = host.kind !== "development" || request.nextUrl.protocol === "https:";
+    const response = privateRedirect(new URL("/reset-password", request.nextUrl.origin));
+    const cookieName = PASSWORD_RECOVERY_COOKIES[secure ? 0 : 1];
+    response.cookies.set(cookieName, `${crypto.randomUUID()}.${tokenHash}.${proof}`, {
+      ...passwordRecoveryCookieOptions(cookieName), maxAge: PASSWORD_RECOVERY_TTL_SECONDS,
+    });
+    return response;
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
@@ -64,5 +86,5 @@ export async function GET(request: NextRequest) {
 
   // Built from the validated relative path and this request's ORIGIN only. The incoming query string —
   // which still holds the token hash — is deliberately not carried over.
-  return NextResponse.redirect(new URL(next, request.nextUrl.origin));
+  return privateRedirect(new URL(next, request.nextUrl.origin));
 }

@@ -33,6 +33,7 @@ const ROUTE_FIXTURES: Record<string, string> = {
   "/app/owner-statements/[ownerEntityId]": "d1000000-0000-4000-8000-000000000001",
 };
 const SEGMENT_FIXTURES: Record<string, string> = {
+  "[unitId]": "80000000-0000-4000-8000-000000000008",
   "[importJobId]": "preview-import",
   "[requestId]": "a0000000-0000-4000-8000-000000000001",
   "[conversationId]": "f0000000-0000-4000-8000-000000000001",
@@ -41,11 +42,16 @@ const SEGMENT_FIXTURES: Record<string, string> = {
   "[propertyId]": "20000000-0000-4000-8000-000000000002",
   "[vendorId]": "b0000000-0000-4000-8000-000000000001",
   "[deliveryId]": "preview-delivery",
+  "[agreementId]": "85000000-0000-4000-8000-000000000085",
+  "[applicationId]": "97000000-0000-4000-8000-000000000097",
+  "[privacyRequestId]": "95000000-0000-4000-8000-000000000095",
   "[documentSlug]": "operator-terms",
   "[approvalId]": "d0000000-0000-4000-8000-000000000001",
   "[statementId]": "preview-statement",
   "[organizationId]": "20000000-0000-4000-8000-000000000002",
   "[documentId]": "preview-document",
+  "[publicId]": "81000000-0000-4000-8000-000000000081",
+  "[tenancyId]": "62000000-0000-4000-8000-000000000001",
 };
 
 function collectPageFiles(dir: string, found: string[] = []): string[] {
@@ -59,6 +65,7 @@ function collectPageFiles(dir: string, found: string[] = []): string[] {
 
 function routes(): string[] {
   const patterns = collectPageFiles("src/app")
+    .map((file) => file.replaceAll("\\", "/"))
     .map((file) => file.replace(/^src\/app/, "").replace(/\/page\.tsx$/, ""))
     // Route groups are organizational only and contribute no URL segment.
     .map((route) => route.replace(/\/\([^)]+\)/g, "").replace(/\/{2,}/g, "/"))
@@ -120,7 +127,16 @@ test.describe("every page fits a phone", () => {
 
   for (const route of ALL_ROUTES) {
     test(`${route} fits 390px and zooms no input`, async ({ page }) => {
-      const response = await page.goto(route, { waitUntil: "networkidle" });
+      // The private application status client checks its capability after mounting.
+      // Wait for its settled no-access state instead of waiting for network idle.
+      const isApplicantStatus = route === "/applications";
+      const response = await page.goto(route, {
+        waitUntil: isApplicantStatus ? "domcontentloaded" : "networkidle",
+      });
+      if (isApplicantStatus) {
+        await expect(page.getByRole("heading", { name: "Application status" })).toBeVisible();
+        await expect(page.getByText("Application access is unavailable")).toBeVisible();
+      }
       // A route that errors has no layout to measure, so an overflow assertion on it would pass
       // vacuously. Both invitation-acceptance screens used to 500 here for exactly that reason.
       expect(response?.status(), `${route} did not render`).toBeLessThan(400);

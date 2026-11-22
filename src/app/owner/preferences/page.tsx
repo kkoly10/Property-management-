@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft, BellRing, CircleAlert } from "lucide-react";
 import { PageHeader } from "@/components/crecy/page-header";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { NotificationPreferencesForm } from "@/components/notifications/notification-preferences-form";
 import { OwnerShell } from "@/components/owner/owner-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -30,6 +31,7 @@ export default async function OwnerNotificationPreferencesPage() {
           description="Set how operational records reach you and review sanitized delivery activity. Invitations and security messages remain available regardless of these choices."
           meta="Preferences apply to your signed-in account across Crecy surfaces"
         />
+        <SignOutButton />
 
         {workspace.mode === "setup" ? (
           <Alert variant="info">

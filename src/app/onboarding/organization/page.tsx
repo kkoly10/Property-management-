@@ -6,20 +6,32 @@ import { growthTrialLabel } from "@/lib/billing/trial";
 
 export const dynamic = "force-dynamic";
 
-export default function OrganizationOnboardingPage() {
+export default async function OrganizationOnboardingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ path?: string }>;
+}) {
   // Resolved here so the form shows the SAME artifacts the action will bind consent to, and so the
   // version travels with the submission.
   const consent = resolveOrganizationConsent({ requirePublished: requiresPublishedLegalDocuments() });
+  const params = await searchParams;
+  const customerPath = params.path === "self_managing" ? "self_managing" : "property_manager";
+  const selfManaging = customerPath === "self_managing";
 
   return (
     <Card>
       <CardHeader className="border-b">
         <div className="mb-2"><Badge variant="info">Growth trial · {growthTrialLabel}</Badge></div>
-        <CardTitle className="text-2xl">Create your workspace</CardTitle>
-        <CardDescription>Set the operating defaults your team will see. You can add more countries, entities, and books later.</CardDescription>
+        <CardTitle className="text-2xl">{selfManaging ? "Create your rental workspace" : "Create your workspace"}</CardTitle>
+        <CardDescription>
+          {selfManaging
+            ? "Keep the rental you manage yourself separate from any professional property-management work."
+            : "Set the operating defaults your team will see. You can add more countries, entities, and books later."}
+        </CardDescription>
       </CardHeader>
       <CardContent className="pt-6">
         <OrganizationForm
+          initialCustomerPath={customerPath}
           consentDocuments={consent.ok ? consent.binding.documents.map((document) => ({
             code: document.code,
             title: document.title,

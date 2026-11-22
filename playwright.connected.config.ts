@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 import { existsSync } from "node:fs";
+import { connectedSupabaseOrigin } from "./src/test/connected-target";
 
 /**
  * The container image this repo is developed in ships a preinstalled Chromium at a fixed path. A
@@ -28,7 +29,7 @@ const launchOptions = existsSync(preinstalledChromium) ? { executablePath: prein
 // (the earliest point, before any build/webServer) makes a missing variable fail the run
 // with a clear message rather than silently skipping every test. The ordinary demo suite
 // (playwright.config.ts / npm run test:e2e) does not load this config and is unaffected.
-const REQUIRED = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "E2E_EMAIL", "E2E_PASSWORD"] as const;
+const REQUIRED = ["NEXT_PUBLIC_SUPABASE_URL", "CRECY_E2E_SUPABASE_ORIGIN", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "E2E_EMAIL", "E2E_PASSWORD"] as const;
 const PLACEHOLDER = /your-project|replace_me|replace_with/i;
 const missing = REQUIRED.filter((k) => !process.env[k] || PLACEHOLDER.test(process.env[k] as string));
 if (missing.length) {
@@ -39,7 +40,7 @@ if (missing.length) {
   );
 }
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const url = connectedSupabaseOrigin(process.env);
 const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
 
 export default defineConfig({

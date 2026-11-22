@@ -12,7 +12,7 @@ import { PageHeader } from "@/components/crecy/page-header";
 import { WorkspacePanel } from "@/components/crecy/workspace-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { getOperatorVendorDirectory, getOperatorWorkOrderDetail } from "@/lib/data/maintenance";
+import { getOperatorVendorDirectory, getOperatorWorkOrderDetail, workOrderAssignee } from "@/lib/data/maintenance";
 import { getOperatorOwnerApprovalWorkspace } from "@/lib/data/owner-approvals";
 import { getActiveOrganizationId } from "@/lib/organization/context";
 import { AssignVendorForm } from "./assign-vendor-form";
@@ -69,6 +69,7 @@ export default async function OperatorMaintenanceDetailPage({
   }
 
   const workOrder = item.workOrder;
+  const assignment = workOrderAssignee(workOrder);
   const costAmount = workOrder?.cost?.amountMinor
     ?? workOrder?.actualCostMinor
     ?? workOrder?.estimatedCostMinor
@@ -91,7 +92,7 @@ export default async function OperatorMaintenanceDetailPage({
     {
       label: "Work order",
       value: workOrder ? label(workOrder.status) : "Not opened",
-      detail: workOrder?.vendorName ?? "Vendor assignment pending",
+      detail: assignment,
       emphasis: workOrder ? "brand" : "warning",
     },
     {
@@ -164,7 +165,7 @@ export default async function OperatorMaintenanceDetailPage({
           {workOrder ? (
             <WorkspacePanel
               title={`Work order ${workOrder.publicReference}`}
-              description={workOrder.vendorName ? `Assigned to ${workOrder.vendorName}` : "Vendor assignment pending"}
+              description={assignment}
               actions={
                 workOrder.ownerApprovalRequired
                   ? <Badge variant={workOrder.ownerApprovalStatus === "approved" ? "success" : "warning"}>Owner approval {workOrder.ownerApprovalStatus ?? "pending"}</Badge>
@@ -221,7 +222,7 @@ export default async function OperatorMaintenanceDetailPage({
           {approvals.length ? (
             <WorkspacePanel
               title="Owner approvals"
-              description="Each request stays isolated to its exact owner entity."
+              description="Review the requested amounts and each owner's decision."
               bodyClassName="p-0"
             >
               <div className="divide-y">
@@ -229,6 +230,10 @@ export default async function OperatorMaintenanceDetailPage({
                   <div key={approval.approvalRequestId} className="grid gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-6">
                     <div>
                       <p className="font-semibold">{approval.ownerName}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {label(approval.approvalType)}
+                        {approval.amountMinor !== null && approval.currencyCode ? ` · ${money(approval.amountMinor, approval.currencyCode)}` : ""}
+                      </p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         Requested {new Date(approval.requestedAt).toLocaleString()}
                         {approval.decidedAt ? ` · Decided ${new Date(approval.decidedAt).toLocaleString()}` : ""}
@@ -256,10 +261,12 @@ export default async function OperatorMaintenanceDetailPage({
                 version={workOrder.version}
                 disabled={detail.mode !== "ready"}
               />
-              {["completed", "closed"].includes(workOrder.status) && !workOrder.cost ? (
+              {["awaiting_approval", "completed", "closed"].includes(workOrder.status) && !workOrder.cost ? (
                 <RecordCostForm
                   workOrderId={workOrder.workOrderId}
                   organizationId={item.organizationId}
+                  version={workOrder.version}
+                  approvalOnly={workOrder.status === "awaiting_approval"}
                   defaultCurrencyCode={workOrder.currencyCode}
                   suggestedAmountMinor={workOrder.actualCostMinor ?? workOrder.estimatedCostMinor}
                   disabled={detail.mode !== "ready"}

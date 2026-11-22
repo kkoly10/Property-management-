@@ -10,7 +10,9 @@
       "codex/signup-activation-fix": false,
       "codex/mobile-property-save-fix": false,
       "codex/login-magic-link-fix": false,
-      "feat/mobile-independent-20261010": false
+      "feat/mobile-independent-20261010": false,
+      "claude/mvp-progress-assessment-axvajc": false,
+      "feat/homeowner-rental-batch-a": false
     }
   },
   "crons": [

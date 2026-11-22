@@ -30,6 +30,7 @@ export async function POST(request: Request) {
     if (code.includes("OWNER_ENTITY_NOT_FOUND")) return errorResponse("That owner was not found.", 404);
     if (code.includes("OWNER_ENTITY_INACTIVE")) return errorResponse("That owner is not active.", 422);
     if (code.includes("OWNERSHIP_INTEREST_OVERLAP")) return errorResponse("This owner already has an overlapping interest on this property.", 422);
+    if (code.includes("OWNERSHIP_ALLOCATION_EXCEEDED")) return errorResponse("These dates would bring the property's ownership above 100%. Check the existing interests.", 422);
     if (code.includes("INVALID_OWNERSHIP_FRACTION")) return errorResponse("Enter a share greater than 0 and up to 100%.", 422);
     if (code.includes("INVALID_EFFECTIVE")) return errorResponse("Check the effective dates.", 422);
     if (code.includes("IDEMPOTENCY_CONFLICT")) return errorResponse("This retry no longer matches the original interest.", 409);

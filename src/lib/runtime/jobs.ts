@@ -1,13 +1,13 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getNotificationTransport } from "@/lib/notifications/transport";
+import { getNotificationTransport, type TransportResult } from "@/lib/notifications/transport";
 import { hasTemplate, renderNotification } from "@/lib/notifications/templates";
 import { secureLinkUrl } from "@/lib/notifications/secure-link";
 import { getDocumentScanner, type DocumentObjectSource } from "@/lib/documents/scanner";
-import { claimedNotificationJobSchema } from "@/lib/validation/notification-worker";
+import { claimedNotificationJobSchema, type ClaimedNotificationJob } from "@/lib/validation/notification-worker";
 import { audienceForRelationshipType } from "@/lib/notifications/sender";
 import { claimedDocumentScanJobSchema } from "@/lib/validation/document-scan-worker";
-import { SCAN_WORKER_CONCURRENCY } from "@/lib/runtime/budget";
+import { NOTIFICATION_WORKER_CONCURRENCY, SCAN_WORKER_CONCURRENCY } from "@/lib/runtime/budget";
 
 /**
  * The bodies of the scheduled workers, extracted so the manual POST routes and the cron GET routes run
@@ -57,10 +57,11 @@ export async function runNotificationDispatch(
   const { error: sweepError } = await supabase.rpc("requeue_stalled_notification_jobs", { p_stall_minutes: input.stallMinutes });
   if (sweepError) return { ok: false, status: 422, error: "Stalled notification jobs could not be swept." };
 
+  const claimRunId = crypto.randomUUID();
   const { data: claim, error: claimError } = await supabase.rpc("claim_notification_jobs", {
     p_channel: input.channel,
     p_limit: input.limit,
-    p_worker_run_id: input.workerRunId,
+    p_worker_run_id: claimRunId,
   });
   if (claimError || !claim) {
     const code = claimError?.message ?? "";
@@ -75,9 +76,9 @@ export async function runNotificationDispatch(
 
   let sent = 0;
   let failed = 0;
-  for (const job of jobs.data) {
-    // Resolve each job to a terminal-for-this-attempt state, whatever happens below.
-    let outcome: { ok: true; providerCode: string; providerMessageId: string | null } | { ok: false; errorCode: string; retryable: boolean };
+  let unsettled = 0;
+  async function dispatch(job: ClaimedNotificationJob, sender: NonNullable<typeof transport>) {
+    let outcome: TransportResult;
 
     if (!job.recipientAddress) {
       outcome = { ok: false, errorCode: "MISSING_RECIPIENT_ADDRESS", retryable: false };
@@ -148,7 +149,7 @@ export async function runNotificationDispatch(
       const rendered = renderNotification({ templateCode: job.templateCode, locale: job.locale, payload, audience });
 
       outcome = rendered
-        ? await transport.send({
+        ? await sender.send({
             notificationJobId: job.notificationJobId,
             channel: job.channel,
             to: job.recipientAddress,
@@ -162,32 +163,48 @@ export async function runNotificationDispatch(
     }
 
     if (outcome.ok) {
-      const { error } = await supabase.rpc("complete_notification_job", {
+      const { error } = await supabase.rpc("complete_notification_attempt", {
         p_notification_job_id: job.notificationJobId,
+        p_worker_run_id: claimRunId,
         p_provider_code: outcome.providerCode,
         p_provider_message_id: outcome.providerMessageId,
       });
-      if (error) failed += 1;
-      else sent += 1;
+      if (error) {
+        failed += 1;
+        unsettled += 1;
+      } else sent += 1;
     } else {
-      await supabase.rpc("fail_notification_job", {
+      const { error } = await supabase.rpc("fail_notification_attempt", {
         p_notification_job_id: job.notificationJobId,
+        p_worker_run_id: claimRunId,
         p_error_code: outcome.errorCode,
         p_retryable: outcome.retryable,
       });
+      if (error) unsettled += 1;
       failed += 1;
     }
+  }
+
+  for (let offset = 0; offset < jobs.data.length; offset += NOTIFICATION_WORKER_CONCURRENCY) {
+    const wave = jobs.data.slice(offset, offset + NOTIFICATION_WORKER_CONCURRENCY);
+    const settled = await Promise.allSettled(wave.map((job) => dispatch(job, transport)));
+    const interrupted = settled.filter((result) => result.status === "rejected").length;
+    // Leave an ambiguous attempt for the normal stalled-claim recovery.
+    failed += interrupted;
+    unsettled += interrupted;
   }
 
   return {
     ok: true,
     summary: {
       workerRunId: input.workerRunId,
+      claimRunId,
       channel: input.channel,
       claimed: jobs.data.length,
       suppressed: (claim as { suppressed?: number }).suppressed ?? 0,
       sent,
       failed,
+      unsettled,
     },
   };
 }
@@ -209,9 +226,10 @@ export async function runDocumentScanDispatch(
   const { error: sweepError } = await supabase.rpc("requeue_stalled_document_scans", { p_stall_minutes: input.stallMinutes });
   if (sweepError) return { ok: false, status: 422, error: "Stalled document scans could not be swept." };
 
+  const claimRunId = crypto.randomUUID();
   const { data: claim, error: claimError } = await supabase.rpc("claim_document_scan_jobs", {
     p_limit: input.limit,
-    p_worker_run_id: input.workerRunId,
+    p_worker_run_id: claimRunId,
   });
   if (claimError || !claim) {
     const code = claimError?.message ?? "";
@@ -234,6 +252,7 @@ export async function runDocumentScanDispatch(
   let cleaned = 0;
   let rejected = 0;
   let failed = 0;
+  let unsettled = 0;
 
   // Scanned with BOUNDED parallelism, then recorded sequentially. Sequential scanning made the run's
   // worst case (batch size x relay timeout) exceed any serverless duration budget, and a function
@@ -254,23 +273,31 @@ export async function runDocumentScanDispatch(
     if (result.ok) {
       // The digest travels with the verdict. complete_document_scan re-proves it against the job AND
       // the live version, so a scanner that read a different object cannot clean this one.
-      const { error } = await supabase.rpc("complete_document_scan", {
+      const { error } = await supabase.rpc("complete_document_scan_attempt", {
         p_document_scan_job_id: job.documentScanJobId,
+        p_worker_run_id: claimRunId,
         p_verdict: result.verdict,
         p_observed_sha256_hex: result.observedSha256Hex,
         p_provider_code: result.providerCode,
         p_provider_reference: result.providerReference,
       });
       if (error) {
+        if (error.message.includes("QUEUE_ATTEMPT_STALE")) {
+          unsettled += 1;
+          failed += 1;
+          continue;
+        }
         // The database refused the verdict (mismatched digest, unscannable version). That is a failed
         // ATTEMPT, not a verdict: report it so the job leaves 'scanning' and the document stays
         // quarantined. A mismatch will not fix itself, so it is not retryable.
         const mismatch = error.message.includes("SCAN_TARGET_MISMATCH") || error.message.includes("DOCUMENT_VERSION_NOT_SCANNABLE");
-        await supabase.rpc("fail_document_scan", {
+        const { error: settlementError } = await supabase.rpc("fail_document_scan_attempt", {
           p_document_scan_job_id: job.documentScanJobId,
+          p_worker_run_id: claimRunId,
           p_error_code: mismatch ? "SCAN_TARGET_MISMATCH" : "VERDICT_NOT_APPLIED",
           p_retryable: !mismatch,
         });
+        if (settlementError) unsettled += 1;
         failed += 1;
       } else if (result.verdict === "clean") {
         cleaned += 1;
@@ -278,16 +305,21 @@ export async function runDocumentScanDispatch(
         rejected += 1;
       }
     } else {
-      await supabase.rpc("fail_document_scan", {
+      const { error } = await supabase.rpc("fail_document_scan_attempt", {
         p_document_scan_job_id: job.documentScanJobId,
+        p_worker_run_id: claimRunId,
         p_error_code: result.errorCode,
         p_retryable: result.retryable,
       });
+      if (error) unsettled += 1;
       failed += 1;
     }
   }
 
-  return { ok: true, summary: { workerRunId: input.workerRunId, claimed: jobs.data.length, cleaned, rejected, failed } };
+  return {
+    ok: true,
+    summary: { workerRunId: input.workerRunId, claimRunId, claimed: jobs.data.length, cleaned, rejected, failed, unsettled },
+  };
 }
 
 // ── Recurring rent generation, per property time zone ─────────────────────────────────────────────
@@ -301,8 +333,15 @@ export async function runRecurringChargeGeneration(
   supabase: Client,
   input: { limit: number },
 ): Promise<JobOutcome> {
+  const evaluatedAt = new Date().toISOString();
+  const { data: started, error: startError } = await supabase.rpc("start_due_homeowner_tenancies", {
+    p_at: evaluatedAt, p_limit: input.limit,
+  });
+  if (startError || !started) {
+    return { ok: false, status: 502, error: "Scheduled homeowner rentals could not be started. No charge batch was attempted." };
+  }
   const { data: due, error: dueError } = await supabase.rpc("list_due_charge_schedule_batches", {
-    p_at: new Date().toISOString(),
+    p_at: evaluatedAt,
     p_limit: input.limit,
   });
   if (dueError || !due) {
@@ -346,6 +385,8 @@ export async function runRecurringChargeGeneration(
       evaluatedAt: evaluated.evaluatedAt,
       zonesDue: batches.length,
       generatedCharges: generated,
+      startedHomeownerTenancies: (started as { started?: number }).started ?? 0,
+      tenancyStartLimitReached: (started as { limitReached?: boolean }).limitReached === true,
       replayedBatches: replayed,
       failedBatches: failures,
       invalidTimeZones: evaluated.invalidTimeZones ?? [],

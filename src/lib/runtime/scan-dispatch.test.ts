@@ -82,7 +82,7 @@ describe("runDocumentScanDispatch under a partial transport stall", () => {
 
     // The decisive part: the stalled job is RESOLVED, not left claimed. A job the worker abandons sits
     // in `scanning` until the stall sweep, and every document behind it stays unusable meanwhile.
-    const failed = calls.filter((call) => call.name === "fail_document_scan");
+    const failed = calls.filter((call) => call.name === "fail_document_scan_attempt");
     expect(failed).toHaveLength(1);
     expect(failed[0].args.p_document_scan_job_id).toBe(jobs[1].documentScanJobId);
     expect(failed[0].args.p_error_code).toBe("SCANNER_TIMEOUT");
@@ -90,8 +90,11 @@ describe("runDocumentScanDispatch under a partial transport stall", () => {
     expect(failed[0].args.p_retryable).toBe(true);
 
     // Every claimed job reached a terminal state for this attempt.
-    const resolved = calls.filter((call) => call.name === "complete_document_scan" || call.name === "fail_document_scan");
+    const resolved = calls.filter((call) => call.name === "complete_document_scan_attempt" || call.name === "fail_document_scan_attempt");
     expect(resolved).toHaveLength(jobs.length);
+    expect(resolved.map(call => call.args.p_worker_run_id)).toEqual(
+      jobs.map(() => calls.find(call => call.name === "claim_document_scan_jobs")?.args.p_worker_run_id),
+    );
   });
 
   it("does not serialize a stall behind the healthy jobs", async () => {

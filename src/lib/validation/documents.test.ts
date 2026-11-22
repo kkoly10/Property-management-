@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { buildConsentBinding, findLegalDocument } from "@/lib/legal/registry";
+import { documentSigningIntent } from "@/lib/documents/signing";
 import { acknowledgeDocumentDeliverySchema, createUploadGrantSchema, deliverDocumentSchema, finalizeDocumentSchema, maximumDocumentSizeBytes, signDocumentSchema } from "./documents";
 
 const validUpload = {
@@ -28,6 +32,21 @@ describe("document request validation", () => {
     expect(createUploadGrantSchema.safeParse({ ...tenancyUpload, mimeType: "application/pdf" }).success).toBe(false);
   });
 
+  it("limits rental listing photos to unit-scoped PNG or JPEG uploads", () => {
+    const photo = {
+      ...validUpload,
+      parent: { type: "unit" as const, id: validUpload.organizationId },
+      documentType: "rental_listing_photo",
+      originalFilename: "room.jpg",
+      mimeType: "image/jpeg" as const,
+    };
+    expect(createUploadGrantSchema.safeParse(photo).success).toBe(true);
+    expect(createUploadGrantSchema.safeParse({ ...photo, mimeType: "application/pdf" }).success).toBe(false);
+    expect(createUploadGrantSchema.safeParse({
+      ...photo, parent: { type: "property" as const, id: validUpload.organizationId },
+    }).success).toBe(false);
+  });
+
   it("requires a canonical SHA-256 checksum", () => {
     expect(finalizeDocumentSchema.safeParse({ grantId: validUpload.organizationId, sha256Hex: "a".repeat(64) }).success).toBe(true);
     expect(finalizeDocumentSchema.safeParse({ grantId: validUpload.organizationId, sha256Hex: "not-a-checksum" }).success).toBe(false);
@@ -43,6 +62,7 @@ describe("document delivery validation", () => {
     const parsed = deliverDocumentSchema.parse({ organizationId: orgId, documentVersionId: versionId, recipientRelationshipType: "resident_person", recipientRelationshipId: relationshipId });
     expect(parsed.deliveryChannel).toBe("portal");
     expect(parsed.secureLinkTtlHours).toBe(72);
+    expect(parsed.signatureRequested).toBe(false);
   });
 
   it("accepts the off-portal channels the notification worker can now drain", () => {
@@ -78,8 +98,10 @@ describe("document signing validation", () => {
     signerName: "Jordan Q. Rivera",
     esignConsentAgreed: true as const,
     esignConsentVersion: "esign_consent@1.0.0#0123456789abcdef",
+    reviewedVersionId: versionId,
+    reviewedSha256: "a".repeat(64),
+    documentReviewConfirmed: true as const,
     intentAffirmed: true as const,
-    intentStatement: "I have read and agree to this document and intend to be bound by it.",
   };
 
   it("accepts a signature with consent, intent, a name, and a disclosure version", () => {
@@ -92,9 +114,18 @@ describe("document signing validation", () => {
     expect(signDocumentSchema.safeParse({ ...base, intentAffirmed: false }).success).toBe(false);
   });
 
-  it("requires a real name, a disclosure version, and an intent statement", () => {
+  it("requires a name, a disclosure version, and a confirmed file fingerprint", () => {
     expect(signDocumentSchema.safeParse({ ...base, signerName: "J" }).success).toBe(false);
     expect(signDocumentSchema.safeParse({ ...base, esignConsentVersion: "" }).success).toBe(false);
-    expect(signDocumentSchema.safeParse({ ...base, intentStatement: "" }).success).toBe(false);
+    expect(signDocumentSchema.safeParse({ ...base, reviewedSha256: "" }).success).toBe(false);
+    expect(signDocumentSchema.safeParse({ ...base, documentReviewConfirmed: false }).success).toBe(false);
+  });
+
+  it("uses the same published consent binding and intent in the database and ceremony", () => {
+    const consent = findLegalDocument("esign_consent", { locale: "en-US" });
+    if (!consent || consent.state !== "published") throw Error("No published signing disclosure.");
+    const migration = readFileSync(resolve("supabase/migrations/20261122072817_signing_review_and_access.sql"), "utf8");
+    expect(migration).toContain(buildConsentBinding([consent]).version);
+    expect(migration).toContain(documentSigningIntent);
   });
 });

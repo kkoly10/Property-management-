@@ -31,10 +31,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     if (code.includes("COMMAND_IN_PROGRESS")) return errorResponse("This cost is already being posted. Try again in a moment.", 409);
     if (code.includes("WORK_ORDER_NOT_COMPLETED")) return errorResponse("Complete or close the work order before posting its cost.", 422);
     if (code.includes("WORK_ORDER_COST_CURRENCY_MISMATCH")) return errorResponse("The cost currency must match the property's accounting book.", 422);
+    if (code.includes("WORK_ORDER_COST_APPROVAL_REQUIRED")) return NextResponse.json({
+      code: "WORK_ORDER_COST_APPROVAL_REQUIRED",
+      error: "Request owner approval for this amount before posting the cost.",
+    }, { status: 422 });
     if (code.includes("ACCOUNTING_BOOK_NOT_OPEN")) return errorResponse("This property's accounting book is not open for posting.", 422);
     if (code.includes("INVALID_COST_AMOUNT")) return errorResponse("Enter a cost amount greater than zero.", 422);
     if (code.includes("LEDGER_ACCOUNT_CONFLICT")) return errorResponse("The maintenance ledger accounts are misconfigured for this property.", 422);
-    return errorResponse("The work order cost could not be recorded.", 422);
+    return errorResponse("Retry to confirm whether the cost posted to the ledger.", 502);
   }
   return NextResponse.json(data, { status: 201 });
 }

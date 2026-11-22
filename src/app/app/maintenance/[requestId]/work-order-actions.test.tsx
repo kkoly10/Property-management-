@@ -33,6 +33,18 @@ async function uploadOneEvidence() {
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it("moves a draft into the existing lifecycle through an explicit in-house assignment", async () => {
+  const fetch = vi.fn(async () => json({ workOrderId: WO, status: "accepted", version: 2 }));
+  vi.stubGlobal("fetch", fetch);
+  render(<WorkOrderActions workOrderId={WO} organizationId={ORG} status="draft" version={1} disabled={false} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Assign in-house" }));
+  await screen.findByText("Updated to accepted");
+  expect(fetch).toHaveBeenCalledWith(`/api/v1/work-orders/${WO}/transitions`, expect.objectContaining({
+    body: JSON.stringify({ expectedVersion: 1, transition: "assign_in_house" }),
+  }));
+});
+
 describe("WorkOrderActions completion evidence gating", () => {
   it("blocks completion while evidence is still scanning", async () => {
     vi.stubGlobal("fetch", stubFetch("quarantined"));

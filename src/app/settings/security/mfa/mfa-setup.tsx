@@ -80,7 +80,7 @@ export function MfaSetup({ returnTo }: { returnTo: string }) {
   }
 
   if (mode === "loading") return <div className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />Checking authenticator status…</div>;
-  if (mode === "complete") return <div className="space-y-5 text-center"><CheckCircle2 className="mx-auto h-12 w-12 text-success" /><div><h2 className="text-xl font-semibold">Identity verified</h2><p className="mt-2 text-sm text-muted-foreground">This session now meets the security requirement for payment connections.</p></div><Button onClick={() => window.location.assign(returnTo)}>Continue to payment settings</Button></div>;
+  if (mode === "complete") return <div className="space-y-5 text-center"><CheckCircle2 className="mx-auto h-12 w-12 text-success" /><div><h2 className="text-xl font-semibold">Identity verified</h2><p className="mt-2 text-sm text-muted-foreground">You can continue with the action that required verification.</p></div><Button onClick={() => window.location.assign(returnTo)}>Continue</Button></div>;
 
   return (
     <div className="space-y-5">

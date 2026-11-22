@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   Bell,
   CircleHelp,
+  CreditCard,
   FileLock2,
   LayoutDashboard,
   Settings,
@@ -12,6 +13,7 @@ import { MobileNavigation } from "@/components/app/mobile-navigation";
 import { PrimaryNavigation } from "@/components/app/primary-navigation";
 import { GlobalSearch } from "@/components/app/global-search";
 import { Wordmark } from "@/components/brand/wordmark";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { Badge } from "@/components/ui/badge";
 import type { OperatorOrganization } from "@/lib/organization/context";
 
@@ -40,14 +42,18 @@ export function AppShell({
   organizations,
   activeOrganizationId,
   switcherDisabled,
+  experience = "property_manager",
   children,
 }: {
   organizationName: string;
   organizations: OperatorOrganization[];
   activeOrganizationId: string | null;
   switcherDisabled?: boolean;
+  experience?: "self_managing" | "property_manager";
   children: React.ReactNode;
 }) {
+  const showSubscription = organizations.some((organization) => organization.organizationId === activeOrganizationId
+    && ["org_owner", "org_admin"].includes(organization.roleCode));
   return (
     <div className="min-h-screen bg-[var(--surface-canvas)] lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
       <aside className="hidden min-h-screen border-r bg-card lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col">
@@ -63,12 +69,13 @@ export function AppShell({
         />
 
         <div className="flex min-h-0 flex-1 flex-col pt-4">
-          <PrimaryNavigation />
+          <PrimaryNavigation experience={experience} />
         </div>
 
         <div className="border-t px-3 py-3">
           <div className="space-y-0.5">
             <UtilityLink href="/settings/payments" label="Settings" icon={Settings} />
+            {showSubscription && <UtilityLink href="/settings/billing" label="Subscription" icon={CreditCard} />}
             <UtilityLink href="/settings/team" label="Team access" icon={UsersRound} />
             <UtilityLink href="/settings/notifications?returnTo=/app" label="Notifications" icon={Bell} />
             <UtilityLink href="/settings/privacy?returnTo=/app" label="Privacy requests" icon={FileLock2} />
@@ -93,7 +100,7 @@ export function AppShell({
 
             <div className="hidden shrink-0 items-center gap-2 text-sm font-semibold tracking-[-0.01em] text-foreground xl:flex">
               <LayoutDashboard aria-hidden="true" className="h-4 w-4 text-primary" />
-              <span>Operator Dashboard</span>
+              <span>{experience === "self_managing" ? "My rental workspace" : "Operator Dashboard"}</span>
             </div>
 
             <div className="min-w-0 flex-1">
@@ -117,6 +124,7 @@ export function AppShell({
                 <CircleHelp aria-hidden="true" className="h-[1.1rem] w-[1.1rem]" />
               </Link>
             </div>
+            <SignOutButton compact />
           </div>
 
         </header>
@@ -130,6 +138,8 @@ export function AppShell({
             desktop. The switcher is built on the server and handed down, so its server action is
             unchanged; `variant="sheet"` only keeps its test ids distinct from the sidebar copy. */}
         <MobileNavigation
+          experience={experience}
+          showSubscription={showSubscription}
           organizationSwitcher={
             <OrganizationSwitcher
               organizations={organizations}

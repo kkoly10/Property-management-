@@ -1,6 +1,7 @@
 import "server-only";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
+import { isDocumentDeliveryAvailable } from "@/lib/documents/signing";
 
 export type DocumentCenterItem = {
   id: string;
@@ -46,7 +47,9 @@ export type DocumentCenterState = {
 export type RecipientDocumentDelivery = {
   deliveryId: string;
   organizationId: string;
-  documentId: string | null;
+  downloadable: boolean;
+  signatureRequested: boolean;
+  signable: boolean;
   title: string;
   documentType: string;
   versionNumber: number | null;
@@ -68,13 +71,14 @@ function firstOf<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
-export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumentDeliveriesState> {
+export async function getRecipientDocumentDeliveries(relationshipType: DeliveryRecipient["relationshipType"]): Promise<RecipientDocumentDeliveriesState> {
   if (!getPublicSupabaseConfig()) {
     return {
       mode: "setup",
       items: [{
         deliveryId: "preview-delivery", organizationId: "20000000-0000-4000-8000-000000000002",
-        documentId: "preview-document", title: "Signed lease — Unit 101", documentType: "signed_lease",
+        downloadable: false, signatureRequested: true, signable: true,
+        title: "Signed lease — Unit 101", documentType: "signed_lease",
         versionNumber: 1, sha256Hex: "a".repeat(64), deliveredAt: new Date().toISOString(), status: "delivered",
         acknowledgements: [], signature: null,
       }],
@@ -83,14 +87,27 @@ export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumen
 
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase
+    const { data: auth, error: authError } = await supabase.auth.getUser();
+    if (authError || !auth.user) return { mode: "ready", items: [] };
+    const [deliveries, relationships] = await Promise.all([supabase
       .from("document_deliveries")
       // document_versions has two FKs to documents (a single-column document_id FK and a
       // composite organization_id+document_id FK), so the embed must name the FK explicitly
       // or PostgREST returns PGRST201 ("more than one relationship was found").
-      .select("id,organization_id,delivered_at,status,document_version_id,document_versions(version_number,sha256_hex,document_id,documents!document_versions_document_id_fkey(id,title,document_type)),document_acknowledgements(acknowledgement_type,acknowledged_at),document_signatures(id,verification_code,signed_at)")
-      .order("delivered_at", { ascending: false });
+      .select("id,organization_id,recipient_relationship_id,delivered_at,status,expires_at,signature_requested_at,document_version_id,document_versions(version_number,sha256_hex,upload_status,documents!document_versions_document_id_fkey(title,document_type,status)),document_acknowledgements(acknowledgement_type,acknowledged_at),document_signatures(id,verification_code,signed_at)")
+      .eq("recipient_user_id", auth.user.id)
+      .eq("recipient_relationship_type", relationshipType)
+      .order("delivered_at", { ascending: false }), supabase
+      .from("user_relationships")
+      .select("organization_id,relationship_id")
+      .eq("user_id", auth.user.id)
+      .eq("relationship_type", relationshipType)
+      .eq("status", "active")]);
+    const { data, error } = deliveries;
     if (error) throw error;
+    const activeRelationshipKeys = new Set((relationships.data ?? []).map(
+      (relationship) => `${relationship.organization_id}:${relationship.relationship_id}`,
+    ));
 
     const items: RecipientDocumentDelivery[] = (data ?? []).map((delivery) => {
       const version = firstOf(delivery.document_versions as never);
@@ -101,10 +118,18 @@ export async function getRecipientDocumentDeliveries(): Promise<RecipientDocumen
       const signature = signatureRow?.id
         ? { signatureId: signatureRow.id, verificationCode: signatureRow.verification_code ?? "", signedAt: signatureRow.signed_at ?? "" }
         : null;
+      const isClean = (version as { upload_status?: string } | null)?.upload_status === "clean";
+      const downloadableDelivery = isDocumentDeliveryAvailable(delivery.status, delivery.expires_at);
+      const activeRelationship = activeRelationshipKeys.has(`${delivery.organization_id}:${delivery.recipient_relationship_id}`);
+      const signatureRequested = Boolean(delivery.signature_requested_at);
       return {
         deliveryId: delivery.id as string,
         organizationId: delivery.organization_id as string,
-        documentId: (document as { id?: string } | null)?.id ?? null,
+        downloadable: isClean && (downloadableDelivery || Boolean(signature)),
+        signatureRequested,
+        signable: signatureRequested && downloadableDelivery && isClean && !signature && activeRelationship
+          && (document as { status?: string } | null)?.status === "active"
+          && !acknowledgements.some((ack) => ack.type === "declined"),
         title: (document as { title?: string } | null)?.title ?? "Delivered document",
         documentType: (document as { document_type?: string } | null)?.document_type ?? "document",
         versionNumber: (version as { version_number?: number } | null)?.version_number ?? null,
@@ -160,7 +185,11 @@ export async function getDocumentCenterState(organizationId: string | null): Pro
     const supabase = await createClient();
     const [{ data: properties, error: propertyError }, { data: documents, error: documentError }] = await Promise.all([
       supabase.from("properties").select("id,name").eq("organization_id", organizationId).order("name"),
-      supabase.from("documents").select("id,title,document_type,property_id,source,status,created_at").eq("organization_id", organizationId).order("created_at", { ascending: false }),
+      // Rental listing photos are advertising media, not operational documents. Keeping them out
+      // of this register also keeps the document-delivery affordance from presenting them as deliverable.
+      supabase.from("documents").select("id,title,document_type,property_id,source,status,created_at")
+        .eq("organization_id", organizationId).neq("document_type", "rental_listing_photo")
+        .order("created_at", { ascending: false }),
     ]);
     if (propertyError || documentError) throw propertyError ?? documentError;
 

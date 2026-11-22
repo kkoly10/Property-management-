@@ -1,10 +1,38 @@
+import { validateHomeownerLease } from "./validate-homeowner-lease.mjs";
+import { validateHomeownerRental } from "./validate-homeowner-rental.mjs";
+import { validateSharedListing } from "./validate-shared-listing.mjs";
+import { validateRentalInquiry } from "./validate-rental-inquiry.mjs";
+import { validateRentalTour } from "./validate-rental-tour.mjs";
+import { validateRentalApplication } from "./validate-rental-application.mjs";
+import { validateRentalMarketplace } from "./validate-rental-marketplace.mjs";
+import { validateTenancyEpisodes } from "./validate-tenancy-episodes.mjs";
+import { validatePlatformBilling } from "./validate-platform-billing.mjs";
+import { validateOrganizationClosure } from "./validate-organization-closure.mjs";
+import { validateTenancyCloseout } from "./validate-tenancy-closeout.mjs";
+import { validateTenancyMoveIn } from "./validate-tenancy-move-in.mjs";
+import { validateImportedTenancyAgreement } from "./validate-imported-tenancy-agreement.mjs";
+import { validateTenancyRenewal } from "./validate-tenancy-renewal.mjs";
+import { validatePrivacyRequestContinuity } from "./validate-privacy-request-continuity.mjs";
+import { validateTenancyDeposit } from "./validate-tenancy-deposit.mjs";
 import { readFile } from "node:fs/promises";
+import { validateRentalAgreements } from "./validate-rental-agreements.mjs";
+import { validateDocumentSigningBoundary } from "./validate-document-signing.mjs";
+import { validateRuntimeReliability } from "./validate-runtime-reliability.mjs";
+import { validateMaintenanceCostApproval } from "./validate-maintenance-cost-approval.mjs";
 import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { citext } from "@electric-sql/pglite/contrib/citext";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
+import { btree_gist } from "@electric-sql/pglite/contrib/btree_gist";
 
 const root = resolve(import.meta.dirname, "..");
+const homeownerLeaseSql = await readFile(resolve(root, "supabase/migrations/20260926035733_homeowner_existing_rental.sql"), "utf8");
+const homeownerRentalSql = await readFile(resolve(root, "supabase/migrations/20260926031047_homeowner_rental_setup.sql"), "utf8");
+const sharedListingSql = await readFile(resolve(root, "supabase/migrations/20260926045852_shared_rental_listings.sql"), "utf8");
+const rentalInquirySql = await readFile(resolve(root, "supabase/migrations/20260926054500_verified_rental_inquiries.sql"), "utf8");
+const rentalTourSql = await readFile(resolve(root, "supabase/migrations/20261007120000_verified_rental_tours.sql"), "utf8");
+const rentalApplicationSql = await readFile(resolve(root, "supabase/migrations/20261008020000_verified_rental_applications.sql"), "utf8");
+const rentalMarketplaceSql = await readFile(resolve(root, "supabase/migrations/20261009205544_rental_marketplace_discovery.sql"), "utf8");
 const foundationSql = await readFile(resolve(root, "supabase/migrations/20260720095008_phase_1_foundation.sql"), "utf8");
 const portfolioSql = await readFile(resolve(root, "supabase/migrations/20260720104921_phase_2_portfolio_foundation.sql"), "utf8");
 const documentsSql = await readFile(resolve(root, "supabase/migrations/20260720113426_phase_2_document_ingestion.sql"), "utf8");
@@ -77,6 +105,15 @@ const scanRecoveryTracingSql = await readFile(resolve(root, "supabase/migrations
 const relationshipProjectionsSql = await readFile(resolve(root, "supabase/migrations/20260829120000_phase_8_relationship_projections.sql"), "utf8");
 const runtimeDiagnosticsSql = await readFile(resolve(root, "supabase/migrations/20260829130000_phase_8_runtime_diagnostics.sql"), "utf8");
 const ownerSetupSql = await readFile(resolve(root, "supabase/migrations/20260903000000_phase_8_owner_setup.sql"), "utf8");
+const ownershipInvariantsSql = await readFile(resolve(root, "supabase/migrations/20261122072808_enforce_staff_and_property_ownership_invariants.sql"), "utf8");
+const platformBillingSql = await readFile(resolve(root, "supabase/migrations/20261122145653_platform_saas_subscriptions.sql"), "utf8");
+const platformBillingUsageSql = await readFile(resolve(root, "supabase/migrations/20261122151451_platform_billing_access_floor_and_usage.sql"), "utf8");
+const platformFreePlanSql = await readFile(resolve(root, "supabase/migrations/20261122152010_allow_verified_free_plan_changes.sql"), "utf8");
+const organizationClosureSql = await readFile(resolve(root, "supabase/migrations/20261122152552_organization_closure_readiness.sql"), "utf8");
+const organizationClosureDepositsSql = await readFile(resolve(root, "supabase/migrations/20261122153559_include_external_deposits_in_closure_readiness.sql"), "utf8");
+const legacyPaymentExportSql = await readFile(resolve(root, "supabase/migrations/20260725020649_phase_8_payment_csv_export.sql"), "utf8");
+const scopedPaymentExportSql = await readFile(resolve(root, "supabase/migrations/20261122143914_scope_payment_export_to_explicit_organization.sql"), "utf8");
+const retireImplicitPaymentExportSql = await readFile(resolve(root, "supabase/migrations-contract/20261122143918_retire_implicit_payment_export.sql"), "utf8");
 const authoritySql = await readFile(resolve(root, "docs/crecy-v4/12_P0_EXECUTABLE_SCHEMA.sql"), "utf8");
 const rlsMarkdown = await readFile(resolve(root, "docs/crecy-v4/13_P0_RLS_POLICIES_AND_TEST_MATRIX.md"), "utf8");
 const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
@@ -84,7 +121,7 @@ const rlsSql = rlsMarkdown.match(/```sql\s*([\s\S]*?)```/)?.[1];
 if (!rlsSql) throw new Error("The authoritative RLS SQL fence is missing.");
 
 function createDatabase() {
-  return new PGlite({ extensions: { citext, pgcrypto } });
+  return new PGlite({ extensions: { citext, pgcrypto, btree_gist } });
 }
 
 async function prepareSupabasePrelude(db) {
@@ -107,9 +144,12 @@ async function prepareSupabasePrelude(db) {
     create or replace function auth.jwt()
     returns jsonb
     language sql stable
-    as $$ select jsonb_build_object(
-      'sub',nullif(current_setting('request.jwt.claim.sub', true), ''),
-      'aal',coalesce(nullif(current_setting('request.jwt.claim.aal', true), ''),'aal1')
+    as $$ select coalesce(
+      nullif(current_setting('request.jwt.claims', true), '')::jsonb,
+      jsonb_build_object(
+        'sub',nullif(current_setting('request.jwt.claim.sub', true), ''),
+        'aal',coalesce(nullif(current_setting('request.jwt.claim.aal', true), ''),'aal1')
+      )
     ) $$;
     create schema storage;
     create table storage.buckets (
@@ -149,15 +189,15 @@ async function expectDatabaseError(action, expectedMessage) {
 
 async function validateAuthority() {
   assert(!/grant[^;]+reporting\.(owner_lease_summaries|owner_maintenance_summaries|vendor_work_order_assignments|resident_work_order_statuses)/i.test(authoritySql), "File 12 grants a view that is created only by file 13.");
-  assert(rlsMarkdown.includes("| RLS-031 |"), "The mandatory v4.1.1 RLS matrix does not reach RLS-031.");
+  assert(rlsMarkdown.includes("| RLS-035 |"), "The mandatory RLS matrix does not reach the homeowner tour boundary.");
   const db = createDatabase();
   await prepareSupabasePrelude(db);
   await db.exec(authoritySql);
   await db.exec(rlsSql);
   const tableResult = await db.query(`select count(*)::integer as count from information_schema.tables where table_schema in ('public','private','audit','reporting')`);
   const policyResult = await db.query(`select count(*)::integer as count from pg_policies where schemaname in ('public','reporting')`);
-  assert(tableResult.rows[0].count === 77, "Authority schema table count changed unexpectedly.");
-  assert(policyResult.rows[0].count === 59, "Authority RLS policy count changed unexpectedly.");
+  assert(tableResult.rows[0].count === 91, "Authority schema table count changed unexpectedly.");
+  assert(policyResult.rows[0].count === 65, "Authority RLS policy count changed unexpectedly.");
 
   const admin = "d0000000-0000-4000-8000-000000000001";
   const ownerA = "d0000000-0000-4000-8000-000000000002";
@@ -833,6 +873,7 @@ async function validateRecurringCharges() {
   await db.exec(notificationPreferencesSql);
   await db.exec(operatorCommandCenterSql);
   await db.exec(operatorGlobalSearchSql);
+  await db.exec(legacyPaymentExportSql);
   await db.exec(relationshipInvitationsSql);
   await db.exec(maintenanceCostSql);
   await db.exec(reconciliationResolutionSql);
@@ -869,11 +910,25 @@ async function validateRecurringCharges() {
   await db.exec(livingCommunityControlsSql);
   await db.exec(vendorManagementSql);
   await db.exec(invitationEmailDeliverySql);
+  await db.exec(homeownerRentalSql);
+  await db.exec(homeownerLeaseSql);
+  await db.exec(sharedListingSql);
+  await db.exec(rentalInquirySql);
+  await db.exec(rentalTourSql);
+  await db.exec(rentalApplicationSql);
+  await db.exec(rentalMarketplaceSql);
+  await db.exec(ownershipInvariantsSql);
+  await db.exec(scopedPaymentExportSql);
+  await db.exec(platformBillingSql);
+  await db.exec(platformBillingUsageSql);
+  await db.exec(platformFreePlanSql);
+  await db.exec(organizationClosureSql);
   // The CONTRACT release replays last, exactly as a correct rollout applies it: after every additive
   // migration AND after the compatible application build. Its revocations are still proven here — the
   // separation is about when a human may apply them, not about whether they are tested.
   await db.exec(closeUnscopedOperatorSurfacesSql);
   await db.exec(retireInvitationEmailMarksSql);
+  await db.exec(retireImplicitPaymentExportSql);
 
   const admin = "c1000000-0000-4000-8000-000000000001";
   const resident = "c2000000-0000-4000-8000-000000000002";
@@ -1170,9 +1225,9 @@ async function validateRecurringCharges() {
     insert into public.owner_entities(id,organization_id,display_name,entity_type) values
       ('${ownerEntityA}','${organization.organizationId}','Finance Atlas Owner A','company'),
       ('${ownerEntityB}','${organization.organizationId}','Finance Atlas Owner B','company');
-    insert into public.ownership_interests(id,organization_id,property_id,owner_entity_id,ownership_fraction,effective_from) values
-      ('cd000000-0000-4000-8000-000000000013','${organization.organizationId}','${property.propertyId}','${ownerEntityA}',0.5,'2026-01-01'),
-      ('ce000000-0000-4000-8000-000000000014','${organization.organizationId}','${property.propertyId}','${ownerEntityB}',0.5,'2026-01-01');
+    insert into public.ownership_interests(id,organization_id,property_id,owner_entity_id,ownership_fraction,effective_from,effective_to) values
+      ('cd000000-0000-4000-8000-000000000013','${organization.organizationId}','${property.propertyId}','${ownerEntityA}',0.5,'2026-01-01','2030-12-31'),
+      ('ce000000-0000-4000-8000-000000000014','${organization.organizationId}','${property.propertyId}','${ownerEntityB}',0.5,'2026-01-01','2030-12-31');
     insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status) values
       ('${ownerA}','${organization.organizationId}','owner_entity','${ownerEntityA}','active'),
       ('${ownerB}','${organization.organizationId}','owner_entity','${ownerEntityB}','active');
@@ -2500,11 +2555,16 @@ async function validateRecurringCharges() {
   assert(ownerXReplay.ownerEntityId === ownerX.ownerEntityId, "create_owner_entity idempotent replay minted a second owner.");
 
   const interestX = (await db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerX.ownerEntityId}',0.7,'2031-01-01',null,'interest-x-key-001') as result`)).rows[0].result;
-  const interestY = (await db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerY.ownerEntityId}',0.3,'2031-01-01','2031-12-31','interest-y-key-001') as result`)).rows[0].result;
+  const interestY = (await db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerY.ownerEntityId}',0.3,'2031-05-01','2031-12-31','interest-y-key-001') as result`)).rows[0].result;
   assert(Number(interestX.ownershipFraction) === 0.7 && Number(interestY.ownershipFraction) === 0.3 && interestX.ownershipInterestId !== interestY.ownershipInterestId, "create_ownership_interest did not persist the two fractions.");
+  const interestReplay = (await db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerY.ownerEntityId}',0.3,'2031-05-01','2031-12-31','interest-y-key-001') as result`)).rows[0].result;
+  assert(interestReplay.ownershipInterestId === interestY.ownershipInterestId, "Interest replay created a new row or rechecked an already committed interval.");
 
-  // The one write-time guard: the same owner cannot hold two overlapping interests on one property.
+  // The same owner cannot hold two overlapping interests on one property.
   await expectDatabaseError(() => db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerX.ownerEntityId}',0.2,'2031-06-01',null,'interest-x-overlap-1')`), "OWNERSHIP_INTEREST_OVERLAP");
+  // The proposed start fits, but Y starts later within the same interval and raises the total above 100%.
+  await expectDatabaseError(() => db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerEntityA}',0.01,'2031-04-01','2031-05-01','interest-exceeds-total')`), "OWNERSHIP_ALLOCATION_EXCEEDED");
+  await expectDatabaseError(() => db.query("select private.lock_authority_write('property_ownership',gen_random_uuid())"), "permission denied");
   // A fraction outside (0,1] is refused before anything is written.
   await expectDatabaseError(() => db.query(`select public.create_ownership_interest('${organization.organizationId}','${property.propertyId}','${ownerY.ownerEntityId}',1.5,'2032-01-01',null,'interest-bad-fraction')`), "INVALID_OWNERSHIP_FRACTION");
   // An interest for an owner in another organization is not found, not silently cross-linked.
@@ -3763,7 +3823,7 @@ async function validateRecurringCharges() {
   `);
   const strandedInvite = (await db.query(`select public.invite_staff_member(
     '${organization.organizationId}','${strandedUser}','stranded@finance-atlas.example','leasing_agent',
-    array['${property.propertyId}'::uuid],'2026-07-24T12:00:00Z',null,false,'en-US','${"c1".repeat(32)}','c1c1c1c1c1',
+    array['${property.propertyId}'::uuid],now()+interval '1 day',null,false,'en-US','${"c1".repeat(32)}','c1c1c1c1c1',
     null,'staff-invite-stranded-0001',null,true
   ) as result`)).rows[0].result;
 
@@ -5601,6 +5661,45 @@ async function validateRecurringCharges() {
     assert(count(ctxInB) === 0, `The ${label} surface leaked the first organization's rows into the second.`);
   }
 
+  const exportA = (await db.query(
+    "select public.get_operator_payment_export_for_organization($1) as result", [organization.organizationId],
+  )).rows[0].result;
+  const exportB = (await db.query(
+    "select public.get_operator_payment_export_for_organization($1) as result", [ctxOrgB.organizationId],
+  )).rows[0].result;
+  assert(exportA.scope.organizationId === organization.organizationId
+    && exportA.items.some((item) => item.paymentId === payment.paymentId)
+    && exportA.rowCount === exportA.items.length,
+    "The payment export omitted an authorized payment or its count did not match.");
+  assert(exportB.scope.organizationId === ctxOrgB.organizationId && exportB.rowCount === 0,
+    "The payment export selected something other than the explicitly requested organization.");
+  assert(!JSON.stringify(exportA).includes("Check received at the office"),
+    "The payment export returned an internal payment reason.");
+  const exportOptions = (await db.query(
+    "select public.get_operator_payment_export_options($1) as result", [ctxOrgB.organizationId],
+  )).rows[0].result;
+  assert(exportOptions.organizationId === ctxOrgB.organizationId && exportOptions.properties.length === 1
+    && exportOptions.properties[0].id === ctxPropertyB.propertyId,
+    "Payment export options crossed organization boundaries.");
+  await expectDatabaseError(() => db.query(
+    "select public.get_operator_payment_export_for_organization($1,null,null,$2)",
+    [ctxOrgB.organizationId, property.propertyId],
+  ), "PROPERTY_SCOPE_DENIED");
+  await expectDatabaseError(() => db.query(
+    "select public.get_operator_payment_export_for_organization($1,null,null,null,$2)",
+    [ctxOrgB.organizationId, entity.accountingBookId],
+  ), "BOOK_SCOPE_DENIED");
+  await expectDatabaseError(() => db.query(
+    "select public.get_operator_payment_export_for_organization($1,current_date-366,current_date)",
+    [organization.organizationId],
+  ), "INVALID_DATE_RANGE");
+  await expectDatabaseError(() => db.query("select public.get_operator_payment_export()"), "permission denied");
+  await db.exec("set request.jwt.claim.aal='aal1'");
+  await expectDatabaseError(() => db.query(
+    "select public.get_operator_payment_export_for_organization($1)", [organization.organizationId],
+  ), "MFA_REQUIRED");
+  await db.exec("set request.jwt.claim.aal='aal2'");
+
   // An organization-level surface, gated ONLY by private.has_org_permission rather than by property
   // access. The Stripe connection belongs to the first organization's operating entity, so the second
   // organization must see none of it even though the same operator administers both.
@@ -6195,8 +6294,93 @@ async function validateRecurringCharges() {
     invalidTimeZones: diagnostics.counts.invalidTimeZones,
   };
 
+  const staffContinuityOrg = (await createOrganizationAsServer(db, admin,
+    "'Staff Continuity','staff-continuity','property_manager','US','en-US','America/New_York','operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef','staff-continuity-org'",
+    { aal: "aal2" },
+  )).rows[0].result;
+  const currentOwnerId = staffContinuityOrg.membershipId;
+  const secondOwnerId = "d6000000-0000-4000-8000-000000000001";
+  const successorId = "d6000000-0000-4000-8000-000000000002";
+  const successorInviteHash = "e4".repeat(32);
+  const handoffAt = "2099-01-01T00:00:00Z";
+  await db.exec(`reset role;
+    insert into public.organization_memberships(id,organization_id,user_id,role_code,status,starts_at)
+    values
+      ('${secondOwnerId}','${staffContinuityOrg.organizationId}','${ownerA}','org_owner','active',now()),
+      ('${successorId}','${staffContinuityOrg.organizationId}','${ownerB}','org_owner','invited',now());
+    insert into public.invitations(
+      organization_id,invitation_type,email,membership_id,token_hash,token_prefix,locale,redirect_surface,expires_at
+    ) values (
+      '${staffContinuityOrg.organizationId}','organization_member','successor@example.invalid','${successorId}',
+      '${successorInviteHash}','e4e4e4e4','en-US','crecy_os',now()+interval '1 hour'
+    );
+    set role authenticated; set request.jwt.claim.sub='${admin}';
+  `);
+  await db.query(`select public.update_staff_membership(
+    '${secondOwnerId}','org_owner','active',null,'${handoffAt}',true,1,'Scheduled owner handoff','owner-continuity-finite'
+  )`);
+  await db.exec(`set request.jwt.claim.sub='${ownerA}'`);
+  await expectDatabaseError(() => db.query(`select public.update_staff_membership(
+    '${currentOwnerId}','org_owner','active',null,'${handoffAt}',true,1,'Scheduled owner handoff','owner-continuity-final'
+  )`), "SOLE_OWNER_REQUIRED");
+  await expectDatabaseError(() => db.query(`select public.revoke_staff_membership(
+    '${currentOwnerId}',1,'Transfer current owner privileges','owner-continuity-revoke'
+  )`), "SOLE_OWNER_REQUIRED");
+  await db.exec(`set request.jwt.claim.sub='${admin}'`);
+  await expectDatabaseError(() => db.query(`select public.update_staff_membership(
+    '${successorId}','org_owner','active',null,null,true,1,'Activate pending successor','owner-continuity-pending'
+  )`), "MEMBERSHIP_INVITATION_PENDING");
+  await db.exec(`set request.jwt.claim.sub='${ownerB}'`);
+  await db.query(`select public.accept_staff_invitation('${successorInviteHash}')`);
+  await db.exec(`set request.jwt.claim.sub='${admin}'`);
+  await db.query(`select public.update_staff_membership(
+    '${successorId}','org_owner','active','${handoffAt}',null,true,2,'Schedule accepted successor','owner-continuity-succession'
+  )`);
+  await db.exec(`set request.jwt.claim.sub='${ownerA}'`);
+  const continuousHandoff = (await db.query(`select public.update_staff_membership(
+    '${currentOwnerId}','org_owner','active',null,'${handoffAt}',true,1,'Scheduled owner handoff','owner-continuity-final'
+  ) as result`)).rows[0].result;
+  assert(continuousHandoff.version === 2 && Date.parse(continuousHandoff.endsAt) === Date.parse(handoffAt),
+    "An accepted successor at the exact handoff did not preserve owner coverage.");
+
+  await validateDocumentSigningBoundary(db, {
+    assert, expectDatabaseError, organizationId: organization.organizationId, admin,
+    signer: invitedResidentUser, personId: invitedResidentPerson, outsider: deliveryOutsider,
+    documentId: deliveryDoc, versionId: deliveryVersion,
+  });
+
+  const homeownerRental = await validateHomeownerRental(db, { assert, expectDatabaseError, createOrganizationAsServer });
+  const homeownerLease = await validateHomeownerLease(db, { assert, expectDatabaseError, createOrganizationAsServer });
+  const sharedListing = await validateSharedListing(db, { assert, expectDatabaseError, createOrganizationAsServer });
+  const rentalInquiry = await validateRentalInquiry(db, { assert, expectDatabaseError, createOrganizationAsServer });
+  const rentalTour = await validateRentalTour(db, { assert, expectDatabaseError, createOrganizationAsServer });
+  const rentalApplication = await validateRentalApplication(db, { assert, expectDatabaseError });
+  const rentalMarketplace = await validateRentalMarketplace(db, { assert, expectDatabaseError });
+  const tenancyEpisodes = await validateTenancyEpisodes(db, { assert, expectDatabaseError, createOrganizationAsServer });
+  const tenancyCloseout = await validateTenancyCloseout(db, { assert, expectDatabaseError, createOrganizationAsServer });
+  const tenancyDeposit = await validateTenancyDeposit(db, { assert, expectDatabaseError });
+  const rentalAgreements = await validateRentalAgreements(db, { assert, expectDatabaseError });
+  const tenancyMoveIn = await validateTenancyMoveIn(db, { assert, expectDatabaseError });
+  const tenancyRenewal = await validateTenancyRenewal(db, { assert, expectDatabaseError, createOrganizationAsServer });
+  const signedImport = await validateImportedTenancyAgreement(db, { assert, expectDatabaseError });
+  const maintenanceCostApproval = await validateMaintenanceCostApproval(db, {
+    assert, expectDatabaseError, organizationId: organization.organizationId,
+    propertyId: property.propertyId, tenancyId: activation.tenancyId, admin,
+    resident, ownerA, ownerB, ownerEntityA, ownerEntityB, successor: deliveryOutsider,
+  });
+  await validatePlatformBilling(db);
+  await db.exec(organizationClosureDepositsSql);
+  await validateOrganizationClosure(db);
+  // Exercise the legacy fixture paths before retiring the unfenced worker commands.
+  await validateRuntimeReliability(db, {
+    assert, expectDatabaseError, organizationId: organization.organizationId, ownerUserId: admin,
+    documentId: deliveryDoc, platformAdmin, platformAgent,
+  });
+  const privacyRequestContinuity = await validatePrivacyRequestContinuity(db, {
+    assert, expectDatabaseError, organizationId: organization.organizationId, otherOrganizationId: ctxOrgB.organizationId,
+  });
   await db.close();
-  return { generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean , onboardingRowsLeaked: twoOrgOnboarding.rowsLeakedToPriorOrganization , diagnosticDeadLetters: runtimeDiagnostics.deadLetterScans, diagnosticBlocked: runtimeDiagnostics.blockedSchedules };
+  return { tenancyRenewal, signedImport, tenancyDeposit, tenancyMoveIn, privacyRequestContinuity, rentalAgreements, tenancyCloseout, tenancyEpisodes, maintenanceCostApproval, rentalMarketplace, rentalApplication, rentalTour, rentalInquiry, sharedListing, homeownerLease, homeownerRental, generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean , onboardingRowsLeaked: twoOrgOnboarding.rowsLeakedToPriorOrganization , diagnosticDeadLetters: runtimeDiagnostics.deadLetterScans, diagnosticBlocked: runtimeDiagnostics.blockedSchedules };
 }
 
 try {

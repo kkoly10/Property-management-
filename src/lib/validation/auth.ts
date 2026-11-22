@@ -1,8 +1,24 @@
 import { z } from "zod";
 
+const newPassword = z.string().min(10, "Use at least 10 characters.");
+
 export const signupSchema = z.object({
   email: z.email("Enter a valid email address."),
-  password: z.string().min(10, "Use at least 10 characters."),
+  password: newPassword,
+  customerPath: z.enum(["property_manager", "self_managing"]).default("property_manager"),
+});
+
+export const passwordRecoveryRequestSchema = z.object({
+  email: z.email("Enter a valid email address."),
+});
+
+export const passwordResetSchema = z.object({
+  flowId: z.uuid(),
+  password: newPassword,
+  confirmPassword: z.string(),
+}).refine(({ password, confirmPassword }) => password === confirmPassword, {
+  path: ["confirmPassword"],
+  message: "The passwords do not match.",
 });
 
 export const loginSchema = z.object({

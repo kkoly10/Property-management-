@@ -29,7 +29,10 @@ function mockFetch(vendorOutcomes: boolean[]) {
           : { error: "The vendor could not be added." },
       } as Response;
     }
-    return { ok: true, json: async () => ({ workOrderId: "wo1", publicReference: "WO-1001", status: "assigned", ownerApprovalStatus: null }) } as Response;
+    return { ok: true, json: async () => ({
+      workOrderId: "wo1", publicReference: "WO-1001",
+      status: calls.at(-1)?.body.vendorId ? "assigned" : "draft", ownerApprovalStatus: null,
+    }) } as Response;
   });
   vi.stubGlobal("fetch", fetchMock);
   return calls;
@@ -62,14 +65,30 @@ function expectWorkOrderDraftIntact() {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("AssignVendorForm contextual vendor creation", () => {
+  it("creates a draft for the in-house team when the vendor directory is empty", async () => {
+    const calls = mockFetch([]);
+    render(<AssignVendorForm maintenanceRequestId={REQUEST} organizationId={ORG} vendors={[]} disabled={false} />);
+
+    expect(screen.getByRole("combobox", { name: "Vendor or in-house team" })).toHaveValue("");
+    expect(screen.getByRole("option", { name: "In-house team" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Scope of work"), { target: { value: "Replace the entry latch." } });
+    fireEvent.click(screen.getByRole("button", { name: /create work order/i }));
+
+    await screen.findByText("Assign the draft in-house to schedule the work.");
+    expect(calls).toEqual([{
+      url: "/api/v1/work-orders",
+      body: { organizationId: ORG, maintenanceRequestId: REQUEST, scope: "Replace the entry latch.",
+        ownerApprovalRequired: false, officialPriority: "medium" },
+    }]);
+  });
+
   it("carries the work-order draft through a failed creation and the retry that succeeds", async () => {
     // The journey this exists for: a brand-new organization, a first maintenance request, and no
     // vendor to assign. Losing the scope and cost on the way to creating one is the defect.
     const calls = mockFetch([false, true]);
     render(<AssignVendorForm maintenanceRequestId={REQUEST} organizationId={ORG} vendors={[]} disabled={false} />);
 
-    expect(screen.queryByRole("combobox", { name: "Vendor" })).toBeNull();
-    expect(screen.getByText(/No vendors yet/)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Vendor or in-house team" })).toHaveValue("");
 
     fillWorkOrder();
     fillVendor();
@@ -84,7 +103,7 @@ describe("AssignVendorForm contextual vendor creation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /add vendor/i }));
 
-    const select = await screen.findByRole("combobox", { name: "Vendor" });
+    const select = await screen.findByRole("combobox", { name: "Vendor or in-house team" });
     expect(select).toHaveValue("30000000-0000-4000-8000-0000000000ff");
     expect(screen.queryByText("New vendor")).toBeNull();
     expectWorkOrderDraftIntact();
@@ -117,14 +136,14 @@ describe("AssignVendorForm contextual vendor creation", () => {
     mockFetch([true]);
     render(<AssignVendorForm maintenanceRequestId={REQUEST} organizationId={ORG} vendors={[EXISTING]} disabled={false} />);
 
-    expect(screen.getByRole("combobox", { name: "Vendor" })).toHaveValue(EXISTING.vendorId);
+    expect(screen.getByRole("combobox", { name: "Vendor or in-house team" })).toHaveValue(EXISTING.vendorId);
     expect(screen.queryByText("New vendor")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /add vendor/i }));
     fillVendor();
     fireEvent.click(screen.getByRole("button", { name: /add vendor/i }));
 
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Vendor" })).toHaveValue("30000000-0000-4000-8000-0000000000ff"));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Vendor or in-house team" })).toHaveValue("30000000-0000-4000-8000-0000000000ff"));
     // The vendor already on file is still assignable — creation adds, it does not replace.
     expect(screen.getAllByRole("option").map((option) => option.textContent)).toContain("Ready Fix Plumbing");
   });
@@ -141,7 +160,7 @@ describe("AssignVendorForm contextual vendor creation", () => {
 
     fillVendor();
     fireEvent.click(screen.getByRole("button", { name: /add vendor/i }));
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("combobox", { name: "Vendor" })));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("combobox", { name: "Vendor or in-house team" })));
   });
 
   it("treats Enter inside a vendor field as adding the vendor, not creating the work order", async () => {

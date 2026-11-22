@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 import { requiresSession } from "@/lib/marketing/navigation";
-import { isCacheablePublicRequest } from "@/lib/runtime/host-routing";
+import { isCacheablePublicRequest, isSessionIndependentPublicRequest } from "@/lib/runtime/host-routing";
 
 export async function updateSession(request: NextRequest) {
   const config = getPublicSupabaseConfig();
@@ -19,8 +19,15 @@ export async function updateSession(request: NextRequest) {
   // Host is consulted BEFORE the pathname. `app.crecyos.com/` and `owner.crecyos.com/` both have the
   // pathname `/`, and treating either as the cacheable marketing homepage on pathname alone is exactly
   // the confusion that would put an authenticated surface in a shared cache.
-  if (isCacheablePublicRequest(request.nextUrl.host || request.headers.get("host"), request.nextUrl.pathname)) {
-    return NextResponse.next({ request });
+  const host = request.nextUrl.host || request.headers.get("host");
+  if (isSessionIndependentPublicRequest(host, request.nextUrl.pathname)) {
+    const response = NextResponse.next({ request });
+    // Rental share pages are public-by-link but change immediately when paused/closed and carry
+    // short-lived signed media URLs. They skip auth just like marketing, but never enter a shared cache.
+    if (!isCacheablePublicRequest(host, request.nextUrl.pathname)) {
+      response.headers.set("Cache-Control", "private, no-store");
+    }
+    return response;
   }
 
   let response = NextResponse.next({ request });

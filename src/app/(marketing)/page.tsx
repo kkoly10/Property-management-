@@ -60,6 +60,27 @@ export default function HomePage() {
         </div>
       </Section>
 
+      <Section className="!py-0 lg:!py-0">
+        <div className="grid overflow-hidden rounded-[1.6rem] border bg-card md:grid-cols-2">
+          <div className="p-6 sm:p-8 lg:p-10">
+            <p className="text-sm font-semibold text-primary">I manage properties professionally</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-[-0.045em]">Crecy OS for the operating team.</h2>
+            <p className="mt-4 max-w-xl text-sm leading-7 text-muted-foreground">
+              Run portfolio records, leasing, rent, maintenance, documents, owner reporting and staff access from one operating system.
+            </p>
+            <p className="mt-6"><Link href="/product" className="text-sm font-semibold text-primary hover:underline">Explore Crecy OS →</Link></p>
+          </div>
+          <div className="border-t bg-[var(--brand-subtle)]/55 p-6 sm:p-8 md:border-l md:border-t-0 lg:p-10">
+            <p className="text-sm font-semibold text-primary">I rent out a place I own</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-[-0.045em]">The same engine, without the portfolio overhead.</h2>
+            <p className="mt-4 max-w-xl text-sm leading-7 text-muted-foreground">
+              Bring a renter you already found, publish a shareable listing, optionally add it to Crecy discovery, and carry verified questions, tours and applications into the same tenancy record.
+            </p>
+            <p className="mt-6"><Link href="/landlords" className="text-sm font-semibold text-primary hover:underline">See Crecy for landlords →</Link></p>
+          </div>
+        </div>
+      </Section>
+
       <section className="bg-[var(--surface-inverse)] text-white">
         <div className="mx-auto max-w-[1280px] px-5 py-20 sm:py-24 lg:px-8 lg:py-32">
           <div className="grid gap-8 lg:grid-cols-[1.25fr_0.75fr] lg:items-end">

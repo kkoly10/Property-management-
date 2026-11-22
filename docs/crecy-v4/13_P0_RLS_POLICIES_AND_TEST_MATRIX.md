@@ -583,6 +583,52 @@ create policy usage_records_admin_read on public.usage_records for select to aut
 create policy billing_invoices_admin_read on public.billing_invoices for select to authenticated using ((select private.has_org_permission(organization_id,'organization.manage')));
 create policy billing_invoice_lines_parent_read on public.billing_invoice_lines for select to authenticated using (exists(select 1 from public.billing_invoices i where i.id=invoice_id));
 
+-- Homeowner shared listings remain operator-private at the base-table layer. Anonymous visitors use
+-- only the sanitized service-role DTO; the host/public UUID grants no database role.
+create policy rental_listings_operator_read on public.rental_listings for select to authenticated using (
+  (select private.has_property_access(property_id,'property.read'))
+  or (select private.has_property_access(property_id,'property.manage'))
+);
+create policy rental_listing_photos_operator_read on public.rental_listing_photos for select to authenticated using (
+  exists (
+    select 1 from public.rental_listings l
+    where l.id=listing_id and l.organization_id=rental_listing_photos.organization_id
+      and (
+        (select private.has_property_access(l.property_id,'property.read'))
+        or (select private.has_property_access(l.property_id,'property.manage'))
+      )
+  )
+);
+create policy rental_inquiries_verified_operator_read on public.rental_inquiries for select to authenticated using (
+  status in ('open','closed') and (
+    (select private.has_property_access(property_id,'lease.manage'))
+    or (select private.has_property_access(property_id,'property.manage'))
+  )
+);
+create policy rental_tour_requests_verified_operator_read on public.rental_tour_requests for select to authenticated using (
+  status in ('requested','confirmed') and (
+    (select private.has_property_access(property_id,'lease.manage'))
+    or (select private.has_property_access(property_id,'property.manage'))
+  )
+);
+create policy rental_tour_preferences_parent_read on public.rental_tour_preferences for select to authenticated using (
+  exists (
+    select 1 from public.rental_tour_requests r
+    where r.id=tour_request_id and r.organization_id=rental_tour_preferences.organization_id
+      and r.status in ('requested','confirmed')
+      and (
+        (select private.has_property_access(r.property_id,'lease.manage'))
+        or (select private.has_property_access(r.property_id,'property.manage'))
+      )
+  )
+);
+create policy rental_applications_verified_operator_read on public.rental_applications for select to authenticated using (
+  status not in ('pending_verification','expired') and (
+    (select private.has_property_access(property_id,'lease.manage'))
+    or (select private.has_property_access(property_id,'property.manage'))
+  )
+);
+
 
 -- Sanitized relationship projections. These views intentionally select a limited column set and filter with relationship helper functions.
 create or replace view reporting.owner_lease_summaries with (security_barrier=true) as
@@ -687,6 +733,8 @@ Uploads use a server-created upload grant containing organization, parent resour
 | RLS-031 | Authenticated user | Read or mutate another user’s notification preferences | 0 rows for reads; direct writes denied |
 | RLS-032 | Operator, scoped member, expired member, outsider | Query the operator command center across property, book, finance, or date boundaries | Only effective assigned properties and permitted domain aggregates; cross-book denied; expired/outsider denied; no PII or private provider/audit detail |
 | RLS-033 | Operator, property-scoped member, relationship user, expired member, outsider | Search names and public references across properties and operational domains | At most 24 stable server-selected rows from effective assigned properties and independently permitted domains; relationship/expired/outsider denied; contact data, maintenance access/detail, payment reasons, owner contacts, and provider identifiers omitted |
+| RLS-034 | Anonymous visitor, pending prospect, wrong-property operator, resident, outsider | Read or mutate rental-inquiry contact PII; verify by GET; close another property's inquiry | Anonymous/pending base rows denied; only verified open/closed inquiries are readable with current `lease.manage` or `property.manage` on the exact property; verification is POST-only through the service route; wrong-property/unrelated actors get 0 rows and direct writes are denied |
+| RLS-035 | Anonymous visitor, pending tour requester, wrong-property operator, resident, outsider | Read or mutate tour contact/time preferences; confirm another property's tour | Anonymous/pending base rows denied; only verified requested/confirmed tours and their preferences are readable with current `lease.manage` or `property.manage` on the exact property; direct writes are denied and confirmation is command-only |
 
 ## 6. Financial/database invariant tests
 
@@ -710,3 +758,39 @@ Uploads use a server-created upload grant containing organization, parent resour
 Use pgTAP or SQL integration tests in CI plus authenticated Supabase client tests. Every test creates at least two organizations, two properties per organization, and each relationship role. Tests must use actual JWT/session contexts, not only call helper functions directly.
 
 No RLS phase is complete until negative tests pass. A successful read test alone is insufficient.
+
+
+## Homeowner expansion — September 25, 2026
+
+`units.rental_details` uses the existing unit SELECT policy and grants. No public listing
+projection or direct authenticated write is added. `create_homeowner_rental` independently
+requires active, unscoped property-management permission in the explicit self-managing
+organization. See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` and the executable negative
+cases in `scripts/validate-homeowner-rental.mjs`.
+
+
+## Homeowner A3/A4 — existing signed rental
+See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
+upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
+
+| HR-L01 | Private saved rental setup | No anon/authenticated table privileges; scoped read/save/activate RPCs require current lease and document permission and exact actor/org/unit. |
+
+## Homeowner B1 — unlisted shared listing
+
+| ID | Boundary | Required proof |
+|---|---|---|
+| HR-L02 | Listing base rows | `rental_listings` and `rental_listing_photos` are unreadable to anon; authenticated reads require effective property read/manage scope; direct business-table writes stay revoked. |
+| HR-L03 | Public projection | `get_public_rental_listing` is service-role only and returns only a published advertising snapshot whose visibility is explicitly `unlisted` or `discoverable`. Street, postal, organization, tenant, accounting and private-document fields are absent. |
+| HR-L04 | Listing media | `rental_listing_photo` upload grants require a unit parent and PNG/JPEG MIME; selected versions must be scanner-clean and belong to the exact listing unit/property. |
+| HR-L05 | Recipient isolation | Listing photos are filtered from the operator document register and a database trigger rejects every insertion into `document_deliveries` for listing-photo versions. |
+| HR-L06 | Publication lifecycle | Draft/paused/closed rows do not resolve publicly; initial publish requires unlisted visibility, summary and at least one clean photo. Discovery is a separate post-publish command. |
+| HR-L07 | Link rotation | Rotating a share UUID makes the old public identifier stop resolving; retry returns the same newly minted identifier. |
+
+## Homeowner B5 — explicit marketplace discovery
+
+| ID | Boundary | Required proof |
+|---|---|---|
+| HR-L08 | Discovery consent | Only a current self-managing operator with exact `property.manage` scope can toggle `discoverable`; stale versions and outsider/wrong-property calls are denied. |
+| HR-L09 | Discovery read | `search_public_rental_listings` is service-role only, bounded to `published + discoverable`, scanner-clean approved media, coarse location, and sanitized advertising fields. Anonymous/browser table access remains denied. |
+| HR-L10 | Fail-safe removal | Editing, pausing or closing a discoverable listing atomically resets it to `unlisted` and clears `discovered_at`; republish does not silently restore discovery. |
+| HR-L11 | Stable pagination | Search is newest-first with `(discovered_at,id)` keyset pagination; stable data yields no duplicate/omitted page rows. |

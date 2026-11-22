@@ -59,6 +59,23 @@ export const groups: NavigationGroup[] = [
   },
 ];
 
+export type WorkspaceExperience = "self_managing" | "property_manager";
+export function navigationFor(experience: WorkspaceExperience) {
+  if (experience !== "self_managing") return { overview, groups };
+  return {
+    overview: { ...overview, label: "Home" },
+    groups: [{ label: "Your rental", items: [
+      { label: "My rentals", href: "/app/rentals", icon: Building2 },
+      { label: "Renters", href: "/app/residents", icon: Users },
+      { label: "Agreements", href: "/app/leases", icon: FileSignature },
+      { label: "Payments", href: "/app/payments", icon: CreditCard },
+      { label: "Maintenance", href: "/app/maintenance", icon: Wrench },
+      { label: "Messages", href: "/app/messages", icon: MessageSquareText },
+      { label: "Documents", href: "/app/documents", icon: FileText },
+    ] }],
+  };
+}
+
 export function isActive(pathname: string, href: string) {
   return href === "/app" ? pathname === href : pathname.startsWith(href);
 }
@@ -93,14 +110,15 @@ function NavigationLink({
   );
 }
 
-export function PrimaryNavigation() {
+export function PrimaryNavigation({ experience = "property_manager" }: { experience?: WorkspaceExperience }) {
+  const navigation = navigationFor(experience);
   return (
     <nav aria-label="Primary" className="flex-1 overflow-y-auto px-3 pb-4">
       <div className="mb-4">
-        <NavigationLink {...overview} />
+        <NavigationLink {...navigation.overview} />
       </div>
       <div className="space-y-5">
-        {groups.map((group) => (
+        {navigation.groups.map((group) => (
           <section key={group.label} aria-label={group.label}>
             <div className="mb-1.5 px-3 text-[0.72rem] font-semibold tracking-[0.015em] text-muted-foreground/75">
               {group.label}

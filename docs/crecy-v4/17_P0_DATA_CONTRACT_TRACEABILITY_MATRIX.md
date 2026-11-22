@@ -5,13 +5,23 @@
 | Capability | Primary tables | Command/query | Authorization | Required event/tests |
 |---|---|---|---|---|
 | Organization + trial | organizations, memberships, subscriptions, localized price books, private.idempotency_records(actor_scope) | CreateOrganization | authenticated/new org | organization.created; NULL-org replay returns same organization |
+| Organization closure readiness | organizations, memberships, tenancies, agreements, document deliveries/signatures, journal entries, charges, payments/refunds/disputes/settlements, reconciliation exceptions, work orders, approvals, privacy requests/jobs, external deposit entries | get_organization_closure_readiness on the selected workspace | active unscoped organization.manage and AAL2 | Read-only counts. Tests cover property-scoped and cross-organization denial, MFA, historical access, active and scheduled occupancy, signing expiry and decline, independent ledger positions, privacy holds, open external deposits and corrected dispositions. |
+| Platform subscription sandbox | organization_subscriptions, private.platform_billing_customers, private.platform_billing_attempts, private.platform_billing_events | get_platform_billing_workspace, prepare/record_platform_billing_checkout, prepare_platform_billing_portal, claim/apply_platform_billing_event | owner or unscoped org admin of the selected workspace; AAL2 for Stripe actions; service-only writes after server revalidation or dedicated Stripe webhook verification | billing.subscriptionSynced audit and outbox; outsider, workspace mismatch, low AAL, rent/Connect signature scope, regional Price mismatch, ambiguous checkout replay, stale snapshots, duplicate events, unpaid initial invoice, payment failure, cancellation and access continuity |
+| Subscription capacity and usage | organization_subscriptions, plan_entitlements, properties, units, usage_records | inventory expansion triggers at the database boundary; sample_platform_billing_usage in the operational sweep | existing property scope still applies; elapsed trial and restricted statuses stop new capacity; secret-authenticated sandbox worker samples its configured account | elapsed trial, confirmed paid recovery, restricted creation/reactivation denial, historical owner read continuity, unauthorized sampling denial, one local-day sample and historical quantity preserved after archive |
+| Explicit Free trial recovery | organization_subscriptions, private.platform_billing_attempts, private.platform_billing_customers, organization_memberships, units | choose_platform_free_plan | active owner or unscoped org admin of the selected workspace with AAL2, server-only, one unit and one staff seat at most, no unresolved provider state | billing.subscriptionFreeSelected audit and subscription.change_requested outbox; scope, MFA, cap, pending/terminal provider denial, verified checkout expiration and replay tests |
 | Staff access | invitations, memberships, property scopes, plan entitlements, notification jobs | ManageStaffMembership + recipient-bound acceptance + sanitized team workspace | active organization.manage; exact property IDs; starts_at/ends_at; AAL2 for elevation/scope/revocation | membership invited/activated/changed/scopes_changed/revoked; seat limits, recipient mismatch, expired/revoked RLS, replay/version tests |
+| Account continuity | Supabase Auth identities and sessions, private signup and sign-in throttle data | Signup, request password recovery, redeem the recovery link and update the password, local sign-out | Neutral public requests with per-email and per-IP throttles. Reset uses a Crecy-signed recovery intent and one-time provider credential. Sign-out acts on the current browser session. | Fresh email intent and identical-retry checks, neutral failure and pending identity checks, recovery cookie and redirect checks, session cleanup on provider failure |
 | Property/unit | operating entities, books, properties, units | CreateProperty/CreateUnit | property.manage + scope | property/unit created; cross-org FK attacks |
 | Lease/tenancy | people, households, leases, tenancies, schedules | ActivateExistingLease | lease.manage + property scope | tenancy activated; overlapping unit denied |
+| Tenancy closeout | tenancies, tenancy_closeouts, charge_schedules, journal_entries | GetTenancyCloseout, TransitionTenancyCloseout | property-scoped lease read/manage and independent finance read/manage | inclusive handback gates successor; exact retry and original term preserved; ledger remains unchanged |
+| External deposit tracking | tenancy_deposit_entries, tenancy_deposit_evidence, document_versions | GetTenancyDeposit, RecordTenancyDepositEntry | scoped finance read/manage and document authority for evidence | receipts and dispositions reconcile by lot; corrections append; exact evidence remains bound to the tenancy; ledger and payments unchanged |
+| Same-tenancy renewal | tenancy_renewals, leases, tenancies, charge_schedules, document_versions | GetTenancyRenewal, TransitionTenancyRenewal | property-scoped lease read and lease, finance, and document management for writes | exact fixed term pin, nonoverlap, local-date transition, unchanged household and receivable, prior contractual access |
 | Recurring rent | charge schedules, charges, journal transactions/entries | GenerateRecurringCharges | worker | charge.posted; duplicate run no-op |
 | Online payment | payments, attempts, webhook events, allocations, journals | CreateResidentPaymentSession/ProcessStripeWebhook | resident tenancy / internal | replay/out-of-order/return tests |
 | Manual payment/correction | payments, payment_refunds, allocations, idempotency, journals | RecordManualPayment/RefundPayment/ReverseOrCorrectPayment | finance.manage + property scope | refund persistence, over-refund rejection, append-only correction tests |
+| Payment CSV | payments, unreversed allocations, scoped properties and books | GetOperatorPaymentExportOptions and GetOperatorPaymentExportForOrganization | explicit active organization, finance property scope and AAL2 for the content download | two-workspace and cross-property/book denial, bounded workspace-local date range, decimal precision, sensitive-field exclusion and formula-safe CSV tests |
 | Documents | upload grants, documents/versions, deliveries/acknowledgements | Upload/Finalize/Deliver/Acknowledge | parent documents.manage to upload/deliver; exact recipient to acknowledge | quarantine/scan/path guessing tests; deliver requires a clean version + active relationship recipient; recipient-vs-outsider-vs-manager delivery/ack RLS isolation; per-type append-only ack guard; delivery + ack replay tests |
+| Single-recipient electronic signing | explicit signature request on the delivery, pinned document version and fingerprint, signatures, consent records, audit and outbox | DeliverDocumentWithPurpose / SignReviewedDocument | scoped document manager can request; only the verified active recipient can sign through the server; authenticated Storage reads require a scoped clean version or the uploader's verification grant | exact version and Storage RLS, trusted write grant, lifecycle and disclosure rejection, same-key retry, and historical receipt tests |
 | Maintenance | maintenance requests, work orders, reporting.resident_work_order_statuses | Submit/Create/Transition | resident projection or maintenance.manage | base-row denial, sanitized projection, optimistic version/state-machine tests |
 | Owner approval | owner approval requests/decisions | RespondToOwnerApproval | exact owner_entity_id or scoped manager | co-owner isolation, one-decision/concurrency tests |
 | Owner statements | statement snapshots + document versions | FinalizeOwnerStatement | exact owner_entity_id for portal; owner.manage + finance.manage for operator | co-owner isolation, versioned correction/PDF-CSV immutability |
@@ -22,9 +32,73 @@
 | Operator command center | existing portfolio, lease, finance, maintenance, owner approval, reconciliation, and audit persistence | GetOperatorCommandCenter sanitized aggregate query | active operator membership; starts_at/ends_at; explicit property scopes; permission checked independently per domain | cross-property/book denial, expired/outsider denial, currency separation, bounded queues, filter validation, and PII/provider-detail absence tests |
 | Operator global search | existing property, unit, household/tenancy, lease, payment, maintenance, work-order, document, ownership persistence + prefix indexes | GetOperatorGlobalSearch bounded sanitized query | active operator membership; starts_at/ends_at; explicit property scopes; matching read/manage permission checked independently per result type | all-type coverage, stable/hard limit, cross-property/domain denial, relationship/expired/outsider denial, unsearchable contact data, and sensitive-field absence tests |
 | Billing | plan/price/usage/invoice/subscription tables | ChangeSubscription | org admin + step-up | localized price/limit tests |
-| Privacy | privacy requests/jobs | SubmitPrivacyRequest/VerifyPrivacyRequest/CancelPrivacyRequest + sanitized workspace query | exact requester; active related organization; organization.manage for routed review/cancel | privacy_request.submitted/verified/canceled; identity step-up, job blocking, requester/admin isolation, expired-membership, export/delete, replay/version tests |
+| Privacy | privacy requests/jobs | SubmitPrivacyRequest/VerifyPrivacyRequest/CancelPrivacyRequest, exact personal history and receipt, selected workspace projection | requester for personal history, verified requester and AAL2 for receipts, active related organization for new routed intake, current organization.manage for routed review/cancel | privacy_request.submitted/verified/canceled, identity step-up, job blocking, requester/admin isolation, expired access, durable cancellation, replay/version tests |
 | Platform control plane (foundation) | private.platform_actors, private.support_sessions, private.idempotency_records(actor_scope) | StartSupportSession/EndSupportSession (RPC; HTTP surface + policy wiring deferred) | active platform actor + AAL2 step-up; mandatory 8–500 char reason; 5–240 min TTL; session owner or platform_admin to end | support.session_started/ended/revoked; **inert-grant test (active session yields zero cross-org rows — has_active_support_session wired into no policy)**, non-platform/expired/closed-org/TTL/reason rejections, owner-vs-admin end authorization, replay + not-active tests |
 
 ## Completion rule
 
 Codex or Claude must update this matrix when any command, table, screen, or event is added. Missing traceability is a release-blocking specification defect.
+
+
+## Homeowner expansion — September 25, 2026
+
+See `HOMEOWNER_RENTAL_SETUP_CONTRACT.md` for the additive command, persistence,
+screen states, security tests, and traceability approved under FD-HR-001–005.
+
+
+## Homeowner A3/A4 — existing signed rental
+See `HOMEOWNER_EXISTING_RENTAL_CONTRACT.md` for private drafts, confirmed activation,
+upload recovery and recipient-only signed-version handoff. Preserve existing engine gates.
+
+
+## Homeowner public-entry trace — September 26, 2026
+
+| Capability | Primary persistence | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Homeowner acquisition + workspace handoff | existing auth users, organizations, memberships; no new table | existing signup confirmation + `list_operator_organizations` + `selectOrganization` | public marketing/signup; organization choice is revalidated against the signed-in user's live memberships | marketing route/navigation/sitemap/cache tests; signup intent survives new/existing-account email; self-managing creation is preselected; no implicit multi-organization selection |
+
+## Homeowner B1 — shared-listing traceability
+
+| Capability | Primary tables | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Save listing draft | `rental_listings`, `rental_listing_photos`, exact `document_versions` | `SaveRentalListing` | authenticated self-managing workspace + current `property.manage` on exact unit/property | `rental_listing.saved`; stale version, durable retry, cross-unit/unclean photo, outsider, professional-workspace denial |
+| Publish/pause/close | `rental_listings` | `SetRentalListingStatus` | same scoped manager boundary | `rental_listing.status_changed`; no-photo, short-summary, discovery-disabled, paused/closed public denial, replay |
+| Rotate share URL | `rental_listings.public_id` | `RotateRentalListingLink` | same scoped manager boundary | `rental_listing.link_rotated`; old id returns no public DTO; replay returns one new id |
+| Public unlisted listing | sanitized `rental_listings` snapshot + attached clean photo versions | service-only `GetPublicRentalListing` + short-lived server-signed media URLs | anonymous browser receives no table/RPC grant; server exposes published+unlisted DTO only | street/postal absence, unknown/draft/paused/closed id 404/no row, exact photo version, noindex/nofollow |
+| Listing photo lifecycle | existing documents/versions + scan jobs; `rental_listing_photos` attachment | existing upload/finalize/scan commands + listing selection | unit-parent image grant, scanner-clean exact version, same org/property/unit; delivery trigger blocks recipient delivery | MIME/parent rejection, quarantine rejection, direct delivery rejection, document-register exclusion |
+
+
+## Homeowner B2 trace — verified inquiries
+
+| Capability | Primary tables | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Verified rental question intake | `rental_inquiries`, `private.rental_inquiry_verifications`, `private.rental_inquiry_attempts`, `private.notification_jobs` | `SubmitPublicRentalInquiry`, `VerifyPublicRentalInquiry`, `CloseRentalInquiry` | public submit/verify only through validated service route; landlord read/close requires exact-property `lease.manage` or `property.manage`; no anon base-table grant | pending hidden, wrong/expired token, token replay, normalized-email and keyed-network rate limits, terminal token scrub, wrong-property/outsider denial, direct-write denial, paused listing denial, close replay |
+
+## Homeowner B3 trace — verified tour requests
+
+| Capability | Primary tables | Command/query | Authorization | Required event/tests |
+|---|---|---|---|---|
+| Verified tour intake | `rental_tour_requests`, `rental_tour_preferences`, private verification/attempt rows, notification jobs | `SubmitPublicRentalTour`, `VerifyPublicRentalTour` | public submit/verify only through validated service route; listing must remain published+unlisted | pending hidden, wrong/expired token, verification replay, property-time-zone conversion, duplicate/DST-gap denial, normalized-email and keyed-network rate limits, terminal token scrub, paused-listing denial |
+| Tour confirmation | same tour request/preferences + notification jobs | `ConfirmRentalTour` | authenticated exact-property `lease.manage` or `property.manage`; optimistic version; one submitted preference only | confirmation event + notification; replay, wrong-property/outsider/direct-write denial, overlap denial, private meeting-location boundary |
+
+## Homeowner B5 discovery trace — October 9, 2026
+
+| Capability | Primary persistence | Command/query | Authorization | Required evidence |
+|---|---|---|---|---|
+| Discovery opt-in/out | `rental_listings.visibility`, `discovered_at` | `set_rental_listing_visibility` | current self-managing operator + exact `property.manage`; versioned/idempotent | explicit opt-in, outsider/stale denial, audit/outbox |
+| Fail-safe unlisting | same listing row | trigger on status + existing save command | database invariant beneath app routes | edit/pause/close clear discovery; republish stays unlisted |
+| Public marketplace browse | no new marketplace table | `search_public_rental_listings` | service-role server DTO only | published+discoverable only, clean media, coarse location, bounded filters, stable keyset cursor |
+| Listing detail from search | existing listing/public DTO | `get_public_rental_listing` | service-role server DTO only | same B2/B3/B4 inquiry/tour/application surface; no duplicate lead pipeline |
+
+## November 22, 2026 agreement, execution and move-in traceability
+
+| Capability | Primary persistence | Command/query | Authorization | Required evidence |
+|---|---|---|---|---|
+| Issue and execute an agreement | `private.rental_agreements`, `private.rental_agreement_signers`, `private.rental_agreement_signatures`, exact `document_versions` | `issue_rental_agreement`, `sign_rental_agreement`, `close_pending_rental_agreement`, artifact projection | Verified owner with AAL2 to issue. Trusted signer command verifies named party and the exact consent version. Artifacts require the named participant or current scoped operator. | Multi-party execution, wrong source/disclosure denial, conflicting replay, scoped artifact denial, void/decline/expiry, byte-level evidence digest. |
+| Issue an agreement for a prepared application | `private.rental_agreement_application_links`, exact application, setup, agreement filing, and signed document version | `get_rental_application_signing_setup`, `issue_rental_application_agreement`, existing issue/file/activate commands | Verified owner with AAL2, exact actor-owned draft, confirmed applicant account, rooted organization and rental | Wrong actor, stale application, substituted draft and PDF, canceled application, replay, and exact activation checks. |
+| File an executed agreement and activate the tenancy | `private.rental_agreement_filings`, `leases.signed_document_version_id`, `tenancies`, existing receivable and schedule | `file_executed_rental_agreement` and existing activation command | MFA and existing scoped lease/document authorization to file. Existing lease authorization and exact signed recipient set at activation. | Filing replay, substituted/changed address rollback, one scheduled tenancy, pinned PDF and execution timestamp. |
+| Move-in appointment and handover | `private.tenancy_move_in`, `private.tenancy_move_in_events`, existing `tenancies` and `leases` | `get_tenancy_move_in`, `record_tenancy_move_in`, `start_due_homeowner_tenancies` | Selected workspace and property-scoped lease access. Only `lease.manage` records events. | Wrong scope denial, stable replay, appointment and no-show holds, clean-source and vacant-possession checks, unchanged rent and lease dates. |
+
+| Capability | Primary persistence | Command/query | Authorization | Required evidence |
+|---|---|---|---|---|
+| Attach agreement evidence to an imported tenancy | Existing `leases.signed_document_version_id`, exact unit PDF in `documents` and `document_versions` | `get_imported_tenancy_agreement`, `attach_imported_tenancy_agreement`, due-tenancy worker | Selected workspace and exact property lease/document management plus explicit signed-copy confirmation | Real combined import, scheduled hold before filing, stale and unrelated version denial, replay, one custody link and eligible start. |

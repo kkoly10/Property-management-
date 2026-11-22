@@ -12,7 +12,9 @@ export function staffDatabaseError(message: string) {
   if (message.includes("MEMBERSHIP_VERSION_CONFLICT")) return staffErrorResponse("VERSION_CONFLICT", "This staff record changed. Refresh and try again.", 409);
   if (message.includes("PROPERTY_SCOPE_REQUIRED")) return staffErrorResponse("PROPERTY_SCOPE_REQUIRED", "Choose at least one property for this role.", 422);
   if (message.includes("PROPERTY_SCOPE_DENIED")) return staffErrorResponse("PROPERTY_SCOPE_DENIED", "One or more properties are outside this organization.", 403);
-  if (message.includes("CANNOT_CHANGE_SELF") || message.includes("CANNOT_REVOKE_SELF") || message.includes("SOLE_OWNER_REQUIRED")) return staffErrorResponse("PROTECTED_MEMBERSHIP", "This protected membership cannot be changed that way.", 422);
+  if (message.includes("SOLE_OWNER_REQUIRED")) return staffErrorResponse("PROTECTED_MEMBERSHIP", "An active organization owner must remain in place without gaps. Check current and scheduled owner access.", 422);
+  if (message.includes("MEMBERSHIP_INVITATION_PENDING")) return staffErrorResponse("MEMBERSHIP_INVITATION_PENDING", "The recipient must accept the invitation before you can edit their membership.", 422);
+  if (message.includes("CANNOT_CHANGE_SELF") || message.includes("CANNOT_REVOKE_SELF")) return staffErrorResponse("PROTECTED_MEMBERSHIP", "This protected membership cannot be changed that way.", 422);
   if (message.includes("AUDIT_REASON_REQUIRED")) return staffErrorResponse("AUDIT_REASON_REQUIRED", "Add a reason for this sensitive access change.", 422);
   if (message.includes("INVITATION_RECIPIENT_MISMATCH")) return staffErrorResponse("INVITATION_RECIPIENT_MISMATCH", "Sign in with the email address that received this invitation.", 403);
   if (message.includes("INVITATION_EXPIRED") || message.includes("INVITATION_NOT_PENDING")) return staffErrorResponse("INVITATION_UNAVAILABLE", "This invitation has expired or is no longer active.", 410);

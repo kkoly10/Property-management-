@@ -17,10 +17,12 @@ async function sha256Hex(file: File) {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-export function DocumentUploadForm({ organizationId, properties, disabled }: {
+export function DocumentUploadForm({ organizationId, properties, disabled, depositEvidenceProperty, signedLeaseUnitId }: {
   organizationId: string | null;
   properties: Array<{ id: string; name: string }>;
   disabled: boolean;
+  depositEvidenceProperty?: { id: string; name: string };
+  signedLeaseUnitId?: string;
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
@@ -33,8 +35,11 @@ export function DocumentUploadForm({ organizationId, properties, disabled }: {
     setMessage(null);
     const form = new FormData(event.currentTarget);
     const file = form.get("file");
-    const propertyId = String(form.get("propertyId") ?? "");
+    const propertyId = depositEvidenceProperty?.id ?? String(form.get("propertyId") ?? "");
     if (!(file instanceof File) || !file.size || !organizationId) return;
+    if (signedLeaseUnitId && file.type !== "application/pdf") {
+      setState("error"); setMessage("Choose the signed lease PDF."); return;
+    }
     if (!documentMimeTypes.includes(file.type as (typeof documentMimeTypes)[number])) {
       setState("error"); setMessage("Choose a PDF, CSV, Word, PNG, JPEG, or ZIP file."); return;
     }
@@ -50,8 +55,8 @@ export function DocumentUploadForm({ organizationId, properties, disabled }: {
         headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
         body: JSON.stringify({
           organizationId,
-          parent: propertyId ? { type: "property", id: propertyId } : { type: "organization", id: organizationId },
-          documentType: String(form.get("documentType")), title: String(form.get("title")),
+          parent: signedLeaseUnitId ? { type: "unit", id: signedLeaseUnitId } : propertyId ? { type: "property", id: propertyId } : { type: "organization", id: organizationId },
+          documentType: signedLeaseUnitId ? "signed_lease" : depositEvidenceProperty ? "deposit_evidence" : String(form.get("documentType")), title: String(form.get("title")),
           originalFilename: file.name, mimeType: file.type, sizeBytes: file.size,
         }),
       });
@@ -87,10 +92,12 @@ export function DocumentUploadForm({ organizationId, properties, disabled }: {
 
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
-      <div className="space-y-2"><Label htmlFor="document-title">Title</Label><Input id="document-title" name="title" placeholder="Signed lease — Unit 101" required maxLength={200} disabled={disabled || busy} /></div>
-      <div className="space-y-2"><Label htmlFor="document-type">Document type</Label><NativeSelect id="document-type" name="documentType" defaultValue="signed_lease" disabled={disabled || busy}><option value="signed_lease">Signed lease</option><option value="property_record">Property record</option><option value="portfolio_import">Portfolio import source</option><option value="resident_import">Resident import source</option><option value="owner_document">Owner document</option><option value="other">Other</option></NativeSelect></div>
-      <div className="space-y-2"><Label htmlFor="document-property">Location</Label><NativeSelect id="document-property" name="propertyId" defaultValue="" disabled={disabled || busy}><option value="">Organization-wide</option>{properties.map((property) => <option key={property.id} value={property.id}>{property.name}</option>)}</NativeSelect></div>
-      <div className="space-y-2"><Label htmlFor="document-file">File</Label><Input id="document-file" name="file" type="file" accept={documentMimeTypes.join(",")} required disabled={disabled || busy} className="file:mr-3 file:border-0 file:bg-transparent file:text-sm file:font-semibold" /><p className="text-xs leading-5 text-muted-foreground">PDF, CSV, Word, PNG, JPEG, or ZIP. Maximum 25 MB.</p></div>
+      <div className="space-y-2"><Label htmlFor="document-title">Title</Label><Input id="document-title" name="title" placeholder={depositEvidenceProperty ? "Move-out evidence" : "Signed lease — Unit 101"} required maxLength={200} disabled={disabled || busy} /></div>
+      {signedLeaseUnitId ? <p className="text-sm text-muted-foreground">Upload the externally signed lease PDF for this rental. It becomes selectable once scanning finishes.</p> : depositEvidenceProperty ? <p className="break-words text-sm text-muted-foreground">Upload to {depositEvidenceProperty.name}. Once the file clears scanning, select its version when recording the deduction.</p> : <>
+        <div className="space-y-2"><Label htmlFor="document-type">Document type</Label><NativeSelect id="document-type" name="documentType" defaultValue="signed_lease" disabled={disabled || busy}><option value="signed_lease">Signed lease</option><option value="rental_agreement_source">Rental agreement for signature</option><option value="property_record">Property record</option><option value="portfolio_import">Portfolio import source</option><option value="resident_import">Resident import source</option><option value="owner_document">Owner document</option><option value="other">Other</option></NativeSelect></div>
+        <div className="space-y-2"><Label htmlFor="document-property">Location</Label><NativeSelect id="document-property" name="propertyId" defaultValue="" disabled={disabled || busy}><option value="">Organization-wide</option>{properties.map((property) => <option key={property.id} value={property.id}>{property.name}</option>)}</NativeSelect></div>
+      </>}
+      <div className="space-y-2"><Label htmlFor="document-file">File</Label><Input id="document-file" name="file" type="file" accept={signedLeaseUnitId ? "application/pdf" : documentMimeTypes.join(",")} required disabled={disabled || busy} className="file:mr-3 file:border-0 file:bg-transparent file:text-sm file:font-semibold" /><p className="text-xs leading-5 text-muted-foreground">{signedLeaseUnitId ? "PDF. Maximum 25 MB." : "PDF, CSV, Word, PNG, JPEG, or ZIP. Maximum 25 MB."}</p></div>
       {message ? <Alert variant={state === "error" ? "destructive" : "info"}>{state === "complete" ? <CheckCircle2 className="h-5 w-5" /> : <UploadCloud className="h-5 w-5" />}<AlertTitle>{state === "error" ? "Upload stopped" : "Upload received"}</AlertTitle><AlertDescription>{message}</AlertDescription></Alert> : null}
       <Button type="submit" className="w-full" disabled={disabled || busy}>{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}{buttonLabel}</Button>
     </form>

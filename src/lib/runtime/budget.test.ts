@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  NOTIFICATION_RELAY_TIMEOUT_MS,
+  NOTIFICATION_WORKER_BATCH_SIZE,
+  NOTIFICATION_WORKER_CONCURRENCY,
+  NOTIFICATION_WORKER_MAX_DURATION_SECONDS,
+  NOTIFICATION_WORKER_OVERHEAD_SECONDS,
   SCAN_RELAY_TIMEOUT_MS,
   SCAN_WORKER_BATCH_SIZE,
   SCAN_WORKER_CONCURRENCY,
@@ -9,6 +14,15 @@ import {
   scanBudgetMargin,
   worstCaseScanRunSeconds,
 } from "./budget";
+
+it("bounds scheduled mail even when every relay call times out", () => {
+  const route = readFileSync(resolve(__dirname, "../../app/api/internal/cron/notifications/route.ts"), "utf8");
+  expect(Number(/export const maxDuration = (\d+)/.exec(route)?.[1])).toBe(NOTIFICATION_WORKER_MAX_DURATION_SECONDS);
+  expect(route).toContain("NOTIFICATION_WORKER_BATCH_SIZE");
+  const worst = Math.ceil(NOTIFICATION_WORKER_BATCH_SIZE / NOTIFICATION_WORKER_CONCURRENCY)
+    * NOTIFICATION_RELAY_TIMEOUT_MS / 1000 + NOTIFICATION_WORKER_OVERHEAD_SECONDS;
+  expect(worst).toBeLessThan(NOTIFICATION_WORKER_MAX_DURATION_SECONDS);
+});
 
 describe("the scan worker's execution budget", () => {
   it("finishes its worst case inside the pinned duration, with real margin", () => {

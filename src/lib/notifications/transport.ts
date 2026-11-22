@@ -1,5 +1,7 @@
 import "server-only";
 import type { RenderedNotification } from "./templates";
+import { readProviderMessageId } from "./provider-receipt";
+import { NOTIFICATION_RELAY_TIMEOUT_MS } from "@/lib/runtime/budget";
 
 /**
  * Outbound transport for transactional notifications.
@@ -10,7 +12,7 @@ import type { RenderedNotification } from "./templates";
  * (if any) is whatever the relay returns. With no relay configured the worker reports "not configured"
  * rather than pretending a message was delivered.
  */
-export type TransportSuccess = { ok: true; providerCode: string; providerMessageId: string | null };
+export type TransportSuccess = { ok: true; providerCode: string; providerMessageId: string };
 export type TransportFailure = { ok: false; errorCode: string; retryable: boolean };
 export type TransportResult = TransportSuccess | TransportFailure;
 
@@ -78,7 +80,7 @@ export function getNotificationTransport(): NotificationTransport | null {
     providerCode: "relay",
     async send(message: OutboundMessage): Promise<TransportResult> {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15_000);
+      const timeout = setTimeout(() => controller.abort(), NOTIFICATION_RELAY_TIMEOUT_MS);
       try {
         const response = await fetch(config.url, {
           method: "POST",
@@ -113,7 +115,8 @@ export function getNotificationTransport(): NotificationTransport | null {
         });
         if (!response.ok) return classifyRelayStatus(response.status);
         const receipt = (await response.json().catch(() => null)) as { messageId?: unknown } | null;
-        const messageId = typeof receipt?.messageId === "string" ? receipt.messageId.slice(0, 200) : null;
+        const messageId = readProviderMessageId(receipt?.messageId);
+        if (!messageId) return { ok: false, errorCode: "RELAY_RECEIPT_MISSING", retryable: true };
         return { ok: true, providerCode: "relay", providerMessageId: messageId };
       } catch (error) {
         const aborted = error instanceof Error && error.name === "AbortError";

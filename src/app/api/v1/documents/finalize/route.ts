@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { finalizeDocumentSchema } from "@/lib/validation/documents";
 
 function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status });
+  return NextResponse.json({ error: message }, { status, headers: { "Cache-Control": "private, no-store" } });
 }
 
 export async function POST(request: Request) {
@@ -14,6 +14,14 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: auth, error: authError } = await supabase.auth.getUser();
   if (authError || !auth.user) return errorResponse("Sign in to finalize documents.", 401);
+
+  const recovered = await supabase.rpc("recover_document_upload", { p_grant_id: parsed.data.grantId, p_sha256_hex: parsed.data.sha256Hex });
+  if (recovered.error) {
+    if (recovered.error.code === "42501") return errorResponse("This upload receipt is unavailable to your account.", 403);
+    if (recovered.error.message.includes("UPLOAD_CHECKSUM_CONFLICT")) return errorResponse("The checksum differs from the finalized upload.", 409);
+    return errorResponse("Upload verification is temporarily unavailable. Retry the same receipt.", 502);
+  }
+  if (recovered.data) return NextResponse.json(recovered.data, { status: 201, headers: { "Cache-Control": "private, no-store" } });
 
   const inspected = await supabase.rpc("inspect_document_upload_grant", { p_grant_id: parsed.data.grantId });
   if (inspected.error || !inspected.data) return errorResponse("The upload grant expired or is unavailable.", 422);
@@ -40,5 +48,5 @@ export async function POST(request: Request) {
   });
   if (finalized.error || !finalized.data) return errorResponse("The document could not be finalized.", 422);
 
-  return NextResponse.json(finalized.data, { status: 201 });
+  return NextResponse.json(finalized.data, { status: 201, headers: { "Cache-Control": "private, no-store" } });
 }

@@ -5,16 +5,22 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default async function SignupPage({ searchParams }: { searchParams: Promise<{ check_email?: string; auth_error?: string }> }) {
+export default async function SignupPage({ searchParams }: { searchParams: Promise<{ check_email?: string; auth_error?: string; path?: string }> }) {
   const params = await searchParams;
+  const customerPath = params.path === "self_managing" ? "self_managing" : "property_manager";
+  const selfManaging = customerPath === "self_managing";
   return (
     <div className="w-full max-w-md">
       <div className="mb-8 lg:hidden"><Wordmark /></div>
       <Card className="border-0 shadow-none sm:border sm:shadow-[0_12px_32px_rgba(16,24,40,0.08)]">
         <CardHeader className="pb-4">
-          <p className="mb-2 text-sm font-semibold text-primary">Start your Growth trial</p>
-          <CardTitle className="text-2xl">Create your Crecy account</CardTitle>
-          <CardDescription>No payment method is required for the initial workspace setup.</CardDescription>
+          <p className="mb-2 text-sm font-semibold text-primary">{selfManaging ? "Set up your rental" : "Start your Growth trial"}</p>
+          <CardTitle className="text-2xl">{selfManaging ? "Create your landlord account" : "Create your Crecy account"}</CardTitle>
+          <CardDescription>
+            {selfManaging
+              ? "Start with the home or space you rent. No payment method is required for setup."
+              : "No payment method is required for the initial workspace setup."}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {params.check_email ? (
@@ -24,12 +30,17 @@ export default async function SignupPage({ searchParams }: { searchParams: Promi
               <AlertDescription>
                 If this is a new Crecy account, use the confirmation link to continue setup. If you already have Crecy
                 access, use the one-time sign-in link instead. If nothing arrives,{" "}
-                <Link href="/login" className="font-semibold underline underline-offset-2">open Sign in</Link>.
+                <Link
+                  href={selfManaging ? "/login?next=%2Fonboarding%2Flandlord" : "/login"}
+                  className="font-semibold underline underline-offset-2"
+                >
+                  open Sign in
+                </Link>.
               </AlertDescription>
             </Alert>
           ) : null}
           {params.auth_error ? <Alert variant="destructive" className="mb-5"><CheckCircle2 aria-hidden="true" className="h-5 w-5" /><AlertTitle>That link could not be verified</AlertTitle><AlertDescription>Request a new sign-in link and try again.</AlertDescription></Alert> : null}
-          <SignupForm />
+          <SignupForm customerPath={customerPath} />
         </CardContent>
       </Card>
       <p className="mt-6 text-center text-xs leading-5 text-muted-foreground">By continuing, you agree to Crecy&apos;s Terms and acknowledge the Privacy Notice.</p>

@@ -1,4 +1,5 @@
 import "server-only";
+import { readProviderMessageId } from "./provider-receipt";
 
 /**
  * The one place Crecy talks to Resend.
@@ -24,7 +25,7 @@ import "server-only";
  * it.
  */
 export type ResendResult =
-  | { ok: true; messageId: string | null }
+  | { ok: true; messageId: string }
   | { ok: false; code: string; detail: string; retryable: boolean };
 
 export type ResendMessage = {
@@ -97,5 +98,14 @@ export async function sendViaResend(message: ResendMessage): Promise<ResendResul
   }
 
   const receipt = (await response.json().catch(() => null)) as { id?: unknown } | null;
-  return { ok: true, messageId: typeof receipt?.id === "string" ? receipt.id : null };
+  const messageId = readProviderMessageId(receipt?.id);
+  if (!messageId) {
+    return {
+      ok: false,
+      code: "MAIL_PROVIDER_RECEIPT_MISSING",
+      detail: "The mail provider did not return a usable receipt.",
+      retryable: true,
+    };
+  }
+  return { ok: true, messageId };
 }

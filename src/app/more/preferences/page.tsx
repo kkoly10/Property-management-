@@ -1,5 +1,6 @@
 import { BellRing, CircleAlert } from "lucide-react";
 import { PageHeader } from "@/components/crecy/page-header";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { LivingShell } from "@/components/living/living-shell";
 import { NotificationPreferencesForm } from "@/components/notifications/notification-preferences-form";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -17,6 +18,7 @@ export default async function NotificationPreferencesPage() {
           title="Preferences"
           description="Choose transactional delivery channels, language, text size, and accessibility settings for your account."
         />
+        <SignOutButton />
 
         {workspace.mode === "setup" ? (
           <Alert variant="info">

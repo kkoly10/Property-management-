@@ -7,6 +7,8 @@ import { resolveLanguage } from "@/lib/notifications/templates";
 import { senderFor, type MailAudience } from "@/lib/notifications/sender";
 import { sendViaResend, getResendApiKey } from "@/lib/notifications/resend";
 import { hostConfig, originForAudience } from "@/lib/runtime/host";
+import { isPlausibleTokenHash } from "@/lib/auth/invitation-link";
+import { passwordRecoveryUrl } from "@/lib/auth/password-recovery";
 
 /**
  * The Supabase Send Email Auth Hook.
@@ -185,7 +187,15 @@ export async function POST(request: Request) {
     // The confirmation link points at Crecy's own token-hash endpoint, not at Supabase's. The recipient
     // never sees a Supabase URL, and `next` is carried as a relative path /auth/confirm re-validates.
     let confirmUrl: string | null = null;
-    if (verifyType && !isSecurityNotification(actionType) && recipient.tokenHash) {
+    if (verifyType === "recovery") {
+      const origin = originForAudience(audience);
+      if (!origin || !isPlausibleTokenHash(recipient.tokenHash)) return hookError("AUTH_RECOVERY_UNAVAILABLE", 500);
+      try {
+        confirmUrl = passwordRecoveryUrl(origin, recipient.tokenHash).toString();
+      } catch {
+        return hookError("AUTH_RECOVERY_UNAVAILABLE", 500);
+      }
+    } else if (verifyType && !isSecurityNotification(actionType) && recipient.tokenHash) {
       const origin = originForAudience(audience) || data.site_url || "";
       if (/^https?:\/\//i.test(origin)) {
         const url = new URL("/auth/confirm", origin);

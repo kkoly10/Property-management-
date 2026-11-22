@@ -13,7 +13,7 @@ import { PageHeader } from "@/components/crecy/page-header";
 import { WorkspacePanel } from "@/components/crecy/workspace-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { getOperatorMaintenanceWorkspace, type OperatorMaintenanceItem } from "@/lib/data/maintenance";
+import { getOperatorMaintenanceWorkspace, workOrderAssignee, type OperatorMaintenanceItem } from "@/lib/data/maintenance";
 import { getActiveOrganizationId } from "@/lib/organization/context";
 
 export const dynamic = "force-dynamic";
@@ -158,7 +158,7 @@ export default async function OperatorMaintenancePage() {
                       </Badge>
                     </div>
                     <div className="mt-3 grid gap-1 text-xs text-muted-foreground">
-                      <span>{workOrder.vendorName ?? "Vendor not assigned"}</span>
+                      <span>{workOrderAssignee(workOrder)}</span>
                       {workOrder.scheduledStart ? <span>{new Date(workOrder.scheduledStart).toLocaleString()}</span> : <span>Schedule pending</span>}
                     </div>
                   </Link>
@@ -168,7 +168,7 @@ export default async function OperatorMaintenancePage() {
           ) : (
             <EmptyState
               title="No assigned work yet"
-              description="Triage a resident request and assign a vendor to open the work-order lifecycle."
+              description="Triage a resident request and assign the work to a vendor or your team."
               className="py-10"
             />
           )}
@@ -219,7 +219,7 @@ export default async function OperatorMaintenancePage() {
                   </div>
 
                   <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                    <span>{item.workOrder?.vendorName ?? "Vendor pending"}</span>
+                    <span>{workOrderAssignee(item.workOrder)}</span>
                     <span className="inline-flex items-center gap-1"><Camera aria-hidden="true" className="h-3.5 w-3.5" />{item.evidenceCount} evidence</span>
                   </div>
                 </Link>
@@ -262,7 +262,7 @@ export default async function OperatorMaintenancePage() {
                       {item.workOrder ? (
                         <div>
                           <Badge variant="info">{label(item.workOrder.status)}</Badge>
-                          <p className="mt-1 text-xs text-muted-foreground">{item.workOrder.vendorName ?? "Vendor pending"}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{workOrderAssignee(item.workOrder)}</p>
                         </div>
                       ) : (
                         <Badge variant="warning">Needs triage</Badge>

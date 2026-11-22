@@ -18,7 +18,7 @@ type LeaseDraft = {
   rentAmount: string; rentFrequency: "weekly" | "biweekly" | "monthly" | "quarterly" | "semiannual" | "annual" | "custom";
   signedDocumentId: string; openingBalance: string; firstChargeDueDate: string;
 };
-type ActivationResult = { householdId: string; leaseId: string; tenancyId: string; receivableAccountId: string; chargeScheduleId: string };
+type ActivationResult = { householdId: string; leaseId: string; tenancyId: string; receivableAccountId: string; chargeScheduleId: string; possessionStatus?: "active" | "scheduled" };
 
 const emptyMember = (id: string): MemberDraft => ({ id, firstName: "", lastName: "", email: "", phoneE164: "", primaryContact: false, financiallyResponsible: false });
 
@@ -28,12 +28,12 @@ function moneyToMinor(value: string) {
   return Math.round(amount * 100);
 }
 
-export function ExistingLeaseForm({ properties, units, documents, initialPropertyId, disabled }: {
-  properties: LeasePropertyOption[]; units: LeaseUnitOption[]; documents: SignedLeaseDocumentOption[]; initialPropertyId?: string; disabled: boolean;
+export function ExistingLeaseForm({ properties, units, documents, initialPropertyId, initialUnitId, disabled }: {
+  properties: LeasePropertyOption[]; units: LeaseUnitOption[]; documents: SignedLeaseDocumentOption[]; initialPropertyId?: string; initialUnitId?: string; disabled: boolean;
 }) {
   const initialProperty = properties.find((property) => property.id === initialPropertyId) ?? properties[0];
   const [draft, setDraft] = useState<LeaseDraft>({
-    propertyId: initialProperty?.id ?? "", unitId: "", householdName: "", members: [{ ...emptyMember("primary"), primaryContact: true, financiallyResponsible: true }],
+    propertyId: initialProperty?.id ?? "", unitId: units.find((unit) => unit.id === initialUnitId && unit.propertyId === initialProperty?.id)?.id ?? "", householdName: "", members: [{ ...emptyMember("primary"), primaryContact: true, financiallyResponsible: true }],
     source: "operator_supplied", externalReference: "", startDate: "", endDate: "", rentAmount: "", rentFrequency: "monthly",
     signedDocumentId: "", openingBalance: "0.00", firstChargeDueDate: "",
   });
@@ -116,7 +116,7 @@ export function ExistingLeaseForm({ properties, units, documents, initialPropert
   }
 
   if (result) return (
-    <Card className="border-[#abefc6] bg-[#f6fef9]"><CardHeader><span className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-[#dcfae6] text-success"><CheckCircle2 className="h-6 w-6" /></span><CardTitle>Tenancy activated</CardTitle><CardDescription>The household, lease, receivable account, and recurring rent schedule committed together.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="rounded-lg border bg-white p-4 font-mono text-xs text-muted-foreground">Tenancy {result.tenancyId}</div><div className="flex flex-wrap gap-3"><Button asChild><Link href="/app/residents">View residents</Link></Button><Button variant="outline" onClick={() => window.location.reload()}>Record another lease</Button></div></CardContent></Card>
+    <Card className="border-[#abefc6] bg-[#f6fef9]"><CardHeader><span className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-[#dcfae6] text-success"><CheckCircle2 className="h-6 w-6" /></span><CardTitle>{result.possessionStatus === "scheduled" ? "Tenancy scheduled" : "Tenancy activated"}</CardTitle><CardDescription>The household, lease, receivable account, and recurring rent schedule committed together.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="rounded-lg border bg-white p-4 font-mono text-xs text-muted-foreground">Tenancy {result.tenancyId}</div><div className="flex flex-wrap gap-3"><Button asChild><Link href="/app/residents">View residents</Link></Button><Button variant="outline" asChild><Link href={`/app/tenancies/${result.tenancyId}/closeout`}>Tenancy closeout</Link></Button><Button variant="outline" onClick={() => window.location.reload()}>Record another lease</Button></div></CardContent></Card>
   );
 
   return (
