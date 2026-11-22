@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ApplicationRecoveryForm } from "./recovery-form";
 
 type Status = {
   applicationReference: string; firstName: string; lastName: string;
@@ -92,13 +93,15 @@ export function ApplicationStatus({ reference: validatedReference }: { reference
   }
   if (state === "loading") return <p className="mt-6 text-sm text-muted-foreground">Loading your application…</p>;
   if (state === "unavailable") return (
-    <Alert className="mt-8">
-      <AlertTitle>Application access is unavailable</AlertTitle>
-      <AlertDescription>
-        Use the application-status link from your original verification. Access may have expired,
-        or the application may have been withdrawn, closed, or converted.
-      </AlertDescription>
-    </Alert>
+    <div className="mt-8 space-y-5">
+      <Alert>
+        <AlertTitle>Application access is unavailable</AlertTitle>
+        <AlertDescription>
+          Use the reference and email address from your application to request a new link.
+        </AlertDescription>
+      </Alert>
+      <ApplicationRecoveryForm reference={validatedReference === "unavailable" ? undefined : validatedReference} />
+    </div>
   );
   if (state === "error") return <p role="alert" className="mt-6 text-destructive">
     Your application could not be loaded. Refresh to try again.

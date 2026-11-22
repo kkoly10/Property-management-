@@ -115,6 +115,7 @@ describe("host routing", () => {
     const publicPaths = [
       "/api/v1/rental-applications", "/api/v1/rental-applications/verify",
       "/api/v1/rental-applications/status", "/api/v1/rental-applications/withdraw",
+      "/api/v1/rental-applications/recover", "/api/v1/rental-applications/recover/confirm",
     ];
     const operatorPaths = [
       "/api/v1/rental-applications/prepare", "/api/v1/rental-applications/close",

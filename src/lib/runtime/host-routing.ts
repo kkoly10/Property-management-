@@ -31,6 +31,7 @@ const RENTAL_PUBLIC_PREFIXES = ["/search", "/l", "/inquiries/verify", "/tours/ve
 const RENTAL_APPLICATION_PUBLIC_APIS = new Set([
   "/api/v1/rental-applications", "/api/v1/rental-applications/verify",
   "/api/v1/rental-applications/status", "/api/v1/rental-applications/withdraw",
+  "/api/v1/rental-applications/recover", "/api/v1/rental-applications/recover/confirm",
 ]);
 const RENTAL_APPLICATION_OPERATOR_APIS = new Set([
   "/api/v1/rental-applications/prepare", "/api/v1/rental-applications/close",

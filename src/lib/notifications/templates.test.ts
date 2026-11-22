@@ -37,6 +37,19 @@ describe("hasTemplate", () => {
 });
 
 describe("renderNotification", () => {
+  it("binds a rental recovery credential to the recovery fragment, not the initial verification link", () => {
+    stubOrigins();
+    vi.stubEnv("NEXT_PUBLIC_RENTALS_ORIGIN", "https://rent.crecyos.com");
+    const token = "a".repeat(64);
+    const reference = "APP-1234ABCDEF90";
+    for (const locale of ["en-US", "es-MX", "fr-CA"]) {
+      const recovery = renderNotification({ templateCode: "rental_application_recovery", locale,
+        payload: { verificationToken: token, applicationReference: reference } });
+      expect(recovery?.ctaUrl).toBe(`https://rent.crecyos.com/applications/verify#recovery=${token}`);
+      expect(recovery?.details?.[0]?.value).toBe(reference);
+    }
+  });
+
   it("returns null for an unknown template so the worker can dead-letter it", () => {
     expect(renderNotification({ templateCode: "nope", locale: "en-US", payload: {} })).toBeNull();
   });

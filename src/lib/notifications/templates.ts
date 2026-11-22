@@ -136,13 +136,18 @@ function inquiryVerificationLink(p: Record<string, unknown>): string {
   return `${origin}/inquiries/verify#token=${encodeURIComponent(token)}`;
 }
 
-function applicationVerificationLink(p: Record<string, unknown>): string {
+function applicationVerificationLink(p: Record<string, unknown>, fragment: "token" | "recovery" = "token"): string {
   const token = typeof p.verificationToken === "string" ? p.verificationToken.trim().toLowerCase() : "";
   const origin = rentalsOrigin();
   if (!origin || !/^[0-9a-f]{64}$/.test(token)) {
     return origin ? `${origin}/applications/verify` : "/applications/verify";
   }
-  return `${origin}/applications/verify#token=${encodeURIComponent(token)}`;
+  return `${origin}/applications/verify#${fragment}=${encodeURIComponent(token)}`;
+}
+
+function applicationReferenceDetails(p: Record<string, unknown>, label: string): NotificationDetail[] {
+  const reference = typeof p.applicationReference === "string" ? p.applicationReference : "";
+  return /^APP-[0-9A-F]{12}$/.test(reference) ? [{ label, value: reference }] : [];
 }
 
 function tourVerificationLink(p: Record<string, unknown>): string {
@@ -307,6 +312,7 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
       heading: "Verify your email",
       paragraphs: ["Verify this email address to share your rental application with the landlord. Verification does not approve your application."],
       ctaLabel: "Verify my application", ctaUrl: applicationVerificationLink(p),
+      details: applicationReferenceDetails(p, "Application reference"),
       securityNote: "This link expires in 60 minutes. Ignore it if you did not apply.",
     }, "en"),
     es: (p) => compose({
@@ -314,6 +320,7 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
       heading: "Verifica tu correo electrónico",
       paragraphs: ["Verifica tu correo para enviar tu solicitud al propietario. Esta verificación no aprueba tu solicitud."],
       ctaLabel: "Verificar mi solicitud", ctaUrl: applicationVerificationLink(p),
+      details: applicationReferenceDetails(p, "Referencia de la solicitud"),
       securityNote: "Este enlace vence en 60 minutos. Si no solicitaste el alquiler, ignóralo.",
     }, "es"),
     fr: (p) => compose({
@@ -321,7 +328,34 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
       heading: "Vérifiez votre adresse e-mail",
       paragraphs: ["Vérifiez cette adresse pour envoyer votre candidature au propriétaire. Cela ne constitue pas une approbation."],
       ctaLabel: "Vérifier ma candidature", ctaUrl: applicationVerificationLink(p),
+      details: applicationReferenceDetails(p, "Référence de la candidature"),
       securityNote: "Ce lien expire dans 60 minutes. Si ce n'était pas vous, ignorez cet e-mail.",
+    }, "fr"),
+  },
+  rental_application_recovery: {
+    en: (p) => compose({
+      subject: "Recover access to your rental application",
+      heading: "Recover application access",
+      paragraphs: ["Open the link in the browser you want to use. Confirming it replaces access from the previous browser."],
+      ctaLabel: "Recover application access", ctaUrl: applicationVerificationLink(p, "recovery"),
+      details: applicationReferenceDetails(p, "Application reference"),
+      securityNote: "This one-time link expires 30 minutes after the request. If you did not request it, ignore this email.",
+    }, "en"),
+    es: (p) => compose({
+      subject: "Recupera el acceso a tu solicitud de alquiler",
+      heading: "Recupera el acceso a tu solicitud",
+      paragraphs: ["Abre el enlace en el navegador que quieras usar. Al confirmarlo, se reemplazará el acceso del navegador anterior."],
+      ctaLabel: "Recuperar el acceso", ctaUrl: applicationVerificationLink(p, "recovery"),
+      details: applicationReferenceDetails(p, "Referencia de la solicitud"),
+      securityNote: "Este enlace de un solo uso vence 30 minutos después de la solicitud. Si no lo solicitaste, ignora este correo.",
+    }, "es"),
+    fr: (p) => compose({
+      subject: "Récupérez l’accès à votre candidature de location",
+      heading: "Récupérez l’accès à votre candidature",
+      paragraphs: ["Ouvrez le lien dans le navigateur que vous comptez utiliser. La confirmation remplacera l’accès depuis l’ancien navigateur."],
+      ctaLabel: "Récupérer l’accès", ctaUrl: applicationVerificationLink(p, "recovery"),
+      details: applicationReferenceDetails(p, "Référence de la candidature"),
+      securityNote: "Ce lien à usage unique expire 30 minutes après la demande. Si vous ne l’avez pas demandé, ignorez cet e-mail.",
     }, "fr"),
   },
   rental_tour_verification: {

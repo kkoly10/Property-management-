@@ -24,6 +24,11 @@ export const verifyRentalApplicationSchema = z.object({
   token: z.string().trim().toLowerCase().regex(/^[0-9a-f]{64}$/),
 }).strict();
 
+export const recoverRentalApplicationSchema = z.object({
+  reference: z.string().trim().toUpperCase().regex(/^APP-[0-9A-F]{12}$/),
+  email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
+}).strict();
+
 export const closeRentalApplicationSchema = z.object({
   organizationId: z.uuid(),
   applicationId: z.uuid(),

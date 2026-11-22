@@ -5,6 +5,7 @@ import {
   CreditCard,
   FileLock2,
   LayoutDashboard,
+  Monitor,
   Settings,
   UsersRound,
 } from "lucide-react";
@@ -15,6 +16,7 @@ import { GlobalSearch } from "@/components/app/global-search";
 import { Wordmark } from "@/components/brand/wordmark";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { Badge } from "@/components/ui/badge";
+import { SESSION_SETTINGS_PATH } from "@/lib/auth/session-settings-path";
 import type { OperatorOrganization } from "@/lib/organization/context";
 
 function UtilityLink({
@@ -79,6 +81,7 @@ export function AppShell({
             <UtilityLink href="/settings/team" label="Team access" icon={UsersRound} />
             <UtilityLink href="/settings/notifications?returnTo=/app" label="Notifications" icon={Bell} />
             <UtilityLink href="/settings/privacy?returnTo=/app" label="Privacy requests" icon={FileLock2} />
+            <UtilityLink href={`${SESSION_SETTINGS_PATH}?returnTo=/app`} label="Account sessions" icon={Monitor} />
           </div>
           <div className="mt-3 flex items-center gap-2 border-t px-3 pt-3 text-xs text-muted-foreground">
             <span aria-hidden="true" className="h-2 w-2 rounded-full bg-success" />

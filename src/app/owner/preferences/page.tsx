@@ -6,6 +6,7 @@ import { NotificationPreferencesForm } from "@/components/notifications/notifica
 import { OwnerShell } from "@/components/owner/owner-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { SESSION_SETTINGS_PATH } from "@/lib/auth/session-settings-path";
 import { getNotificationPreferencesWorkspace } from "@/lib/data/notification-preferences";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,12 @@ export default async function OwnerNotificationPreferencesPage() {
           description="Set how operational records reach you and review sanitized delivery activity. Invitations and security messages remain available regardless of these choices."
           meta="Preferences apply to your signed-in account across Crecy surfaces"
         />
-        <SignOutButton />
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={`${SESSION_SETTINGS_PATH}?returnTo=/owner/preferences`}>Account sessions</Link>
+          </Button>
+          <SignOutButton />
+        </div>
 
         {workspace.mode === "setup" ? (
           <Alert variant="info">

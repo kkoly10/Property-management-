@@ -1,29 +1,11 @@
-import { createHmac } from "node:crypto";
-import { isIP } from "node:net";
 import { NextResponse } from "next/server";
+import { rentalApplicationRateLimit } from "@/lib/rental-application-rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { submitRentalApplicationSchema } from "@/lib/validation/rental-application";
 
 const headers = { "Cache-Control": "private, no-store" };
 function reply(body: unknown, status: number) {
   return NextResponse.json(body, { status, headers });
-}
-
-function networkHash(request: Request): string | null | "unavailable" {
-  const secret = process.env.RENTAL_INQUIRY_RATE_LIMIT_SECRET?.trim();
-  if (!secret || secret.includes("replace_me") || secret.length < 32) return "unavailable";
-  // Accept only the edge-controlled forwarded source; x-real-ip may originate
-  // from an untrusted upstream and must not silently replace a missing header.
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "";
-  // Direct Vercel requests include an edge-supplied source IP. In production,
-  // missing proxy metadata must not silently disable the network abuse budget.
-  // Deployment behind another proxy still requires a separate header-trust review.
-  // The forwarded value must be a syntactically valid IPv4/IPv6 address; an
-  // unknown or malformed proxy token must never mint its own abuse-budget key.
-  if (isIP(forwarded) === 0) {
-    return process.env.NODE_ENV === "production" ? "unavailable" : null;
-  }
-  return createHmac("sha256", secret).update(`rental-application-ip:${forwarded}`).digest("hex");
 }
 
 export async function POST(request: Request) {
@@ -33,8 +15,8 @@ export async function POST(request: Request) {
   if (!operationKey || operationKey.length < 8 || operationKey.length > 200) {
     return reply({ error: "The application request could not be prepared." }, 400);
   }
-  const hash = networkHash(request);
-  if (hash === "unavailable") return reply({ error: "Applications are temporarily unavailable." }, 503);
+  const rateLimit = rentalApplicationRateLimit(request, "submission");
+  if (!rateLimit) return reply({ error: "Applications are temporarily unavailable." }, 503);
   try {
     const admin = createAdminClient();
     const { error, data } = await admin.rpc("submit_public_rental_application", {
@@ -45,7 +27,7 @@ export async function POST(request: Request) {
       p_desired_move_in_on: parsed.data.desiredMoveInOn,
       p_lease_term_text: parsed.data.leaseTermText,
       p_applicant_note: parsed.data.applicantNote,
-      p_network_hash: hash,
+      p_network_hash: rateLimit.networkHash,
       p_locale: parsed.data.locale,
       p_idempotency_key: operationKey,
     });

@@ -13,8 +13,7 @@ export default function VerifyApplicationPage() {
       <p className="text-sm font-semibold text-primary">Rental application</p>
       <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em]">Verify your email</h1>
       <p className="mt-4 text-base leading-7 text-muted-foreground">
-        Verification shares your application with the landlord and gives you private
-        access to its status. It does not reserve the rental or approve an application.
+        Use the link to verify a new application or recover access to an application you’ve already verified.
       </p>
       <div className="mt-8"><ApplicationVerification /></div>
     </div>

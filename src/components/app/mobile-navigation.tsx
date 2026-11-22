@@ -11,6 +11,7 @@ import {
   CreditCard,
   FileLock2,
   Menu,
+  Monitor,
   Settings,
   UsersRound,
   Wrench,
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { isActive, overview, navigationFor, type WorkspaceExperience, type NavigationItem } from "@/components/app/primary-navigation";
+import { SESSION_SETTINGS_PATH } from "@/lib/auth/session-settings-path";
 import { cn } from "@/lib/utils";
 
 /**
@@ -70,6 +72,7 @@ const UTILITIES: { label: string; href: string; icon: LucideIcon }[] = [
   { label: "Team access", href: "/settings/team", icon: UsersRound },
   { label: "Notifications", href: "/settings/notifications?returnTo=/app", icon: Bell },
   { label: "Privacy requests", href: "/settings/privacy?returnTo=/app", icon: FileLock2 },
+  { label: "Account sessions", href: `${SESSION_SETTINGS_PATH}?returnTo=/app`, icon: Monitor },
   { label: "Help and security", href: "/security", icon: CircleHelp },
 ];
 

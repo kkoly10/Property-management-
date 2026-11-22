@@ -84,6 +84,9 @@ export async function runNotificationDispatch(
       outcome = { ok: false, errorCode: "MISSING_RECIPIENT_ADDRESS", retryable: false };
     } else if (!hasTemplate(job.templateCode)) {
       outcome = { ok: false, errorCode: "UNKNOWN_TEMPLATE_CODE", retryable: false };
+    } else if (job.templateCode === "rental_application_recovery"
+      && !(typeof job.payload.expiresAt === "string" && Date.parse(job.payload.expiresAt) > Date.now())) {
+      outcome = { ok: false, errorCode: "APPLICATION_RECOVERY_LINK_EXPIRED", retryable: false };
     } else if (requiresAuthCredential(job.payload) && !hasUsableAuthCredential(job.payload)) {
       // FAIL CLOSED. An invitation queued under this architecture says, in its own copy, that opening
       // the link signs the recipient in. Without the credential that sentence is false: the bare

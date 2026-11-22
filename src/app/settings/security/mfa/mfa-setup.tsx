@@ -11,7 +11,7 @@ import { createClient } from "@/lib/supabase/client";
 
 type Mode = "loading" | "intro" | "enrolling" | "scan" | "challenge" | "verifying" | "complete";
 
-export function MfaSetup({ returnTo }: { returnTo: string }) {
+export function MfaSetup({ returnTo, requireChallenge = false }: { returnTo: string; requireChallenge?: boolean }) {
   const [mode, setMode] = useState<Mode>("loading");
   const [factorId, setFactorId] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -34,7 +34,7 @@ export function MfaSetup({ returnTo }: { returnTo: string }) {
         setMode("intro");
         return;
       }
-      if (assurance.data.currentLevel === "aal2") {
+      if (assurance.data.currentLevel === "aal2" && !requireChallenge) {
         setMode("complete");
         return;
       }
@@ -46,7 +46,7 @@ export function MfaSetup({ returnTo }: { returnTo: string }) {
         setMode("intro");
       }
     })();
-  }, []);
+  }, [requireChallenge]);
 
   async function beginEnrollment() {
     setError(null);
@@ -84,7 +84,7 @@ export function MfaSetup({ returnTo }: { returnTo: string }) {
 
   return (
     <div className="space-y-5">
-      {mode === "intro" ? <div className="space-y-5 text-center"><span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground"><ShieldCheck className="h-7 w-7" /></span><div><h2 className="text-xl font-semibold">Add an authenticator</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Use an app such as 1Password, Google Authenticator, or Microsoft Authenticator. Crecy requires this step before changing payment connections.</p></div><Button onClick={beginEnrollment}>Set up authenticator</Button></div> : null}
+      {mode === "intro" ? <div className="space-y-5 text-center"><span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground"><ShieldCheck className="h-7 w-7" /></span><div><h2 className="text-xl font-semibold">Add an authenticator</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Use an app such as 1Password, Google Authenticator, or Microsoft Authenticator to verify sensitive actions.</p></div><Button onClick={beginEnrollment}>Set up authenticator</Button></div> : null}
       {mode === "enrolling" ? <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />Preparing a secure QR code…</div> : null}
       {mode === "scan" ? <div className="space-y-5"><div className="text-center"><h2 className="text-xl font-semibold">Scan this QR code</h2><p className="mt-2 text-sm text-muted-foreground">Then enter the six-digit code shown by your authenticator.</p></div><div className="mx-auto w-fit rounded-xl border bg-white p-3"><Image src={qrCode} alt="Authenticator enrollment QR code" width={220} height={220} unoptimized /></div><div className="rounded-lg bg-muted p-3 text-center"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Can&apos;t scan?</p><p className="mt-1 break-all font-mono text-sm">{secret}</p></div></div> : null}
       {mode === "challenge" ? <div className="text-center"><KeyRound className="mx-auto h-10 w-10 text-primary" /><h2 className="mt-4 text-xl font-semibold">Verify your identity</h2><p className="mt-2 text-sm text-muted-foreground">Enter the current code from your authenticator app.</p></div> : null}

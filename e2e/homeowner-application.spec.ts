@@ -67,6 +67,43 @@ test("malformed successful verification cannot consume the applicant's retry UI"
   await expect(page.getByText("Application verified")).toBeVisible();
   expect(tokens).toEqual([TOKEN, TOKEN]);
 });
+
+test("an applicant can request a fresh link and confirm it in a new browser", async ({ page }) => {
+  const reference = "APP-1234ABCD5678";
+  let confirmations = 0;
+  await page.route("**/api/v1/rental-applications/status**", async (route) => {
+    await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
+  await page.route("**/api/v1/rental-applications/recover", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ reference, email: "applicant@example.test" });
+    expect(route.request().headers()["idempotency-key"]).toMatch(/^[0-9a-f-]{36}$/);
+    await route.fulfill({ status: 202, json: { accepted: true } });
+  });
+  await page.goto(`/applications?ref=${reference}`);
+  await expect(page.getByLabel("Application reference")).toHaveValue(reference);
+  await page.getByLabel("Application email").fill("applicant@example.test");
+  await page.getByRole("button", { name: "Email me a recovery link" }).click();
+  await expect(page.getByText("If the details match an active application,", { exact: false })).toBeVisible();
+
+  const fresh = await page.context().browser()!.newPage();
+  try {
+    await fresh.route("**/api/v1/rental-applications/recover/confirm", async (route) => {
+      confirmations += 1;
+      expect(route.request().postDataJSON()).toEqual({ token: TOKEN });
+      await route.fulfill({ json: { verified: true, accessGranted: true, applicationReference: reference } });
+    });
+    await fresh.goto(new URL(`/applications/verify#recovery=${TOKEN}`, page.url()).href);
+    await expect(fresh.getByRole("button", { name: "Recover my access" })).toBeVisible();
+    expect(confirmations).toBe(0);
+    await fresh.getByRole("button", { name: "Recover my access" }).click();
+    await expect(fresh.getByText("Application access recovered")).toBeVisible();
+    expect(confirmations).toBe(1);
+    expect(await fresh.evaluate(() => window.location.hash)).toBe("");
+    await expect(fresh.getByRole("link", { name: "View my application" })).toHaveAttribute("href", `/applications?ref=${reference}`);
+  } finally {
+    await fresh.close();
+  }
+});
 for (const width of [390, 1440]) {
   test(`landlord application inbox fits ${width}px without applicant scoring`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });

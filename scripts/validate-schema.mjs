@@ -4,6 +4,7 @@ import { validateSharedListing } from "./validate-shared-listing.mjs";
 import { validateRentalInquiry } from "./validate-rental-inquiry.mjs";
 import { validateRentalTour } from "./validate-rental-tour.mjs";
 import { validateRentalApplication } from "./validate-rental-application.mjs";
+import { validateRentalApplicationRecovery } from "./validate-rental-application-recovery.mjs";
 import { validateRentalMarketplace } from "./validate-rental-marketplace.mjs";
 import { validateTenancyEpisodes } from "./validate-tenancy-episodes.mjs";
 import { validatePlatformBilling } from "./validate-platform-billing.mjs";
@@ -34,6 +35,7 @@ const rentalInquirySql = await readFile(resolve(root, "supabase/migrations/20260
 const rentalTourSql = await readFile(resolve(root, "supabase/migrations/20261007120000_verified_rental_tours.sql"), "utf8");
 const rentalApplicationSql = await readFile(resolve(root, "supabase/migrations/20261008020000_verified_rental_applications.sql"), "utf8");
 const rentalMarketplaceSql = await readFile(resolve(root, "supabase/migrations/20261009205544_rental_marketplace_discovery.sql"), "utf8");
+const rentalApplicationRecoverySql = await readFile(resolve(root, "supabase/migrations/20261122165800_rental_application_access_recovery.sql"), "utf8");
 const foundationSql = await readFile(resolve(root, "supabase/migrations/20260720095008_phase_1_foundation.sql"), "utf8");
 const portfolioSql = await readFile(resolve(root, "supabase/migrations/20260720104921_phase_2_portfolio_foundation.sql"), "utf8");
 const documentsSql = await readFile(resolve(root, "supabase/migrations/20260720113426_phase_2_document_ingestion.sql"), "utf8");
@@ -6359,6 +6361,8 @@ async function validateRecurringCharges() {
   const rentalInquiry = await validateRentalInquiry(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const rentalTour = await validateRentalTour(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const rentalApplication = await validateRentalApplication(db, { assert, expectDatabaseError });
+  await db.exec(rentalApplicationRecoverySql);
+  Object.assign(rentalApplication, { accessRecovery: await validateRentalApplicationRecovery(db, { assert, expectDatabaseError }) });
   const rentalMarketplace = await validateRentalMarketplace(db, { assert, expectDatabaseError });
   const tenancyEpisodes = await validateTenancyEpisodes(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const tenancyCloseout = await validateTenancyCloseout(db, { assert, expectDatabaseError, createOrganizationAsServer });

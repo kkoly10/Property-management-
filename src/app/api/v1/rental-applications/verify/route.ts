@@ -37,7 +37,7 @@ export async function POST(request: Request) {
       verified: true,
       accessGranted: Boolean(access),
       applicationReference: reference || null,
-      message: access ? "Your application is verified." : "This link has already been used. Use the original browser to view your application.",
+      message: access ? "Your application is verified." : "This link has already been used. Open application status to request fresh access.",
     }, { headers: noStore });
     if (access && cookieName) response.cookies.set(cookieName, access, applicationAccessCookieOptions);
     return response;

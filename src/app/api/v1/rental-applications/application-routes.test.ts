@@ -29,6 +29,8 @@ vi.mock("next/headers", () => ({
 }));
 
 import { POST as verifyApplication } from "./verify/route";
+import { POST as requestApplicationRecovery } from "./recover/route";
+import { POST as confirmApplicationRecovery } from "./recover/confirm/route";
 import { GET as getApplicationStatus } from "./status/route";
 import { POST as withdrawApplication } from "./withdraw/route";
 import { POST as submitApplication } from "./route";
@@ -166,6 +168,59 @@ describe("rental application verification HTTP boundary", () => {
     const response = await verifyApplication(verifyRequest());
     expect(response.status).toBe(502);
     expect(await response.json()).toMatchObject({ verified: false });
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+});
+
+describe("rental application recovery HTTP boundary", () => {
+  function recoveryRequest(reference: string, forwarded?: string) {
+    return new Request("https://rent.crecyos.com/api/v1/rental-applications/recover", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": OPERATION,
+        ...(forwarded ? { "x-forwarded-for": forwarded } : {}) },
+      body: JSON.stringify({ reference, email: " Jamie@Example.COM " }),
+    });
+  }
+
+  it("returns one generic receipt and hashes the network and normalized email", async () => {
+    mocks.rpc.mockResolvedValue({ data: { accepted: true, hypotheticalSensitiveField: "private" }, error: null });
+    for (const reference of [REF_A.toLowerCase(), REF_B]) {
+      const response = await requestApplicationRecovery(recoveryRequest(reference, "203.0.113.8"));
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ accepted: true });
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+    }
+    const hash = (value: string) => createHmac("sha256", RATE_SECRET).update(value).digest("hex");
+    expect(mocks.rpc).toHaveBeenCalledWith("request_rental_application_recovery", {
+      p_reference: REF_A,
+      p_email: "jamie@example.com",
+      p_application_contact_hash: hash(`rental-application-recovery-contact:${REF_A}:jamie@example.com`),
+      p_network_hash: hash("rental-application-recovery-ip:203.0.113.8"),
+      p_operation_key: OPERATION,
+    });
+  });
+
+  it("fails closed without trusted production network metadata", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const response = await requestApplicationRecovery(recoveryRequest(REF_A));
+    expect(response.status).toBe(503);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("writes the replacement into only its named application cookie", async () => {
+    mocks.rpc.mockResolvedValue({ data: { verified: true, applicationReference: REF_A, accessToken: TOKEN_B }, error: null });
+    const response = await confirmApplicationRecovery(verifyRequest());
+    expect(await response.json()).toMatchObject({ verified: true, accessGranted: true, applicationReference: REF_A });
+    expect(response.headers.get("set-cookie")).toContain(`${cookieName(REF_A)}=${TOKEN_B}`);
+    expect(response.headers.get("set-cookie")).not.toContain(cookieName(REF_B));
+    expect(mocks.rpc).toHaveBeenCalledWith("confirm_rental_application_recovery", { p_token: VERIFY_TOKEN });
+  });
+
+  it("does not expose or write a credential on failed link use", async () => {
+    mocks.rpc.mockResolvedValue({ data: { verified: false, applicationReference: REF_A, accessToken: TOKEN_B }, error: null });
+    const response = await confirmApplicationRecovery(verifyRequest());
+    expect(await response.json()).toEqual({ verified: false, message: "This recovery link is invalid, expired, or has already been used." });
     expect(response.headers.get("set-cookie")).toBeNull();
   });
 });
