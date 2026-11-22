@@ -57,7 +57,7 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
         <div className="min-w-0">
           <div className="overflow-hidden rounded-[1.5rem] border bg-white">
             {listing.photos[0]?.url ? (
-              // Public share pages receive only short-lived signed URLs for exact scanner-clean versions.
+              // The public media route rechecks availability and the approved photo before serving it.
               // eslint-disable-next-line @next/next/no-img-element
               <img src={listing.photos[0].url} alt={listing.photos[0].altText || listing.title}
                 className="aspect-[4/3] w-full object-cover sm:aspect-[16/9]" />

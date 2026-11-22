@@ -178,6 +178,22 @@ describe("sandbox platform subscription routes", () => {
     expect(routeForHost(new URL(origin).host, "/api/v1/billing/portal").type).toBe("continue");
   });
 
+  it.each(["https://tbivpbbejttacfcqeqia.supabase.co", "https://tbivpbbejttacfcqeqia.supabase.co."])(
+    "disables sandbox checkout, portal, and webhooks when both preview database settings point to %s",
+    async (projectUrl) => {
+      vi.stubEnv("CRECY_SAAS_SANDBOX_SUPABASE_URL", projectUrl);
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", projectUrl);
+
+      expect(getPlatformStripeConfig()).toBeNull();
+      expect((await checkout(mutation())).status).toBe(503);
+      expect((await portal(mutation({ organizationId }))).status).toBe(503);
+      expect((await webhook(eventRequest())).status).toBe(503);
+      expect(fake.context).not.toHaveBeenCalled();
+      expect(fake.admin).not.toHaveBeenCalled();
+      expect(fake.account).not.toHaveBeenCalled();
+    },
+  );
+
   it("denies a cross-origin request, stale workspace, low MFA and unauthorized DB scope before Stripe calls", async () => {
     expect((await checkout(mutation(plan, "https://owner.crecyos.com"))).status).toBe(403);
     expect((await portal(mutation({ organizationId: otherOrganization }))).status).toBe(409);

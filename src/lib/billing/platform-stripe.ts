@@ -2,11 +2,12 @@ import "server-only";
 import Stripe from "stripe";
 import { z } from "zod";
 import { PRICE_BOOKS } from "@/lib/marketing/pricing";
-import { appOrigin, classifyHost } from "@/lib/runtime/host";
+import { appOrigin, classifyHost, normalizeHostname } from "@/lib/runtime/host";
 import type { BillingClaim, BillingCountry, BillingInterval, CheckoutReservation, PaidPlan, UpgradeReservation } from "./platform-contract";
 
 export const platformBillingPath = "/settings/billing";
 const scope = "crecy_platform_saas";
+const productionSupabaseHost = "tbivpbbejttacfcqeqia.supabase.co";
 const priceIdsSchema = z.record(
   z.string().regex(/^(US|CA|MX)\.(starter|growth|pro)\.(month|year)$/),
   z.string().regex(/^price_[a-zA-Z0-9]+$/),
@@ -36,7 +37,8 @@ export function getPlatformStripeConfig() {
       || origin.pathname !== "/" || origin.search || origin.hash
       || (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname))) return null;
     // Confirm the app is explicitly bound to the chosen sandbox database before accepting Stripe test events.
-    if (sandboxProject.href !== applicationProject.href || sandboxProject.pathname !== "/"
+    if (normalizeHostname(sandboxProject.hostname) === productionSupabaseHost
+      || sandboxProject.href !== applicationProject.href || sandboxProject.pathname !== "/"
       || sandboxProject.username || sandboxProject.password || sandboxProject.search || sandboxProject.hash
       || (sandboxProject.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(sandboxProject.hostname))) return null;
     const priceIds = priceIdsSchema.parse(JSON.parse(process.env.CRECY_SAAS_STRIPE_PRICE_IDS ?? "{}"));

@@ -34,8 +34,7 @@ export default async function RentalListingManagementPage({
         <p className="text-sm font-semibold text-primary">Shareable rental listing</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">Find a renter without waiting for marketplace traffic</h1>
         <p className="mt-3 text-base leading-7 text-muted-foreground">
-          Build one polished Crecy page and share the link wherever you already reach renters.
-          Marketplace discovery is deliberately off in this release.
+          Publish a listing to share its link with renters. You can then choose to include it in Crecy search.
         </p>
       </header>
       <RentalListingForm

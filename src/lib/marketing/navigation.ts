@@ -13,6 +13,11 @@ export const MARKETING_ROUTES: MarketingRoute[] = [
   { href: "/pilot", label: "Pilot", description: "Join the Crecy early program." },
 ];
 
+export const MARKETING_NAV_LINKS = [
+  { href: "/search", label: "Find rentals" },
+  ...MARKETING_ROUTES,
+];
+
 /** Routes the marketing site links to that are not marketing pages. */
 export const LEGAL_ROUTES: MarketingRoute[] = [
   { href: "/legal", label: "Legal documents", description: "Every version Crecy has published, and the state it is in." },

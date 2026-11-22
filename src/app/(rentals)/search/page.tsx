@@ -169,7 +169,7 @@ export default async function RentalSearchPage({
                 <Link href={`/l/${item.publicId}`} className="block">
                   <div className="overflow-hidden bg-muted">
                     {item.heroPhoto?.url ? (
-                      // Signed private-storage URL for the exact approved listing photo.
+                      // The public media route rechecks the listing before serving the exact photo.
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={item.heroPhoto.url}

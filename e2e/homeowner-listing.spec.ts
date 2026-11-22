@@ -8,7 +8,7 @@ for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/app/rentals/${UNIT}/listing`);
     await expect(page.getByRole("heading", { name: /Find a renter without waiting for marketplace traffic/i })).toBeVisible();
-    await expect(page.getByText("Marketplace discovery is deliberately off", { exact: false })).toBeVisible();
+    await expect(page.getByText("You can then choose to include it in Crecy search", { exact: false })).toBeVisible();
     await expect(page.getByRole("button", { name: "Save draft" })).toBeDisabled();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   });

@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!entrypoint.py
+!server.py
+!clamd.conf
+!freshclam.conf

@@ -90,9 +90,10 @@ test.describe("public marketing surface", () => {
     );
   });
 
-  test("desktop navigation reaches every marketing page", async ({ page }) => {
+  test("desktop navigation reaches the marketing pages and rental search", async ({ page }) => {
     await page.setViewportSize(DESKTOP);
     for (const [label, path] of [
+      ["Find rentals", "/search"],
       ["Product", "/product"],
       ["Landlords", "/landlords"],
       ["Pricing", "/pricing"],
@@ -113,14 +114,14 @@ test.describe("public marketing surface", () => {
     const mobileNav = page.getByRole("navigation", { name: "Primary mobile" });
     // The menu is a CSS disclosure, so its links exist in the DOM but must not be reachable until it is
     // opened — otherwise a phone visitor gets an invisible tab stop through five links.
-    await expect(mobileNav.getByRole("link", { name: "Pricing" })).toBeHidden();
+    await expect(mobileNav.getByRole("link", { name: "Find rentals" })).toBeHidden();
     // The toggle is a <label> wrapping an icon; clicking the label is what a visitor does, and the
     // inner <svg> would otherwise intercept a text-targeted click.
     await page.locator('label[for="marketing-menu"]').click();
-    await expect(mobileNav.getByRole("link", { name: "Pricing" })).toBeVisible();
-    await mobileNav.getByRole("link", { name: "Pricing" }).click();
-    await page.waitForURL("**/pricing");
-    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(mobileNav.getByRole("link", { name: "Find rentals" })).toBeVisible();
+    await mobileNav.getByRole("link", { name: "Find rentals" }).click();
+    await page.waitForURL("**/search");
+    await expect(page.getByRole("heading", { name: /Find a rental/i })).toBeVisible();
   });
 
   test("the footer exposes the required destinations on every page", async ({ page }) => {
@@ -128,7 +129,7 @@ test.describe("public marketing surface", () => {
     for (const path of ["/", "/pricing", "/security"]) {
       await page.goto(path);
       const footer = page.locator("footer");
-      for (const label of ["Product", "Landlords", "Pricing", "Crecy Living", "Security", "Pilot", "Log in", "Start free", "Legal documents"]) {
+      for (const label of ["Find rentals", "Product", "Landlords", "Pricing", "Crecy Living", "Security", "Pilot", "Log in", "Start free", "Legal documents"]) {
         await expect(footer.getByRole("link", { name: label, exact: true }), `${path} footer is missing ${label}`).toBeVisible();
       }
     }

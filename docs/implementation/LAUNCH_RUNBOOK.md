@@ -303,13 +303,12 @@ stored at the time, and rewriting them would invent evidence rather than correct
 
 ## 4. Provider activation
 
-Each of these is an account someone has to open. None can be invented, and no code changes when they
-arrive — the abstractions already exist and report 503 without credentials.
+The runtime adapters report 503 until their services are configured.
 
-- **Document scanning.** Stand up or subscribe to a scanning service, point
-  `CRECY_DOCUMENT_SCAN_RELAY_URL` at it. It must accept the stored bytes and answer
-  `{"verdict":"clean"|"infected","reference":"..."}`. Anything else is treated as a failed attempt and
-  the document returns to quarantine.
+- **Document scanning.** Deploy the [Crecy-managed ClamAV relay](../../services/document-scanner/README.md)
+  behind HTTPS. Set `CRECY_DOCUMENT_SCAN_RELAY_URL` to its `/scan` endpoint and use the same
+  `CRECY_DOCUMENT_SCAN_RELAY_SECRET` in the relay and the Crecy worker. The connected upload test
+  verifies that a clean verdict releases the exact version and that a scan failure keeps it quarantined.
 - **Transactional mail.** Point `CRECY_NOTIFICATION_RELAY_URL` at a sending service. The worker POSTs
   rendered messages; it does not embed a vendor SDK.
 - **Stripe Connect.** Test-mode keys plus a webhook endpoint signing secret.

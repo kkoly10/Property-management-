@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
-import { MARKETING_ROUTES } from "@/lib/marketing/navigation";
+import { MARKETING_NAV_LINKS } from "@/lib/marketing/navigation";
 
 /**
  * The shared public header.
@@ -55,7 +55,7 @@ export function SiteHeader() {
         </div>
 
         <nav aria-label="Primary" className="hidden min-w-0 flex-[2] flex-wrap items-center justify-center gap-x-8 gap-y-2 lg:flex">
-          {MARKETING_ROUTES.map((route) => (
+          {MARKETING_NAV_LINKS.map((route) => (
             <Link
               key={route.href}
               href={route.href}
@@ -86,7 +86,7 @@ export function SiteHeader() {
           className="absolute inset-x-0 top-full hidden border-b bg-card p-5 shadow-[var(--shadow-panel)] peer-checked:block lg:!hidden"
         >
           <nav aria-label="Primary mobile" className="flex flex-col">
-            {MARKETING_ROUTES.map((route) => (
+            {MARKETING_NAV_LINKS.map((route) => (
               <Link key={route.href} href={route.href} className="border-b px-1 py-3 text-base font-medium last:border-0">
                 {route.label}
               </Link>

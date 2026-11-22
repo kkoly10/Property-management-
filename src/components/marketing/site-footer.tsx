@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Wordmark } from "@/components/brand/wordmark";
-import { LEGAL_ROUTES, MARKETING_ROUTES } from "@/lib/marketing/navigation";
+import { LEGAL_ROUTES, MARKETING_NAV_LINKS } from "@/lib/marketing/navigation";
 
 /**
  * The public footer.
@@ -26,7 +26,7 @@ export function SiteFooter() {
           <nav aria-label="Footer product">
             <h2 className="text-sm font-semibold">Platform</h2>
             <ul className="mt-4 space-y-2.5">
-              {MARKETING_ROUTES.map((route) => (
+              {MARKETING_NAV_LINKS.map((route) => (
                 <li key={route.href}>
                   <Link href={route.href} className="text-sm text-muted-foreground hover:text-foreground">{route.label}</Link>
                 </li>

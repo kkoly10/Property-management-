@@ -101,8 +101,18 @@ export type PublicRentalListing = {
   photos: { url: string | null; altText: string; mimeType: string }[];
 };
 type PublicListingRpc = Omit<PublicRentalListing, "photos" | "preview"> & {
-  photos: { storageBucket: string; storagePath: string; mimeType: string; altText: string }[];
+  photos: unknown[];
 };
+
+const publicPhotoPresentation = z.object({
+  mimeType: z.enum(["image/jpeg", "image/png"]),
+  altText: z.string(),
+});
+
+function publicPhotoLink(publicId: string, index: number, photo: unknown) {
+  const parsed = publicPhotoPresentation.safeParse(photo);
+  return parsed.success ? { ...parsed.data, url: `/l/${publicId}/media/${index}` } : null;
+}
 
 export async function getPublicRentalListing(publicId: string): Promise<PublicRentalListing | null> {
   if (!getPublicSupabaseConfig()) {
@@ -127,10 +137,11 @@ export async function getPublicRentalListing(publicId: string): Promise<PublicRe
     const { data, error } = await admin.rpc("get_public_rental_listing", { p_public_id: publicId });
     if (error || !data) return null;
     const raw = data as PublicListingRpc;
-    const photos = await Promise.all((raw.photos ?? []).map(async (photo) => {
-      const signed = await admin.storage.from(photo.storageBucket).createSignedUrl(photo.storagePath, 300);
-      return { url: signed.data?.signedUrl ?? null, altText: photo.altText, mimeType: photo.mimeType };
-    }));
+    if (raw.publicId !== publicId.toLowerCase()) return null;
+    const photos = (raw.photos ?? []).flatMap((photo, index) => {
+      const media = publicPhotoLink(raw.publicId, index, photo);
+      return media ? [media] : [];
+    });
     return {
       publicId: raw.publicId, title: raw.title, summary: raw.summary,
       rentAmountMinor: Number(raw.rentAmountMinor), currencyCode: raw.currencyCode, availableOn: raw.availableOn,
@@ -166,8 +177,6 @@ const discoveryRpcSchema = z.object({
     }),
     discoveredAt: z.string(),
     heroPhoto: z.object({
-      storageBucket: z.string(),
-      storagePath: z.string(),
       mimeType: z.string(),
       altText: z.string(),
     }).nullable(),
@@ -237,17 +246,7 @@ export async function searchPublicRentalListings(input: RentalDiscoverySearch): 
   const parsed = discoveryRpcSchema.safeParse(data);
   if (!parsed.success) return { items: [], nextCursor: null };
 
-  const items = await Promise.all(parsed.data.items.map(async (item) => {
-    let heroPhoto: RentalDiscoveryItem["heroPhoto"] = null;
-    if (item.heroPhoto) {
-      const signed = await admin.storage.from(item.heroPhoto.storageBucket)
-        .createSignedUrl(item.heroPhoto.storagePath, 300);
-      heroPhoto = {
-        url: signed.data?.signedUrl ?? null,
-        altText: item.heroPhoto.altText,
-        mimeType: item.heroPhoto.mimeType,
-      };
-    }
+  const items = parsed.data.items.map((item) => {
     return {
       publicId: item.publicId,
       title: item.title,
@@ -261,8 +260,8 @@ export async function searchPublicRentalListings(input: RentalDiscoverySearch): 
       timeZone: item.timeZone,
       location: item.location,
       discoveredAt: item.discoveredAt,
-      heroPhoto,
+      heroPhoto: publicPhotoLink(item.publicId, 0, item.heroPhoto),
     };
-  }));
+  });
   return { items, nextCursor: parsed.data.nextCursor };
 }
