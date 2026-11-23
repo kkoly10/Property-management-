@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { submitRentalInquirySchema } from "@/lib/validation/rental-inquiry";
+import { scheduleCriticalRentalMail } from "@/lib/notifications/rental-fast-mail";
 
 const accepted = () => NextResponse.json(
   { accepted: true, message: "Check your email to verify your question before it is shared." },
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
       if (error?.code?.startsWith("22")) return reply("Check your contact details and question.", 400);
       return reply("Inquiry intake is temporarily unavailable.", 503);
     }
+    scheduleCriticalRentalMail("inquiry", { publicId: parsed.data.publicId, email: parsed.data.email, operationKey });
     return accepted();
   } catch {
     return reply("Inquiry intake is temporarily unavailable.", 503);

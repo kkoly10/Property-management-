@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { rentalApplicationRateLimit } from "@/lib/rental-application-rate-limit";
+import { scheduleCriticalRentalMail } from "@/lib/notifications/rental-fast-mail";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { submitRentalApplicationSchema } from "@/lib/validation/rental-application";
 
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
   if (!rateLimit) return reply({ error: "Applications are temporarily unavailable." }, 503);
   try {
     const admin = createAdminClient();
-    const { error, data } = await admin.rpc("submit_public_rental_application", {
+    const args = {
       p_public_id: parsed.data.publicId,
       p_first_name: parsed.data.firstName,
       p_last_name: parsed.data.lastName,
@@ -30,7 +31,10 @@ export async function POST(request: Request) {
       p_network_hash: rateLimit.networkHash,
       p_locale: parsed.data.locale,
       p_idempotency_key: operationKey,
-    });
+    };
+    const { error, data } = parsed.data.requirementsVersion
+      ? await admin.rpc("submit_rental_application_with_requirements", { ...args, p_requirements_version: parsed.data.requirementsVersion })
+      : await admin.rpc("submit_public_rental_application", args);
     // Do not turn an unexpected or incomplete RPC envelope into a false
     // acceptance receipt. The SQL returns { accepted: true } for both a new
     // submission and its privacy-preserving neutral rate-limit response.
@@ -42,6 +46,9 @@ export async function POST(request: Request) {
       if (message.includes("IDEMPOTENCY_CONFLICT")) {
         return reply({ error: "This request key was already used for different details." }, 409);
       }
+      if (message.includes("APPLICATION_REQUIREMENTS_CHANGED")) {
+        return reply({ error: "The listing requirements changed. Refresh the listing and review them before applying." }, 409);
+      }
       if (message.includes("INVALID_DESIRED_MOVE_IN_DATE")) {
         return reply({ error: "Choose a future move-in date after the listing's available date, within one year." }, 400);
       }
@@ -50,6 +57,7 @@ export async function POST(request: Request) {
       }
       return reply({ error: "Applications are temporarily unavailable." }, 503);
     }
+    scheduleCriticalRentalMail("application", { publicId: parsed.data.publicId, email: parsed.data.email, operationKey });
     return reply({
       accepted: true,
       message: "Check your email to verify the application before the landlord can see it.",

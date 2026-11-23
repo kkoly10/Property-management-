@@ -1,6 +1,7 @@
 import "server-only";
 import { hostConfig, originForAudience, originsAreLocal, type LinkAudience } from "@/lib/runtime/host";
 import { NOTIFICATION_PREFERENCE_PATH } from "@/lib/notifications/preference-routes";
+import { rentalLifecycleCopy } from "./rental-lifecycle-copy";
 
 /**
  * Who a transactional message comes FROM, and whether it may be unsubscribed from.
@@ -27,6 +28,12 @@ import { NOTIFICATION_PREFERENCE_PATH } from "@/lib/notifications/preference-rou
  */
 export type MailAudience = LinkAudience;
 
+const lifecycleAudience: Record<string, MailAudience> = Object.fromEntries(
+  Object.entries(rentalLifecycleCopy).map(([code, item]) => [
+    code, item.destination === "agreementRenter" || item.destination === "agreementInvite" ? "resident" : "operator",
+  ]),
+);
+
 /**
  * Template code -> audience, mirroring the `link(path, audience)` calls in templates.ts.
  *
@@ -38,6 +45,7 @@ export type MailAudience = LinkAudience;
  * they manage preferences", read `RECIPIENT_AUDIENCE` — the two maps disagree on purpose.
  */
 export const TEMPLATE_AUDIENCE: Record<string, MailAudience> = {
+  ...lifecycleAudience,
   rental_inquiry_verification: "operator",
   message_rental_inquiry_received: "operator",
   rental_tour_verification: "operator",
@@ -162,6 +170,7 @@ export function senderFor(templateCode: string, audienceOverride?: MailAudience 
  * later. A test asserts every template has an entry here, so a new one cannot default silently.
  */
 const RECIPIENT_AUDIENCE: Record<string, MailAudience | null> = {
+  ...Object.fromEntries(Object.keys(rentalLifecycleCopy).map((code) => [code, code.startsWith("message_") ? "operator" : null])),
   rental_inquiry_verification: null,
   message_rental_inquiry_received: "operator",
   rental_tour_verification: null,

@@ -76,7 +76,7 @@ function withdrawRequest(reference: string, key = "withdraw-operation-key") {
   });
 }
 
-function submitRequest(forwarded?: string, realIp?: string) {
+function submitRequest(forwarded?: string, realIp?: string, requirementsVersion?: string) {
   return new Request("https://rent.crecyos.com/api/v1/rental-applications", {
     method: "POST",
     headers: {
@@ -94,6 +94,7 @@ function submitRequest(forwarded?: string, realIp?: string) {
       leaseTermText: "12 months",
       applicantNote: "",
       locale: "en-US",
+      requirementsVersion,
     }),
   });
 }
@@ -344,6 +345,15 @@ describe("rental application submission HTTP boundary", () => {
     mocks.rpc.mockResolvedValue({ data: {}, error: null });
     const response = await submitApplication(submitRequest("203.0.113.8"));
     expect(response.status).toBe(503);
+  });
+
+  it("binds submissions with displayed criteria to the versioned command and refuses stale criteria", async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { code: "40001", message: "APPLICATION_REQUIREMENTS_CHANGED" } });
+    const response = await submitApplication(submitRequest("203.0.113.8", undefined, OPERATION));
+    expect(response.status).toBe(409);
+    expect(mocks.rpc).toHaveBeenCalledWith("submit_rental_application_with_requirements", expect.objectContaining({
+      p_public_id: PUBLIC_ID, p_requirements_version: OPERATION, p_idempotency_key: "application-submit-key",
+    }));
   });
 });
 

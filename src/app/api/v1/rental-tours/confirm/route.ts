@@ -47,8 +47,11 @@ export async function POST(request: Request) {
     if (message.includes("TOUR_PREFERENCE_PAST")) {
       return reply({ error: "That preferred time has already passed." }, 422);
     }
+    if (message.includes("TOUR_CONFIRMATION_UNCHANGED")) {
+      return reply({ error: "The selected time and meeting location are already confirmed." }, 422);
+    }
     if (message.includes("TOUR_NOT_REQUESTED")) {
-      return reply({ error: "This tour is no longer waiting for confirmation." }, 422);
+      return reply({ error: "This tour can no longer be changed." }, 422);
     }
     if (message.includes("TOUR_PREFERENCE_NOT_FOUND") || message.includes("TOUR_NOT_FOUND")
       || error?.code === "P0002") {

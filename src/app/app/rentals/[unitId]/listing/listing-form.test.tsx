@@ -53,6 +53,27 @@ afterEach(() => {
 });
 
 describe("shareable listing recovery", () => {
+  it("previews and saves public criteria together with evidence and alternatives", async () => {
+    const applicationRequirements = {
+      criteriaText: "The landlord reviews applicant-provided credit information.",
+      requiredDocumentTypes: ["credit_evidence", "income_evidence"],
+      acceptedAlternatives: "An offer letter can replace paystubs.",
+    };
+    mocks.fetch.mockResolvedValueOnce(okay({
+      listingId: LISTING, publicId: PUBLIC, status: "draft", visibility: "unlisted", version: 3,
+      applicationRequirements: { ...applicationRequirements, requirementsVersion: VERSION },
+    }));
+    mount();
+    fireEvent.change(screen.getByLabelText("Income, credit, and other criteria"), { target: { value: applicationRequirements.criteriaText } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Applicant-provided credit information" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Paystubs or other proof of income" }));
+    fireEvent.change(screen.getByLabelText("Accepted alternatives"), { target: { value: applicationRequirements.acceptedAlternatives } });
+    expect(screen.getByText("Preview what renters will see")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText(/Listing draft saved/);
+    expect(JSON.parse(mocks.fetch.mock.calls[0][1].body).details.applicationRequirements).toEqual(applicationRequirements);
+  });
+
   it("retries an ambiguous draft save with the same payload and idempotency key", async () => {
     mocks.fetch
       .mockResolvedValueOnce(okay({ error: "upstream timeout" }, 502))

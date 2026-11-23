@@ -4,7 +4,11 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPublicSupabaseConfig } from "@/lib/supabase/config";
 import { getRentalWorkspace } from "@/lib/data/homeowner-rentals";
-import type { RentalDiscoverySearch } from "@/lib/validation/rental-listing";
+import {
+  applicationRequirementsSnapshotSchema,
+  type ApplicationRequirementsSnapshot,
+  type RentalDiscoverySearch,
+} from "@/lib/validation/rental-listing";
 
 export const PREVIEW_PUBLIC_LISTING_ID = "81000000-0000-4000-8000-000000000081";
 export const PREVIEW_DISCOVERABLE_LISTING_ID = "83000000-0000-4000-8000-000000000083";
@@ -13,6 +17,7 @@ export type RentalListingRow = {
   id: string; public_id: string; organization_id: string; property_id: string; unit_id: string;
   title: string; summary: string; rent_amount_minor: number; currency_code: string; available_on: string;
   lease_term_text: string; pets_text: string; utilities_text: string; parking_text: string;
+  application_requirements?: ApplicationRequirementsSnapshot | null;
   status: "draft" | "published" | "paused" | "closed"; visibility: "unlisted" | "discoverable";
   version: number; published_at: string | null; discovered_at: string | null;
 };
@@ -40,7 +45,7 @@ export async function getRentalListingWorkspace(unitId: string): Promise<RentalL
     const supabase = await createClient();
     const organizationId = rental.organization.organizationId;
     const listingResult = await supabase.from("rental_listings")
-      .select("id,public_id,organization_id,property_id,unit_id,title,summary,rent_amount_minor,currency_code,available_on,lease_term_text,pets_text,utilities_text,parking_text,status,visibility,version,published_at,discovered_at")
+      .select("id,public_id,organization_id,property_id,unit_id,title,summary,rent_amount_minor,currency_code,available_on,lease_term_text,pets_text,utilities_text,parking_text,application_requirements,status,visibility,version,published_at,discovered_at")
       .eq("organization_id", organizationId).eq("unit_id", unitId).neq("status", "closed").maybeSingle();
     if (listingResult.error) return { ...base, organizationId, unitName: unit.unit_code, mode: "error" };
 
@@ -81,10 +86,16 @@ export async function getRentalListingWorkspace(unitId: string): Promise<RentalL
       if (a.attached) return -1; if (b.attached) return 1; return b.uploadedAt.localeCompare(a.uploadedAt);
     });
     const book = rental.books.find((item) => item.id === property.accounting_book_id);
+    const listing = listingResult.data
+      ? {
+        ...listingResult.data,
+        application_requirements: applicationRequirementsSnapshotSchema.nullable().parse(listingResult.data.application_requirements ?? null),
+      } as RentalListingRow
+      : null;
     return {
       mode: "ready", organizationId, unitId, unitName: unit.unit_code,
-      currencyCode: (listingResult.data as RentalListingRow | null)?.currency_code ?? book?.functional_currency_code ?? rental.books[0]?.functional_currency_code ?? "USD",
-      listing: listingResult.data as RentalListingRow | null, photos,
+      currencyCode: listing?.currency_code ?? book?.functional_currency_code ?? rental.books[0]?.functional_currency_code ?? "USD",
+      listing, photos,
     };
   } catch {
     return { ...base, organizationId: rental.organization.organizationId, unitName: unit.unit_code, mode: "error" };
@@ -97,11 +108,13 @@ export type PublicRentalListing = {
   timeZone: string;
   location: { locality: string | null; subdivisionCode: string | null; countryCode: string };
   leaseTermText: string; petsText: string; utilitiesText: string; parkingText: string;
+  applicationRequirements: ApplicationRequirementsSnapshot | null;
   visibility: "unlisted" | "discoverable"; publishedAt: string | null; discoveredAt: string | null; preview: boolean;
   photos: { url: string | null; altText: string; mimeType: string }[];
 };
-type PublicListingRpc = Omit<PublicRentalListing, "photos" | "preview"> & {
+type PublicListingRpc = Omit<PublicRentalListing, "photos" | "preview" | "applicationRequirements"> & {
   photos: unknown[];
+  applicationRequirements?: unknown;
 };
 
 const publicPhotoPresentation = z.object({
@@ -126,6 +139,12 @@ export async function getPublicRentalListing(publicId: string): Promise<PublicRe
       location: { locality: "Example City", subdivisionCode: "VA", countryCode: "US" },
       leaseTermText: "12-month lease preferred", petsText: "Ask about pets",
       utilitiesText: "Water included; other utilities follow the rental agreement.", parkingText: "One driveway space.",
+      applicationRequirements: discoverable ? {
+        requirementsVersion: "83000000-0000-4e00-8000-000000000084",
+        criteriaText: "The landlord reviews income and applicant-provided credit information.",
+        requiredDocumentTypes: ["credit_evidence", "identity", "income_evidence"],
+        acceptedAlternatives: "Ask if an offer letter or other proof of income works for your situation.",
+      } : null,
       visibility: discoverable ? "discoverable" : "unlisted",
       publishedAt: "2026-09-26T00:00:00Z", discoveredAt: discoverable ? "2026-10-09T20:00:00Z" : null,
       preview: true,
@@ -150,6 +169,7 @@ export async function getPublicRentalListing(publicId: string): Promise<PublicRe
       timeZone: raw.timeZone,
       location: raw.location,
       leaseTermText: raw.leaseTermText, petsText: raw.petsText, utilitiesText: raw.utilitiesText,
+      applicationRequirements: applicationRequirementsSnapshotSchema.nullable().parse(raw.applicationRequirements ?? null),
       parkingText: raw.parkingText, visibility: raw.visibility, publishedAt: raw.publishedAt,
       discoveredAt: raw.discoveredAt, preview: false, photos,
     };

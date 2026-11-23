@@ -16,6 +16,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "A valid scheduler credential is required." }, { status: 401 });
   }
   return recordScheduledRun(createAdminClient(), "notifications", async (supabase) => {
+    const { error: expirationError } = await supabase.rpc("queue_expired_rental_agreement_notifications", { p_limit: 30 });
     const result = await runNotificationDispatch(supabase, {
       channel: "email",
       limit: NOTIFICATION_WORKER_BATCH_SIZE,
@@ -24,6 +25,9 @@ export async function GET(request: Request) {
     });
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
     const summary = result.summary as { claimed: number; failed: number };
+    if (expirationError && expirationError.code !== "PGRST202") {
+      return NextResponse.json({ ...summary, error: "Agreement expiration notices could not be queued." }, { status: 502 });
+    }
     return NextResponse.json(summary, { status: scheduledRunStatus(summary.claimed, summary.failed) });
   });
 }

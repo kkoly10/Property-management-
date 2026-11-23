@@ -22,6 +22,8 @@ const summarySchema = z.object({
   signedCount: z.number().int().nonnegative(),
   myCapacity: z.enum(["landlord", "lessee"]).nullable(),
   iSigned: z.boolean(),
+  applicationLinked: z.boolean().optional(),
+  tenancyStatus: z.enum(["scheduled", "active", "notice_given", "move_out_in_progress", "closed"]).nullish(),
 });
 
 export type AgreementSummary = z.infer<typeof summarySchema>;
@@ -38,7 +40,14 @@ export const agreementArtifactsSchema = z.object({
   evidenceSha256: digest.nullable(),
 });
 
-export const issuedAgreementSchema = z.object({ agreementId: z.uuid() });
+export const issuedAgreementSchema = z.object({
+  agreementId: z.uuid(), status: z.enum(["open", "executed", "declined", "void"]), replayed: z.boolean(),
+});
+export const signedAgreementReceiptSchema = z.object({
+  agreementId: z.uuid(), sourceVersionId: z.uuid(), actorId: z.uuid(),
+  capacity: z.enum(["landlord", "lessee"]), signedAt: z.iso.datetime({ offset: true }),
+  status: z.enum(["open", "executed", "declined", "void"]), replayed: z.boolean(),
+});
 
 export async function getAgreementSession(surface: AgreementSurface) {
   if (!getPublicSupabaseConfig()) return { mode: "setup" } as const;
@@ -91,14 +100,38 @@ export async function getAgreementFiling(organizationId: string, agreementId: st
   return !error && filing.success ? filing.data : null;
 }
 
+const invitationDeliverySchema = z.object({
+  agreementId: z.uuid(),
+  state: z.enum(["queued", "accepted", "delivered", "delayed", "failed"]).nullable(),
+  reissue: z.object({ unitId: z.uuid(), applicationId: z.uuid() }).nullable(),
+});
+
+export async function getAgreementInvitationDelivery(organizationId: string, agreementId: string) {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("get_rental_agreement_invitation_delivery", {
+      p_organization_id: organizationId, p_agreement_id: agreementId,
+    });
+    const result = invitationDeliverySchema.safeParse(data);
+    return !error && result.success && result.data.agreementId === agreementId ? result.data : null;
+  } catch {
+    return null;
+  }
+}
+
 const applicationSigningSetupSchema = z.object({
   applicationId: z.uuid(),
   applicationVersion: z.number().int().positive(),
   setupId: z.uuid(),
+  setupRevision: z.number().int().positive(),
   unitId: z.uuid(),
   name: z.string(),
   email: z.string(),
   agreementId: z.uuid().nullable(),
+  terms: z.object({
+    startDate: z.string(), endDate: z.string(), rentAmount: z.string(), rentFrequency: z.string(),
+    firstChargeDueDate: z.string(), openingBalance: z.string(), currency: z.enum(["USD", "CAD", "MXN"]),
+  }),
 });
 export type ApplicationSigningSetup = z.infer<typeof applicationSigningSetupSchema>;
 
@@ -122,8 +155,7 @@ export async function getAgreementIssueOptions(organizationId: string) {
     supabase.from("units").select("id,property_id,unit_code").eq("organization_id", organizationId).eq("operational_status", "active").order("unit_code"),
     supabase.from("documents").select("id,property_id,unit_id,title").eq("organization_id", organizationId)
       .eq("document_type", "rental_agreement_source").eq("status", "active").is("tenancy_id", null).order("title"),
-    supabase.from("document_versions").select("id,document_id,version_number,original_filename").eq("organization_id", organizationId)
-      .eq("storage_bucket", "private-documents").eq("upload_status", "clean").eq("mime_type", "application/pdf")
+    supabase.from("document_versions").select("id,document_id,version_number,original_filename,storage_bucket,upload_status,mime_type").eq("organization_id", organizationId)
       .order("version_number", { ascending: false }),
     supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
   ]);
@@ -135,9 +167,13 @@ export async function getAgreementIssueOptions(organizationId: string) {
     const property = properties.get(unit.property_id);
     return property ? [{ id: unit.id as string, code: unit.unit_code as string, propertyId: unit.property_id as string, property: property as string }] : [];
   });
+  const seen = new Set<string>();
   const documents = versionResult.data.flatMap((version) => {
     const source = sources.get(version.document_id);
     if (!source?.property_id) return [];
+    if (seen.has(source.id)) return [];
+    seen.add(source.id);
+    if (version.storage_bucket !== "private-documents" || version.upload_status !== "clean" || version.mime_type !== "application/pdf") return [];
     return [{
       id: version.id as string,
       propertyId: source.property_id as string,

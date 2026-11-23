@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { submitRentalTourSchema } from "@/lib/validation/rental-tour";
+import { scheduleCriticalRentalMail } from "@/lib/notifications/rental-fast-mail";
 
 const accepted = () => NextResponse.json(
   { accepted: true, message: "Check your email to verify the tour request before it is shared." },
@@ -73,6 +74,7 @@ export async function POST(request: Request) {
       }
       return reply("Tour requests are temporarily unavailable.", 503);
     }
+    scheduleCriticalRentalMail("tour", { publicId: parsed.data.publicId, email: parsed.data.email, operationKey });
     return accepted();
   } catch {
     return reply("Tour requests are temporarily unavailable.", 503);

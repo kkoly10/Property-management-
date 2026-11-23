@@ -18,6 +18,7 @@ export const submitRentalApplicationSchema = z.object({
   leaseTermText: z.string().trim().max(300).default(""),
   applicantNote: z.string().trim().max(2000).default(""),
   locale: z.enum(rentalInquiryLocales).default("en-US"),
+  requirementsVersion: z.uuid().optional(),
 }).strict();
 
 export const verifyRentalApplicationSchema = z.object({

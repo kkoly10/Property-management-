@@ -12,11 +12,12 @@ const actions = [
   { value: "application", label: "Apply", icon: FileText },
 ];
 
-export function RentalListingActions({ publicId, timeZone, availableOn, latestMoveInOn }: {
+export function RentalListingActions({ publicId, timeZone, availableOn, latestMoveInOn, requirementsVersion }: {
   publicId: string;
   timeZone: string;
   availableOn: string;
   latestMoveInOn: string;
+  requirementsVersion?: string;
 }) {
   const panelClass = "mt-5 data-[state=inactive]:hidden focus-visible:outline-2 focus-visible:outline-ring";
 
@@ -44,7 +45,15 @@ export function RentalListingActions({ publicId, timeZone, availableOn, latestMo
         </Tabs.Content>
         <Tabs.Content value="application" forceMount className={panelClass}>
           <p className="mb-4 text-sm leading-6 text-muted-foreground">Verify your email to share an application with the landlord.</p>
-          <RentalApplicationForm publicId={publicId} availableOn={availableOn} latestMoveInOn={latestMoveInOn} />
+          {requirementsVersion ? (
+            <p className="mb-4 text-sm leading-6">
+              <a href="#listing-application-requirements" className="font-semibold text-primary underline underline-offset-4">
+                Review the landlord’s application requirements
+              </a>
+            </p>
+          ) : null}
+          <RentalApplicationForm publicId={publicId} availableOn={availableOn} latestMoveInOn={latestMoveInOn}
+            requirementsVersion={requirementsVersion} />
         </Tabs.Content>
       </Tabs.Root>
     </section>

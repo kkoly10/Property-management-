@@ -9,18 +9,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ApplicationRequirements } from "@/components/rentals/application-requirements";
 import { createClient } from "@/lib/supabase/client";
 import { exactMoneyMinor } from "@/lib/validation/homeowner-lease";
+import {
+  applicationEvidenceLabels, applicationEvidenceTypes, applicationRequirementsSnapshotSchema,
+  LISTING_ALTERNATIVES_MAX_LENGTH, LISTING_CRITERIA_MAX_LENGTH,
+  type ApplicationEvidenceType, type ApplicationRequirementsInput, type ApplicationRequirementsSnapshot,
+} from "@/lib/validation/rental-listing";
 import type { ListingPhotoOption, RentalListingRow } from "@/lib/data/rental-listings";
 
 type FormState = {
   title: string; summary: string; rentAmount: string; availableOn: string;
   leaseTermText: string; petsText: string; utilitiesText: string; parkingText: string;
+  criteriaText: string; requiredDocumentTypes: ApplicationEvidenceType[]; acceptedAlternatives: string;
 };
 type ListingResponse = {
   listingId: string; publicId: string; status: RentalListingRow["status"];
   visibility: "unlisted" | "discoverable"; version: number; photoCount?: number; previousPublicId?: string;
   discoveredAt?: string | null;
+  applicationRequirements?: ApplicationRequirementsSnapshot | null;
 };
 class RequestFailure extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -41,6 +49,7 @@ const responseSchema = z.object({
   visibility: z.enum(["unlisted", "discoverable"]), version: z.number().int().positive(),
   photoCount: z.number().int().nonnegative().optional(), previousPublicId: z.uuid().optional(),
   discoveredAt: z.string().nullable().optional(),
+  applicationRequirements: applicationRequirementsSnapshotSchema.nullable().optional(),
 });
 const imageTypes = ["image/png", "image/jpeg"];
 
@@ -54,7 +63,18 @@ function initialForm(listing: RentalListingRow | null, unitName: string): FormSt
     petsText: listing?.pets_text ?? "",
     utilitiesText: listing?.utilities_text ?? "",
     parkingText: listing?.parking_text ?? "",
+    criteriaText: listing?.application_requirements?.criteriaText ?? "",
+    requiredDocumentTypes: listing?.application_requirements?.requiredDocumentTypes ?? [],
+    acceptedAlternatives: listing?.application_requirements?.acceptedAlternatives ?? "",
   };
+}
+
+function currentRequirements(form: FormState): ApplicationRequirementsInput | null {
+  const criteriaText = form.criteriaText.trim();
+  const acceptedAlternatives = form.acceptedAlternatives.trim();
+  const requiredDocumentTypes = applicationEvidenceTypes.filter((type) => form.requiredDocumentTypes.includes(type));
+  if (!criteriaText && !acceptedAlternatives && requiredDocumentTypes.length === 0) return null;
+  return { criteriaText, requiredDocumentTypes, acceptedAlternatives };
 }
 
 export function RentalListingForm({
@@ -83,6 +103,7 @@ export function RentalListingForm({
   const versionRef = useRef(initialListing?.version ?? 0);
   const shareUrl = listing ? `${shareOrigin}/l/${listing.public_id}` : null;
   const interactionLocked = disabled || busy || uncertain !== null;
+  const applicationRequirements = currentRequirements(form);
 
   function edit<K extends keyof FormState>(key: K, value: FormState[K]) {
     if (uncertain) return;
@@ -123,6 +144,8 @@ export function RentalListingForm({
       rent_amount_minor: exactMoneyMinor(form.rentAmount) ?? 0, available_on: form.availableOn,
       lease_term_text: form.leaseTermText, pets_text: form.petsText,
       utilities_text: form.utilitiesText, parking_text: form.parkingText,
+      application_requirements: result.applicationRequirements === undefined
+        ? current?.application_requirements ?? null : result.applicationRequirements,
     }));
   }
   function cleanSelectedPhotos() {
@@ -139,6 +162,8 @@ export function RentalListingForm({
         title: form.title.trim(), summary: form.summary, rentAmountMinor, availableOn: form.availableOn,
         leaseTermText: form.leaseTermText, petsText: form.petsText,
         utilitiesText: form.utilitiesText, parkingText: form.parkingText, visibility: "unlisted",
+        ...((applicationRequirements || listing?.application_requirements)
+          ? { applicationRequirements } : {}),
         photos: cleanSelectedPhotos().map((photo) => ({
           documentVersionId: photo.versionId, altText: altText[photo.versionId] ?? "",
         })),
@@ -486,6 +511,46 @@ export function RentalListingForm({
             value={form.parkingText} maxLength={1000} disabled={interactionLocked}
             onChange={(event) => edit("parkingText", event.target.value)} /></div>
         </div>
+      </section>
+
+      <section className="space-y-5 border-t pt-7" aria-labelledby="listing-requirements-heading">
+        <div>
+          <h2 id="listing-requirements-heading" className="text-xl font-semibold">Application requirements</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            Tell renters what you review and what they can provide. These details appear on the public listing.
+          </p>
+        </div>
+        <div>
+          <Label htmlFor="listing-criteria">Income, credit, and other criteria</Label>
+          <Textarea id="listing-criteria" className="mt-2 min-h-24" maxLength={LISTING_CRITERIA_MAX_LENGTH}
+            value={form.criteriaText} disabled={interactionLocked}
+            onChange={(event) => edit("criteriaText", event.target.value)} />
+        </div>
+        <fieldset className="space-y-1" disabled={interactionLocked}>
+          <legend className="mb-1 text-sm font-semibold">Required evidence</legend>
+          {applicationEvidenceTypes.map((type) => (
+            <label key={type} className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-1 text-sm">
+              <input type="checkbox" checked={form.requiredDocumentTypes.includes(type)}
+                className="size-5 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-ring"
+                onChange={(event) => edit("requiredDocumentTypes", event.target.checked
+                  ? [...form.requiredDocumentTypes, type] : form.requiredDocumentTypes.filter((item) => item !== type))} />
+              {applicationEvidenceLabels[type]}
+            </label>
+          ))}
+        </fieldset>
+        <div>
+          <Label htmlFor="listing-accepted-alternatives">Accepted alternatives</Label>
+          <Textarea id="listing-accepted-alternatives" className="mt-2 min-h-20" maxLength={LISTING_ALTERNATIVES_MAX_LENGTH}
+            value={form.acceptedAlternatives} disabled={interactionLocked}
+            onChange={(event) => edit("acceptedAlternatives", event.target.value)}
+            placeholder="For example, an offer letter in place of paystubs." />
+        </div>
+        {applicationRequirements ? (
+          <details className="rounded-xl border bg-muted/25 p-4">
+            <summary className="cursor-pointer text-sm font-semibold">Preview what renters will see</summary>
+            <div className="mt-3"><ApplicationRequirements requirements={applicationRequirements} /></div>
+          </details>
+        ) : null}
       </section>
 
       <section className="space-y-5 border-t pt-7">

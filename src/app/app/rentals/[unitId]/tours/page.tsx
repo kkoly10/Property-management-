@@ -5,6 +5,7 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getRentalTourWorkspace } from "@/lib/data/rental-tours";
+import { OperatorRentalConversation } from "@/components/rentals/operator-rental-conversation";
 import { TourActions } from "./tour-actions";
 
 export const dynamic = "force-dynamic";
@@ -49,12 +50,15 @@ export default async function RentalToursPage({ params }: { params: Promise<{ un
       {workspace.items.length ? (
         <div className="space-y-4">
           {workspace.items.map((item) => (
-            <article key={item.id} className="rounded-xl border bg-card p-5">
+            <article key={item.id} id={`tour-${item.publicReference}`}
+              className="scroll-mt-24 rounded-xl border bg-card p-5 target:bg-muted/45">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="font-semibold">{item.firstName} {item.lastName}</h2>
-                    <Badge variant={item.status === "confirmed" ? "success" : "info"}>{item.status}</Badge>
+                    <Badge variant={item.status === "confirmed" ? "success" : "info"}>
+                      {item.status === "cancelled" ? "Canceled" : item.status}
+                    </Badge>
                     <span className="font-mono text-xs text-muted-foreground">{item.publicReference}</span>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -64,7 +68,9 @@ export default async function RentalToursPage({ params }: { params: Promise<{ un
                     <span>{item.propertyTimeZone}</span>
                   </div>
 
-                  {item.status === "confirmed" && item.confirmedStartAt ? (
+                  {item.status === "cancelled" ? (
+                    <p className="mt-4 text-sm text-muted-foreground">The previous appointment no longer holds this time.</p>
+                  ) : item.status === "confirmed" && item.confirmedStartAt ? (
                     <div className="mt-4 flex items-start gap-3 rounded-lg bg-muted/45 p-4">
                       <CalendarCheck2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                       <div>
@@ -89,14 +95,18 @@ export default async function RentalToursPage({ params }: { params: Promise<{ un
                       </ul>
                     </div>
                   )}
+                  {workspace.organizationId && !preview ? (
+                    <OperatorRentalConversation organizationId={workspace.organizationId} kind="tour" id={item.id} />
+                  ) : null}
                 </div>
 
                 <div className="flex w-full shrink-0 flex-col gap-2 lg:w-72">
                   <Button asChild size="sm" variant="outline">
                     <a href={`mailto:${encodeURIComponent(item.email)}`}>Reply by email</a>
                   </Button>
-                  {item.status === "requested" ? (
+                  {item.status !== "cancelled" ? (
                     <TourActions
+                      key={item.version}
                       organizationId={workspace.organizationId ?? ""}
                       tourRequestId={item.id}
                       initialVersion={item.version}
@@ -104,8 +114,9 @@ export default async function RentalToursPage({ params }: { params: Promise<{ un
                         position: preference.position, startsAt: preference.startsAt,
                       }))}
                       timeZone={item.propertyTimeZone}
-                      initialMeetingLocation={workspace.meetingLocationDefault}
-                      disabled={preview}
+                      initialMeetingLocation={item.confirmedMeetingLocation ?? workspace.meetingLocationDefault}
+                      currentPosition={item.confirmedPreferencePosition}
+                      disabled={preview || item.appointmentStarted}
                     />
                   ) : null}
                 </div>

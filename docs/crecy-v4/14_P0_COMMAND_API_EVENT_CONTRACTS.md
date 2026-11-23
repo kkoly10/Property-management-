@@ -657,6 +657,8 @@ Request: `{ decision:'approved'|'rejected'; reason?:string; expectedVersion:numb
 
 Request includes locale, reduced-motion/high-contrast/text-scale accessibility choices, the complete transactional channel/category matrix, expected preference version, and an idempotency key. The command is bound to `auth.uid()` and cannot target another user. SMS or WhatsApp activation requires a profile phone. Marketing email/SMS remain off and cannot be enabled by this command because a preference is not consent. The command updates `profiles` and `notification_preferences` atomically, writes an audit record, and emits `notification_preferences.updated`.
 
+`POST /api/internal/providers/resend/webhook` verifies Resend’s Svix signature on the original body with the dedicated `RESEND_WEBHOOK_SECRET`. It accepts delivered, delivery-delayed, and bounced events through a service-only command. It stores the signed event ID, Resend email ID, state, and timestamps. A recipient’s own delivery history correlates only to the exact accepted email. The existing daily operational sweep removes unlinked receipts after two days. A confirmed delivery means the receiving mail server accepted the message. Inbox placement is still determined by the recipient’s provider.
+
 ### 4.29 StartSupportSession (platform control plane)
 
 RPC command `start_support_session(p_organization_id, p_reason, p_ttl_minutes, p_idempotency_key)`. No public HTTP route in this foundation slice — the operator/platform HTTP surface and the tenant-policy wiring that will *honor* a session are a later slice; this slice ships the audited grant record and its lifecycle only.
@@ -776,9 +778,11 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 ## Homeowner B1 — shared-listing command contract
 
 - `SaveRentalListing(organizationId, unitId, expectedVersion, details, idempotencyKey)` is self-managing-only, property-scoped, version checked and durably idempotent. It snapshots only approved advertising fields and exact clean photo versions. Saving changes to a live listing returns that record to `draft`; a closed historical listing is never edited, and a later relisting starts a new record. Event: `rental_listing.saved`.
+- `details.applicationRequirements` accepts bounded public criteria, selected evidence types, and accepted alternatives. An omitted field preserves a previous snapshot. An explicit null clears it. A substantive change gets a new server-generated version and the listing audit records the saved snapshot.
 - `SetRentalListingStatus(organizationId, listingId, expectedVersion, status, idempotencyKey)` permits `published`, `paused`, or terminal `closed`. Publish refuses discoverable visibility and requires a description plus scanner-clean media. Event: `rental_listing.status_changed`.
 - `RotateRentalListingLink(organizationId, listingId, expectedVersion, idempotencyKey)` replaces the public UUID without changing the private listing id. Event: `rental_listing.link_rotated`.
 - `GetPublicRentalListing(publicId)` is service-role-only. It returns a sanitized published advertising DTO for explicitly public `unlisted|discoverable` listings; the server converts only its explicitly selected scanner-clean photo paths to short-lived signed URLs.
+- The published DTO includes the optional application requirements and their version. It excludes applicant evidence and responses.
 - `rental_listing_photo` is advertising media. It may not enter `document_deliveries`.
 
 

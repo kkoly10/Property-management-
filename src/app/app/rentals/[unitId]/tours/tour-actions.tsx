@@ -10,7 +10,7 @@ type Preference = { position: number; startsAt: string };
 type Result = {
   tourRequestId: string;
   publicReference: string;
-  status: "confirmed";
+  status: "confirmed" | "cancelled";
   version: number;
   confirmedPreferencePosition: number;
   confirmedStartAt: string;
@@ -30,7 +30,7 @@ function label(startsAt: string, timeZone: string) {
 }
 
 export function TourActions({
-  organizationId, tourRequestId, initialVersion, preferences, timeZone, initialMeetingLocation, disabled,
+  organizationId, tourRequestId, initialVersion, preferences, timeZone, initialMeetingLocation, currentPosition = null, disabled,
 }: {
   organizationId: string;
   tourRequestId: string;
@@ -38,22 +38,27 @@ export function TourActions({
   preferences: Preference[];
   timeZone: string;
   initialMeetingLocation: string;
+  currentPosition?: number | null;
   disabled?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const [retryingPosition, setRetryingPosition] = useState<number | null>(null);
-  const [confirmed, setConfirmed] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<string | null>(null);
   const [meetingLocation, setMeetingLocation] = useState(initialMeetingLocation);
   const [error, setError] = useState<string | null>(null);
   const operation = useRef<{ key: string; body: unknown; position: number } | null>(null);
 
-  async function confirm(position: number) {
-    if (disabled || busy || confirmed || meetingLocation.trim().length < 3
+  async function manage(position: number) {
+    const cancelling = position === -1;
+    if (disabled || busy || receipt || (!cancelling && meetingLocation.trim().length < 3)
       || (uncertain && retryingPosition !== position)) return;
     if (!operation.current) {
-      if (!window.confirm("Confirm this tour time and email the visitor?")) return;
+      const prompt = cancelling ? "Cancel this tour request and email the visitor?"
+        : currentPosition === null ? "Confirm this tour time and email the visitor?"
+        : "Update this tour and email the visitor?";
+      if (!window.confirm(prompt)) return;
       operation.current = {
         key: crypto.randomUUID(),
         position,
@@ -61,8 +66,7 @@ export function TourActions({
           organizationId,
           tourRequestId,
           expectedVersion: initialVersion,
-          preferencePosition: position,
-          meetingLocation: meetingLocation.trim(),
+          ...(cancelling ? {} : { preferencePosition: position, meetingLocation: meetingLocation.trim() }),
         },
       };
     }
@@ -70,16 +74,20 @@ export function TourActions({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/v1/rental-tours/confirm", {
+      const response = await fetch(`/api/v1/rental-tours/${cancelling ? "cancel" : "confirm"}`, {
         method: "POST",
         headers: { "content-type": "application/json", "idempotency-key": current.key },
         body: JSON.stringify(current.body),
       });
       const result = await response.json().catch(() => null) as (Result & { error?: string }) | null;
       if (!response.ok) {
-        throw new RequestFailure(result?.error ?? "The tour could not be confirmed.", response.status);
+        throw new RequestFailure(result?.error ?? "The tour update could not be confirmed.", response.status);
       }
-      setConfirmed(result?.confirmedStartAt ?? null);
+      if (result?.tourRequestId !== tourRequestId || result.version <= initialVersion
+        || result.status !== (cancelling ? "cancelled" : "confirmed") || (!cancelling && !result.confirmedStartAt)) {
+        throw new RequestFailure("The tour update receipt could not be verified.", 502);
+      }
+      setReceipt(cancelling ? "Canceled" : `Confirmed · ${label(result.confirmedStartAt, timeZone)}`);
       setUncertain(false);
       setRetryingPosition(null);
       operation.current = null;
@@ -94,14 +102,14 @@ export function TourActions({
         setUncertain(true);
         setRetryingPosition(current.position);
       }
-      setError(caught instanceof Error ? caught.message : "The confirmation result could not be confirmed.");
+      setError(caught instanceof Error ? caught.message : "The tour update could not be confirmed.");
     } finally {
       setBusy(false);
     }
   }
 
-  if (confirmed) {
-    return <p className="text-sm font-semibold">Confirmed · {label(confirmed, timeZone)}</p>;
+  if (receipt) {
+    return <p className="text-sm font-semibold" role="status">{receipt}</p>;
   }
 
   return (
@@ -134,17 +142,23 @@ export function TourActions({
               type="button"
               size="sm"
               variant="outline"
-              disabled={disabled || busy || (uncertain && !retrying)}
-              onClick={() => confirm(preference.position)}
+              disabled={disabled || busy || (uncertain && !retrying)
+                || (preference.position === currentPosition && meetingLocation.trim() === initialMeetingLocation.trim())}
+              onClick={() => manage(preference.position)}
             >
-              {retrying ? "Retry same confirmation" : `Confirm ${label(preference.startsAt, timeZone)}`}
+              {retrying ? "Retry same update"
+                : `${currentPosition === null ? "Confirm" : "Use"} ${label(preference.startsAt, timeZone)}`}
             </Button>
           );
         })}
       </div>
+      <Button type="button" size="sm" variant="outline"
+        disabled={disabled || busy || (uncertain && retryingPosition !== -1)} onClick={() => manage(-1)}>
+        {uncertain && retryingPosition === -1 ? "Retry same cancellation" : "Cancel tour"}
+      </Button>
       {uncertain ? (
         <p className="text-xs text-warning">
-          Retry the same time before choosing another; Crecy did not receive a definitive response.
+          Retry the same action so Crecy can check whether the previous update succeeded.
         </p>
       ) : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}

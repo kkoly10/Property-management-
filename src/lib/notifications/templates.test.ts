@@ -37,6 +37,32 @@ describe("hasTemplate", () => {
 });
 
 describe("renderNotification", () => {
+  it("gives a renter the exact tour conversation for changes", () => {
+    stubOrigins();
+    vi.stubEnv("NEXT_PUBLIC_RENTALS_ORIGIN", "https://rent.crecyos.com");
+    for (const templateCode of ["rental_tour_confirmed", "rental_tour_rescheduled"]) {
+      const message = renderNotification({ templateCode, locale: "en-US", payload: {
+        tourReference: "TOUR-1234ABCDEF90", confirmedStartAt: "2026-12-03T22:00:00Z", timeZone: "America/New_York",
+      } });
+      expect(message?.ctaUrl).toBe("https://rent.crecyos.com/inquiries/conversation?ref=TOUR-1234ABCDEF90");
+      expect(message?.details?.some(({ value }) => value.includes("5:00 PM"))).toBe(true);
+    }
+  });
+
+  it("shows the actual signature deadline and keeps the invitation secret in the link fragment", () => {
+    stubOrigins();
+    const agreementId = "18ded40e-f52a-44e9-ade2-022e3fadbb0a";
+    const token = "a".repeat(64);
+    const message = renderNotification({ templateCode: "rental_agreement_signing_requested", locale: "en-US", payload: {
+      agreementId, signingInvitationToken: token, expiresAt: "2026-12-03T22:00:00Z",
+    } });
+    const secureLink = `https://crecyliving.com/documents/agreements/claim#token=${token}`;
+    expect(message?.ctaUrl).toBe(secureLink);
+    expect(message?.details?.find(({ label }) => label === "Sign by")?.value).toContain("10:00 PM UTC");
+    expect(message?.body).toContain(secureLink);
+    expect(message?.body.replace(secureLink, "")).not.toContain(token);
+  });
+
   it("binds a rental recovery credential to the recovery fragment, not the initial verification link", () => {
     stubOrigins();
     vi.stubEnv("NEXT_PUBLIC_RENTALS_ORIGIN", "https://rent.crecyos.com");
@@ -236,7 +262,7 @@ describe("the transactional template matrix", () => {
   const LANGUAGES = [["en", "en-US"], ["es", "es-MX"], ["fr", "fr-CA"]] as const;
   const INVITATIONS = ["staff_invitation", "resident_invitation", "owner_invitation"] as const;
 
-  const payloadFor = (templateCode: string) => ({
+  const payloadFor = () => ({
     organizationName: "Northstar Property Group",
     roleCode: "property_manager",
     expiresAt: "2026-09-21T10:00:00Z",
@@ -244,13 +270,15 @@ describe("the transactional template matrix", () => {
     documentTitle: "Lease renewal",
     title: "Water shutoff on Tuesday",
     invitationToken: "tok-abc_123",
-    ...(templateCode === "staff_invitation" ? {} : {}),
+    agreementId: "18ded40e-f52a-44e9-ade2-022e3fadbb0a",
+    signingInvitationToken: "a".repeat(64),
+    conversationToken: "b".repeat(64),
   });
 
   it("renders every template in every language with a subject, a body and a heading", () => {
     for (const templateCode of TEMPLATE_CODES) {
       for (const [language, locale] of LANGUAGES) {
-        const rendered = renderNotification({ templateCode, locale, payload: payloadFor(templateCode) });
+        const rendered = renderNotification({ templateCode, locale, payload: payloadFor() });
         expect(rendered, `${templateCode}/${language}`).not.toBeNull();
         expect(rendered!.subject.length, `${templateCode}/${language}: subject`).toBeGreaterThan(8);
         expect(rendered!.body.length, `${templateCode}/${language}: body`).toBeGreaterThan(40);
@@ -267,7 +295,7 @@ describe("the transactional template matrix", () => {
   it("names the inviting organization in every invitation, in every language", () => {
     for (const templateCode of INVITATIONS) {
       for (const [language, locale] of LANGUAGES) {
-        const rendered = renderNotification({ templateCode, locale, payload: payloadFor(templateCode) });
+        const rendered = renderNotification({ templateCode, locale, payload: payloadFor() });
         expect(rendered!.body, `${templateCode}/${language}`).toContain("Northstar Property Group");
         expect(rendered!.details, `${templateCode}/${language}: organization row`)
           .toContainEqual(expect.objectContaining({ value: "Northstar Property Group" }));
@@ -283,7 +311,7 @@ describe("the transactional template matrix", () => {
     } as const;
     for (const templateCode of INVITATIONS) {
       for (const [language, locale] of LANGUAGES) {
-        const rendered = renderNotification({ templateCode, locale, payload: payloadFor(templateCode) });
+        const rendered = renderNotification({ templateCode, locale, payload: payloadFor() });
         for (const phrase of expectations[language]) {
           expect(rendered!.securityNote ?? "", `${templateCode}/${language}: ${phrase}`).toContain(phrase);
         }
@@ -294,7 +322,7 @@ describe("the transactional template matrix", () => {
   it("never leaks a raw role code, in any language, even for an unknown role", () => {
     for (const roleCode of ["org_owner", "maintenance_coordinator", "read_only_auditor", "some_future_role"]) {
       for (const [language, locale] of LANGUAGES) {
-        const rendered = renderNotification({ templateCode: "staff_invitation", locale, payload: { ...payloadFor("staff_invitation"), roleCode } });
+        const rendered = renderNotification({ templateCode: "staff_invitation", locale, payload: { ...payloadFor(), roleCode } });
         expect(rendered!.body, `${roleCode}/${language}`).not.toContain(roleCode);
         expect(rendered!.body, `${roleCode}/${language}: underscore identifier`).not.toMatch(/\b[a-z]+_[a-z_]+\b/);
       }
@@ -310,7 +338,7 @@ describe("the transactional template matrix", () => {
     ];
     for (const templateCode of TEMPLATE_CODES) {
       for (const [language, locale] of LANGUAGES) {
-        const rendered = renderNotification({ templateCode, locale, payload: payloadFor(templateCode) });
+        const rendered = renderNotification({ templateCode, locale, payload: payloadFor() });
         for (const pattern of forbidden) {
           expect(rendered!.body, `${templateCode}/${language} matched ${pattern}`).not.toMatch(pattern);
         }
@@ -326,7 +354,7 @@ describe("the transactional template matrix", () => {
     // destination is assembled here from an origin only this deployment supplies.
     const hash = "abcdef0123456789abcdef0123456789";
     for (const templateCode of INVITATIONS) {
-      const rendered = renderNotification({ templateCode, locale: "en-US", payload: { ...payloadFor(templateCode), authTokenHash: hash } })!;
+      const rendered = renderNotification({ templateCode, locale: "en-US", payload: { ...payloadFor(), authTokenHash: hash } })!;
       const url = new URL(rendered.ctaUrl!);
 
       expect(url.pathname, templateCode).toBe("/auth/confirm");
@@ -337,7 +365,7 @@ describe("the transactional template matrix", () => {
       expect(url.searchParams.get("next"), templateCode).toMatch(/^\/[^/]/);
       expect(url.searchParams.get("next"), templateCode).toContain("token=tok-abc_123");
 
-      const withoutHash = renderNotification({ templateCode, locale: "en-US", payload: payloadFor(templateCode) });
+      const withoutHash = renderNotification({ templateCode, locale: "en-US", payload: payloadFor() });
       expect(withoutHash!.ctaUrl, `${templateCode}: fallback`).toContain("token=tok-abc_123");
       expect(withoutHash!.ctaUrl, `${templateCode}: fallback`).not.toContain("/auth/confirm");
     }
@@ -358,7 +386,7 @@ describe("the transactional template matrix", () => {
       const rendered = renderNotification({
         templateCode: "staff_invitation",
         locale: "en-US",
-        payload: { ...payloadFor("staff_invitation"), authTokenHash: hostile },
+        payload: { ...payloadFor(), authTokenHash: hostile },
       })!;
       expect(rendered.ctaUrl, hostile).toContain("/settings/team/accept");
       expect(rendered.ctaUrl, hostile).not.toContain("evil.example");
@@ -372,15 +400,15 @@ describe("the transactional template matrix", () => {
     const rendered = renderNotification({
       templateCode: "staff_invitation",
       locale: "en-US",
-      payload: { ...payloadFor("staff_invitation"), authActionUrl: "https://project.supabase.co/auth/v1/verify?token=x" },
+      payload: { ...payloadFor(), authActionUrl: "https://project.supabase.co/auth/v1/verify?token=x" },
     });
     expect(rendered!.ctaUrl).not.toContain("/auth/v1/verify");
     expect(rendered!.ctaUrl).toContain("/settings/team/accept");
   });
 
   it("mentions two-factor only when the role actually requires it", () => {
-    const required = renderNotification({ templateCode: "staff_invitation", locale: "en-US", payload: { ...payloadFor("staff_invitation"), mfaRequired: true } });
-    const not = renderNotification({ templateCode: "staff_invitation", locale: "en-US", payload: { ...payloadFor("staff_invitation"), mfaRequired: false } });
+    const required = renderNotification({ templateCode: "staff_invitation", locale: "en-US", payload: { ...payloadFor(), mfaRequired: true } });
+    const not = renderNotification({ templateCode: "staff_invitation", locale: "en-US", payload: { ...payloadFor(), mfaRequired: false } });
     expect(required!.body).toContain("two-factor");
     expect(not!.body).not.toContain("two-factor");
   });

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { CalendarDays, CarFront, DoorOpen, MapPin, PawPrint, UtilityPole } from "lucide-react";
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { ApplicationRequirements } from "@/components/rentals/application-requirements";
 import { buttonVariants } from "@/components/ui/button";
 import { getPublicRentalListing } from "@/lib/data/rental-listings";
 import { RentalListingActions } from "./rental-listing-actions";
@@ -95,11 +96,21 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
               <Detail icon={PawPrint} label="Pets" value={listing.petsText} />
             </dl>
           </section>
+          {listing.applicationRequirements ? (
+            <section id="listing-application-requirements" aria-labelledby="listing-requirements-heading"
+              className="scroll-mt-4 rounded-2xl border bg-card p-4 sm:p-5">
+              <h2 id="listing-requirements-heading" className="text-xl font-semibold tracking-tight">Before you apply</h2>
+              <div className="mt-3">
+                <ApplicationRequirements requirements={listing.applicationRequirements} />
+              </div>
+            </section>
+          ) : null}
         </div>
 
         <aside className="min-w-0">
           <RentalListingActions publicId={listing.publicId} timeZone={listing.timeZone}
-            availableOn={minimumMoveInOn} latestMoveInOn={maximumMoveInOn} />
+            availableOn={minimumMoveInOn} latestMoveInOn={maximumMoveInOn}
+            requirementsVersion={listing.applicationRequirements?.requirementsVersion} />
         </aside>
       </div>
 

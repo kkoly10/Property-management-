@@ -18,10 +18,11 @@ export type RentalTourItem = {
   lastName: string;
   email: string;
   propertyTimeZone: string;
-  status: "requested" | "confirmed";
+  status: "requested" | "confirmed" | "cancelled";
   verifiedAt: string;
   confirmedPreferencePosition: number | null;
   confirmedStartAt: string | null;
+  appointmentStarted: boolean;
   confirmedMeetingLocation: string | null;
   createdAt: string;
   version: number;
@@ -53,6 +54,7 @@ function previewItem(): RentalTourItem {
     verifiedAt: "2026-10-07T12:00:00Z",
     confirmedPreferencePosition: null,
     confirmedStartAt: null,
+    appointmentStarted: false,
     confirmedMeetingLocation: null,
     createdAt: "2026-10-07T11:55:00Z",
     version: 2,
@@ -97,7 +99,7 @@ export async function getRentalTourWorkspace(unitId: string): Promise<RentalTour
     const supabase = await createClient();
     const organizationId = rental.organization.organizationId;
     const toursResult = await supabase.from("rental_tour_requests")
-      .select("id,public_reference,listing_id,unit_id,first_name,last_name,email,property_time_zone,status,verified_at,confirmed_preference_position,confirmed_start_at,confirmed_meeting_location,created_at,version")
+      .select("id,public_reference,listing_id,unit_id,first_name,last_name,email,property_time_zone,status,verified_at,confirmed_preference_position,confirmed_start_at,confirmed_meeting_location,cancelled_at,created_at,version")
       .eq("organization_id", organizationId)
       .eq("unit_id", unitId)
       .in("status", ["requested", "confirmed"])
@@ -107,6 +109,7 @@ export async function getRentalTourWorkspace(unitId: string): Promise<RentalTour
       return { ...base, organizationId, unitName: unit.unit_code, mode: "error" };
     }
     const rows = toursResult.data ?? [];
+    const loadedAt = Date.now();
     const tourIds = rows.map((row) => String(row.id));
     const prefsResult = tourIds.length
       ? await supabase.from("rental_tour_preferences")
@@ -147,10 +150,11 @@ export async function getRentalTourWorkspace(unitId: string): Promise<RentalTour
         lastName: String(row.last_name),
         email: String(row.email),
         propertyTimeZone: String(row.property_time_zone),
-        status: row.status === "confirmed" ? "confirmed" : "requested",
+        status: row.cancelled_at ? "cancelled" : row.status === "confirmed" ? "confirmed" : "requested",
         verifiedAt: String(row.verified_at),
         confirmedPreferencePosition: row.confirmed_preference_position == null ? null : Number(row.confirmed_preference_position),
         confirmedStartAt: row.confirmed_start_at == null ? null : String(row.confirmed_start_at),
+        appointmentStarted: row.confirmed_start_at != null && Date.parse(String(row.confirmed_start_at)) <= loadedAt,
         confirmedMeetingLocation: row.confirmed_meeting_location == null ? null : String(row.confirmed_meeting_location),
         createdAt: String(row.created_at),
         version: Number(row.version),

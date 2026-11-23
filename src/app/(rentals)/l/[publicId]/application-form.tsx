@@ -15,8 +15,8 @@ class RequestFailure extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
-export function RentalApplicationForm({ publicId, availableOn, latestMoveInOn }: {
-  publicId: string; availableOn: string; latestMoveInOn: string;
+export function RentalApplicationForm({ publicId, availableOn, latestMoveInOn, requirementsVersion }: {
+  publicId: string; availableOn: string; latestMoveInOn: string; requirementsVersion?: string;
 }) {
   const [fields, setFields] = useState<Fields>({
     firstName: "", lastName: "", email: "", desiredMoveInOn: availableOn,
@@ -42,7 +42,7 @@ export function RentalApplicationForm({ publicId, availableOn, latestMoveInOn }:
     try {
       operation.current ??= {
         key: crypto.randomUUID(),
-        body: { publicId, ...fields, locale: "en-US" },
+        body: { publicId, ...fields, locale: "en-US", requirementsVersion },
       };
       const current = operation.current;
       const response = await fetch("/api/v1/rental-applications", {

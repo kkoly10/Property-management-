@@ -3,6 +3,7 @@ import { z } from "zod";
 import { originForAudience, rentalsOrigin, type LinkAudience } from "@/lib/runtime/host";
 import { EMAIL_CHROME } from "@/lib/notifications/email-brand";
 import { isRentalInquiryTopic, rentalInquiryTopicLabels } from "@/lib/rental-inquiry-topics";
+import { isRentalLifecycleTemplate, rentalLifecycleCopy, type RentalLifecycleTemplate } from "./rental-lifecycle-copy";
 
 /**
  * Transactional message bodies for the notification worker.
@@ -193,16 +194,21 @@ function tourVerificationLink(p: Record<string, unknown>): string {
   return `${origin}/tours/verify#token=${encodeURIComponent(token)}`;
 }
 
-function tourTime(p: Record<string, unknown>, language: NotificationLanguage): string {
-  const raw = typeof p.confirmedStartAt === "string" ? p.confirmedStartAt.trim() : "";
-  const timeZone = typeof p.timeZone === "string" ? p.timeZone.trim() : "";
-  if (!raw || !timeZone) return "";
+function tourConversationLink(reference: unknown): string | undefined {
+  const origin = rentalsOrigin();
+  if (origin && typeof reference === "string" && /^TOUR-[0-9A-F]{12}$/.test(reference)) {
+    return `${origin}/inquiries/conversation?ref=${reference}`;
+  }
+}
+
+function formatZonedDateTime(value: unknown, zone: unknown, language: NotificationLanguage): string {
+  if (typeof value !== "string" || typeof zone !== "string" || !value.trim() || !zone.trim()) return "";
   try {
     const locale = language === "es" ? "es-MX" : language === "fr" ? "fr-CA" : "en-US";
     return new Intl.DateTimeFormat(locale, {
-      timeZone, weekday: "short", month: "short", day: "numeric", year: "numeric",
+      timeZone: zone.trim(), weekday: "short", month: "short", day: "numeric", year: "numeric",
       hour: "numeric", minute: "2-digit", timeZoneName: "short",
-    }).format(new Date(raw));
+    }).format(new Date(value));
   } catch {
     return "";
   }
@@ -437,9 +443,11 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
         "This confirmation schedules the visit only. It does not reserve the rental or approve an application.",
       ],
       details: [
-        { label: "Time", value: tourTime(p, "en") || "See the landlord's confirmation" },
+        { label: "Time", value: formatZonedDateTime(p.confirmedStartAt, p.timeZone, "en") || "See the landlord's confirmation" },
         { label: "Meeting location", value: text(p.meetingLocation, "Contact the landlord") },
       ],
+      ctaLabel: "Ask to change the tour",
+      ctaUrl: tourConversationLink(p.tourReference),
     }, "en"),
     es: (p) => compose({
       subject: `Tu visita está confirmada para ${text(p.listingTitle, "este alquiler")}`,
@@ -449,9 +457,11 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
         "Esta confirmación solo programa la visita. No reserva el alquiler ni aprueba una solicitud.",
       ],
       details: [
-        { label: "Hora", value: tourTime(p, "es") || "Consulta la confirmación del propietario" },
+        { label: "Hora", value: formatZonedDateTime(p.confirmedStartAt, p.timeZone, "es") || "Consulta la confirmación del propietario" },
         { label: "Lugar de encuentro", value: text(p.meetingLocation, "Contacta al propietario") },
       ],
+      ctaLabel: "Solicitar un cambio de visita",
+      ctaUrl: tourConversationLink(p.tourReference),
     }, "es"),
     fr: (p) => compose({
       subject: `Votre visite est confirmée pour ${text(p.listingTitle, "cette location")}`,
@@ -461,9 +471,11 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
         "Cette confirmation planifie uniquement la visite. Elle ne réserve pas le logement et n'approuve aucune demande.",
       ],
       details: [
-        { label: "Heure", value: tourTime(p, "fr") || "Consultez la confirmation du propriétaire" },
+        { label: "Heure", value: formatZonedDateTime(p.confirmedStartAt, p.timeZone, "fr") || "Consultez la confirmation du propriétaire" },
         { label: "Lieu de rendez-vous", value: text(p.meetingLocation, "Contactez le propriétaire") },
       ],
+      ctaLabel: "Demander un changement de visite",
+      ctaUrl: tourConversationLink(p.tourReference),
     }, "fr"),
   },
 
@@ -816,18 +828,116 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
   },
 };
 
+const RENTAL_ACTIONS = {
+  en: { dashboard: "Open Crecy dashboard", application: "Track my application", sign: "Review and sign lease",
+    agreement: "Open my lease", conversation: "Read the reply", listing: "View the rental", reference: "Reference",
+    tourChange: "Ask to change the tour",
+    time: "Tour time", place: "Meeting location", expires: "Sign by",
+    expiry: "If your invitation expires, ask your landlord for a new one. If you did not apply for this rental, ignore this email." },
+  es: { dashboard: "Abrir el panel de Crecy", application: "Ver mi solicitud", sign: "Revisar y firmar el contrato",
+    agreement: "Abrir mi contrato", conversation: "Leer la respuesta", listing: "Ver el alquiler", reference: "Referencia",
+    tourChange: "Solicitar un cambio de visita",
+    time: "Hora de la visita", place: "Lugar de encuentro", expires: "Fecha límite para firmar",
+    expiry: "Si la invitación vence, pide otra al propietario. Si no solicitaste este alquiler, ignora este mensaje." },
+  fr: { dashboard: "Ouvrir le tableau de bord Crecy", application: "Suivre ma demande", sign: "Examiner et signer le bail",
+    agreement: "Ouvrir mon bail", conversation: "Lire la réponse", listing: "Voir le logement", reference: "Référence",
+    tourChange: "Demander un changement de visite",
+    time: "Heure de la visite", place: "Lieu de rendez-vous", expires: "Date limite de signature",
+    expiry: "Si l’invitation expire, demandez-en une nouvelle au propriétaire. Si vous n’avez pas demandé ce logement, ignorez ce courriel." },
+};
+
+function renderRentalLifecycle(
+  code: RentalLifecycleTemplate,
+  p: Record<string, unknown>,
+  language: NotificationLanguage,
+): RenderedNotification | null {
+  const copy = rentalLifecycleCopy[code];
+  const [subject, detail] = copy[language];
+  const labels = RENTAL_ACTIONS[language];
+  const uuid = (value: unknown) => {
+    const parsed = z.uuid().safeParse(value);
+    return parsed.success ? parsed.data : null;
+  };
+  const agreementId = uuid(p.agreementId);
+  const unitId = uuid(p.unitId);
+  const listingId = uuid(p.publicId);
+  const reference = [p.applicationReference, p.inquiryReference, p.tourReference].find(
+    (value): value is string => typeof value === "string" && /^(APP|INQ|TOUR|TRQ)-[0-9A-F]{12}$/.test(value),
+  );
+  const appReference = reference?.startsWith("APP-") ? reference : null;
+  const rentals = rentalsOrigin();
+  const details = reference ? [{ label: labels.reference, value: reference }] : [];
+  let target: { label: string; url: string } | null = null;
+  switch (copy.destination) {
+    case "tourOperator":
+    case "applicationOperator":
+      if (unitId) {
+        const section = copy.destination === "tourOperator" ? "tours" : "applications";
+        const fragment = reference ? `#${section === "tours" ? "tour" : "application"}-${reference}` : "";
+        target = { label: labels.dashboard, url: link(`/app/rentals/${unitId}/${section}${fragment}`, "operator") };
+      }
+      break;
+    case "applicationRenter":
+      if (appReference && rentals && code !== "rental_application_closed" && code !== "rental_application_withdrawn") {
+        target = { label: labels.application, url: `${rentals}/applications?ref=${appReference}` };
+      }
+      break;
+    case "agreementInvite": {
+      if (!agreementId || typeof p.signingInvitationToken !== "string" || !/^[a-f0-9]{64}$/.test(p.signingInvitationToken)) return null;
+      target = { label: labels.sign, url: link(`/documents/agreements/claim#token=${p.signingInvitationToken}`, "resident") };
+      const deadline = formatZonedDateTime(p.expiresAt, "UTC", language);
+      if (deadline) details.push({ label: labels.expires, value: deadline });
+      break;
+    }
+    case "agreementOperator":
+      if (agreementId) target = { label: labels.dashboard, url: link(`/app/agreements/${agreementId}`, "operator") };
+      break;
+    case "agreementRenter":
+      if (agreementId) target = { label: labels.agreement, url: link(`/documents/agreements/${agreementId}`, "resident") };
+      break;
+    case "tourRenter":
+      if (rentals && listingId) target = { label: labels.listing, url: `${rentals}/l/${listingId}#rental-actions` };
+      if (code === "rental_tour_rescheduled") {
+        const conversation = tourConversationLink(p.tourReference);
+        if (conversation) target = { label: labels.tourChange, url: conversation };
+        const time = formatZonedDateTime(p.confirmedStartAt, p.timeZone, language);
+        const place = text(p.meetingLocation);
+        if (time) details.push({ label: labels.time, value: time });
+        if (place) details.push({ label: labels.place, value: place });
+      }
+      break;
+    case "inquiryOperator": {
+      const url = inquiryWorkspaceLink(p);
+      if (url) target = { label: labels.dashboard, url };
+      break;
+    }
+    case "conversationRenter":
+      if (!rentals || typeof p.conversationToken !== "string" || !/^[a-f0-9]{64}$/.test(p.conversationToken)) return null;
+      target = { label: labels.conversation, url: `${rentals}/inquiries/conversation#token=${p.conversationToken}` };
+      break;
+  }
+  return compose({
+    subject, heading: subject, paragraphs: [detail], details,
+    ...(target ? { ctaLabel: target.label, ctaUrl: target.url } : {}),
+    ...(copy.destination === "agreementInvite" ? { securityNote: labels.expiry } : {}),
+  }, language);
+}
+
 /** Every template code that exists, so other modules can assert they cover all of them. */
-export const TEMPLATE_CODES = Object.keys(TEMPLATES);
+export const TEMPLATE_CODES = [...Object.keys(TEMPLATES), ...Object.keys(rentalLifecycleCopy)];
 
 /** True when the worker knows how to render this template — an unknown code is a non-retryable failure. */
 export function hasTemplate(templateCode: string): boolean {
-  return Object.hasOwn(TEMPLATES, templateCode);
+  return Object.hasOwn(TEMPLATES, templateCode) || isRentalLifecycleTemplate(templateCode);
 }
 
 export function renderNotification(job: NotificationJobForRender): RenderedNotification | null {
-  const byLanguage = TEMPLATES[job.templateCode];
-  if (!byLanguage) return null;
   const language = resolveLanguage(job.locale);
+  if (isRentalLifecycleTemplate(job.templateCode)) {
+    return renderRentalLifecycle(job.templateCode, job.payload ?? {}, language);
+  }
+  if (!Object.hasOwn(TEMPLATES, job.templateCode)) return null;
+  const byLanguage = TEMPLATES[job.templateCode];
   const build = byLanguage[language] ?? byLanguage.en;
   return build(job.payload ?? {}, job.audience ?? null);
 }

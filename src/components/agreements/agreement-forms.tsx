@@ -44,9 +44,20 @@ export function AgreementIssueForm({ options, organizationId, agreementId, appli
       <input type="hidden" name="applicationId" value={application.applicationId} />
       <input type="hidden" name="setupId" value={application.setupId} />
       <input type="hidden" name="applicationVersion" value={application.applicationVersion} />
+      <input type="hidden" name="setupRevision" value={application.setupRevision} />
       <div className="grid gap-2">
         <p className="font-medium">{unit?.property} · {unit?.code}</p>
         <p className="break-words text-sm text-muted-foreground">{application.name} · {application.email}</p>
+      </div>
+      <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
+        <h2 className="font-medium">Lease terms to approve</h2>
+        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+          <div><dt className="text-muted-foreground">Lease dates</dt><dd>{application.terms.startDate || "Choose a start date"} · {application.terms.endDate || "No end date entered"}</dd></div>
+          <div><dt className="text-muted-foreground">Rent</dt><dd>{application.terms.rentAmount || "Enter rent"} {application.terms.currency} · {application.terms.rentFrequency}</dd></div>
+          <div><dt className="text-muted-foreground">First charge</dt><dd>{application.terms.firstChargeDueDate || "Choose a first charge date"}</dd></div>
+          <div><dt className="text-muted-foreground">Opening balance</dt><dd>{application.terms.openingBalance || "Enter a balance"} {application.terms.currency}</dd></div>
+        </dl>
+        <Link className="inline-block text-sm underline" href={`/app/rentals/${application.unitId}/setup?setupId=${application.setupId}`}>Edit lease terms</Link>
       </div>
     </> : <div className="grid gap-2">
       <Label htmlFor="agreement-unit">Rental</Label>
@@ -71,12 +82,19 @@ export function AgreementIssueForm({ options, organizationId, agreementId, appli
       <Label htmlFor="agreement-valid-days">Days to sign</Label>
       <Input id="agreement-valid-days" name="validDays" type="number" min={1} max={30} defaultValue={14} required />
     </div>
+    {application && <p className="text-sm text-muted-foreground">The request expires by the lease start date.</p>}
     <label className="flex items-start gap-2 text-sm">
       <input className="mt-1 h-4 w-4 shrink-0 accent-primary" type="checkbox" name="authority" required />
       <span>I have authority to sign for this rental, and this PDF is for the renters listed above.</span>
     </label>
+    {application && <label className="flex min-h-11 items-start gap-3 text-sm">
+      <input className="mt-1 h-4 w-4 shrink-0 accent-primary" type="checkbox" name="termsConfirmed" required />
+      <span>The lease terms above match this PDF. I approve sending it to the verified applicant for signature.</span>
+    </label>}
     <ActionMessage state={state} />
-    <Button className="w-fit" type="submit" disabled={pending || !versions.length}>{pending ? "Creating signing request…" : "Create signing request"}</Button>
+    <Button className="w-fit" type="submit" disabled={pending || !versions.length}>
+      {pending ? "Saving signing request…" : application ? "Send agreement for signature" : "Create signing request"}
+    </Button>
   </form>;
 }
 

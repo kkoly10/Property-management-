@@ -5,6 +5,7 @@ import { runDocumentScanDispatch } from "@/lib/runtime/jobs";
 import { scheduledRunStatus } from "@/lib/runtime/health";
 import { SCAN_WORKER_BATCH_SIZE } from "@/lib/runtime/budget";
 import { recordScheduledRun } from "@/lib/runtime/heartbeat";
+import { runRentalEvidenceScan } from "@/lib/rental-evidence/worker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,9 +24,13 @@ export async function GET(request: Request) {
   }
   return recordScheduledRun(createAdminClient(), "document-scans", async (supabase) => {
     const workerRunId = `cron-document-scans-${Date.now()}`;
-    const result = await runDocumentScanDispatch(supabase, { limit: SCAN_WORKER_BATCH_SIZE, workerRunId, stallMinutes: 30 });
+    const [result, evidence] = await Promise.all([
+      runDocumentScanDispatch(supabase, { limit: SCAN_WORKER_BATCH_SIZE, workerRunId, stallMinutes: 30 }),
+      runRentalEvidenceScan(supabase),
+    ]);
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
     const summary = result.summary as { claimed: number; failed: number };
-    return NextResponse.json(summary, { status: scheduledRunStatus(summary.claimed, summary.failed) });
+    return NextResponse.json(evidence.state === "disabled" ? summary : { ...summary, evidence },
+      { status: evidence.failed ? 207 : scheduledRunStatus(summary.claimed, summary.failed) });
   });
 }

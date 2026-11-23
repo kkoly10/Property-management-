@@ -1,10 +1,12 @@
 import { validateHomeownerLease } from "./validate-homeowner-lease.mjs";
 import { validateHomeownerRental } from "./validate-homeowner-rental.mjs";
 import { validateSharedListing } from "./validate-shared-listing.mjs";
+import { validateResendNotificationReceipts } from "./validate-resend-notification-receipts.mjs";
 import { validateRentalInquiry } from "./validate-rental-inquiry.mjs";
 import { validateRentalTour } from "./validate-rental-tour.mjs";
 import { validateRentalApplication } from "./validate-rental-application.mjs";
 import { validateRentalApplicationRecovery } from "./validate-rental-application-recovery.mjs";
+import { validateRentalEvidence } from "./validate-rental-evidence.mjs";
 import { validateRentalMarketplace } from "./validate-rental-marketplace.mjs";
 import { validateTenancyEpisodes } from "./validate-tenancy-episodes.mjs";
 import { validatePlatformBilling } from "./validate-platform-billing.mjs";
@@ -18,6 +20,7 @@ import { validatePrivacyFulfillment } from "./validate-privacy-fulfillment.mjs";
 import { validateTenancyDeposit } from "./validate-tenancy-deposit.mjs";
 import { readFile } from "node:fs/promises";
 import { validateRentalAgreements } from "./validate-rental-agreements.mjs";
+import { proveSelectedApplicationAgreement, validateFirstTimeAgreementSigning } from "./validate-first-time-agreement-signing.mjs";
 import { validateDocumentSigningBoundary } from "./validate-document-signing.mjs";
 import { validateRuntimeReliability } from "./validate-runtime-reliability.mjs";
 import { validateMaintenanceCostApproval } from "./validate-maintenance-cost-approval.mjs";
@@ -37,6 +40,9 @@ const rentalApplicationSql = await readFile(resolve(root, "supabase/migrations/2
 const rentalMarketplaceSql = await readFile(resolve(root, "supabase/migrations/20261009205544_rental_marketplace_discovery.sql"), "utf8");
 const rentalInquiryNotificationSql = await readFile(resolve(root, "supabase/migrations/20261123030424_notify_homeowner_of_verified_rental_inquiry.sql"), "utf8");
 const rentalInquirySummarySql = await readFile(resolve(root, "supabase/migrations/20261123034643_add_rental_inquiry_topic_and_landlord_summary.sql"), "utf8");
+const rentalListingRequirementsSql = await readFile(resolve(root, "supabase/migrations/20261123055034_rental_listing_application_requirements.sql"), "utf8");
+const rentalApplicationPrivateEvidenceSql = await readFile(resolve(root, "supabase/migrations/20261123055139_rental_application_private_evidence.sql"), "utf8");
+const resendNotificationReceiptsSql = await readFile(resolve(root, "supabase/migrations/20261123060138_resend_notification_delivery_receipts.sql"), "utf8");
 const rentalApplicationRecoverySql = await readFile(resolve(root, "supabase/migrations/20261122165800_rental_application_access_recovery.sql"), "utf8");
 const foundationSql = await readFile(resolve(root, "supabase/migrations/20260720095008_phase_1_foundation.sql"), "utf8");
 const portfolioSql = await readFile(resolve(root, "supabase/migrations/20260720104921_phase_2_portfolio_foundation.sql"), "utf8");
@@ -926,6 +932,8 @@ async function validateRecurringCharges() {
   await db.exec(rentalMarketplaceSql);
   await db.exec(rentalInquiryNotificationSql);
   await db.exec(rentalInquirySummarySql);
+  await db.exec(rentalListingRequirementsSql);
+  await db.exec(rentalApplicationPrivateEvidenceSql);
   await db.exec(ownershipInvariantsSql);
   await db.exec(scopedPaymentExportSql);
   await db.exec(platformBillingSql);
@@ -6362,6 +6370,8 @@ async function validateRecurringCharges() {
   const homeownerRental = await validateHomeownerRental(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const homeownerLease = await validateHomeownerLease(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const sharedListing = await validateSharedListing(db, { assert, expectDatabaseError, createOrganizationAsServer });
+  await db.exec(resendNotificationReceiptsSql);
+  const resendReceipts = await validateResendNotificationReceipts(db, { assert, expectDatabaseError });
   const rentalInquiry = await validateRentalInquiry(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const rentalTour = await validateRentalTour(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const rentalApplication = await validateRentalApplication(db, { assert, expectDatabaseError });
@@ -6372,6 +6382,26 @@ async function validateRecurringCharges() {
   const tenancyCloseout = await validateTenancyCloseout(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const tenancyDeposit = await validateTenancyDeposit(db, { assert, expectDatabaseError });
   const rentalAgreements = await validateRentalAgreements(db, { assert, expectDatabaseError });
+  await db.exec(await readFile(resolve(root, "supabase/migrations/20261123055219_applicant_agreement_claim_and_binding.sql"), "utf8"));
+  await db.exec(await readFile(resolve(root, "supabase/migrations-contract/20261123060522_retire_unapproved_application_agreement_issue.sql"), "utf8"));
+  for (const migration of [
+    "20261123055428_rental_lifecycle_notifications.sql",
+    "20261123055758_rental_tour_changes.sql",
+    "20261123060114_private_rental_conversations.sql",
+    "20261123061152_rental_unit_activity_timeline.sql",
+    "20261123062221_agreement_invitation_delivery_state.sql",
+  ]) {
+    await db.exec(await readFile(resolve(root, "supabase/migrations", migration), "utf8"));
+  }
+  const { validateRentalWorkflowCommunication } = await import("./validate-rental-workflow-communication.mjs");
+  Object.assign(rentalInquiry, { workflow: await validateRentalWorkflowCommunication(db, { assert, expectDatabaseError, createOrganizationAsServer }) });
+  Object.assign(rentalAgreements, await validateFirstTimeAgreementSigning(db, {
+    assert, expectDatabaseError, assertNotifications: true, assertActivity: true, assertDelivery: true,
+  }));
+  Object.assign(rentalApplication, { privateEvidence: await validateRentalEvidence(db, {
+    assert, expectDatabaseError,
+    proveSelectedAgreement: (connection, fixture) => proveSelectedApplicationAgreement(connection, fixture, { assert, expectDatabaseError }),
+  }) });
   const tenancyMoveIn = await validateTenancyMoveIn(db, { assert, expectDatabaseError });
   const tenancyRenewal = await validateTenancyRenewal(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const signedImport = await validateImportedTenancyAgreement(db, { assert, expectDatabaseError });
@@ -6396,7 +6426,7 @@ async function validateRecurringCharges() {
     assert, expectDatabaseError, organizationId: organization.organizationId, otherOrganizationId: ctxOrgB.organizationId,
   });
   await db.close();
-  return { tenancyRenewal, signedImport, tenancyDeposit, tenancyMoveIn, privacyFulfillment, privacyRequestContinuity, rentalAgreements, tenancyCloseout, tenancyEpisodes, maintenanceCostApproval, rentalMarketplace, rentalApplication, rentalTour, rentalInquiry, sharedListing, homeownerLease, homeownerRental, generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean , onboardingRowsLeaked: twoOrgOnboarding.rowsLeakedToPriorOrganization , diagnosticDeadLetters: runtimeDiagnostics.deadLetterScans, diagnosticBlocked: runtimeDiagnostics.blockedSchedules };
+  return { resendReceipts, tenancyRenewal, signedImport, tenancyDeposit, tenancyMoveIn, privacyFulfillment, privacyRequestContinuity, rentalAgreements, tenancyCloseout, tenancyEpisodes, maintenanceCostApproval, rentalMarketplace, rentalApplication, rentalTour, rentalInquiry, sharedListing, homeownerLease, homeownerRental, generatedCharges: generated.generatedCount, replayedCharge: replay.replayed, manualPayments: 1, paymentCorrections: 3, providerConnections: providerTraces.connections, residentPaymentSessions: 5, persistedRefunds: operatorRefunds, paymentDisputes: 3, settlementBatches: 2, reconciliationExceptions: 2, maintenanceRequests: 1, vendors: 1, workOrders: 2, workOrderTransitions: workOrderTraces.statuschanges, ownerRemittances: workOrderTraces.remittanceevents, conversationMessages: messageTraces.messages, announcements: announcementTraces.announcements, announcementDeliveries: announcementTraces.deliveries, privacyRequests: privacyTraces.requests, privacyRequestJobs: privacyTraces.jobs, staffInvitations: staffTraces.invitations, staffInvitationNotifications: staffTraces.notification_jobs, staffRevocations: staffTraces.revoked_audits, notificationPreferenceUpdates: preferenceTraces.audits, relationshipInvitations: relationshipInviteTraces.invited, relationshipActivations: relationshipInviteTraces.activated, workOrderCostMinor: workOrderCost.amountMinor, receivableWriteOffMinor: writeOff.writtenOffMinor, balanceMinor: residentSummary.items[0].balanceMinor, outsiderCharges, documentDeliveries: 1, documentAcknowledgements: documentDeliveryTrace.acknowledged_audits, documentScanJobs: scanLifecycle.enqueued, scanCleanedVersions: 1, scanRejectedVersions: 1, scanDeadLettered: scanLifecycle.deadLettered, scanStallSwept: scanLifecycle.stallSwept , schedulerZones: schedulerTimeZones.zones, schedulerBoundaryDueZones: schedulerTimeZones.boundaryDueZones, sweptUploadGrants: schedulerTimeZones.expiredUploadGrants, sweptIdempotencyRecords: schedulerTimeZones.purgedIdempotencyRecords , switcherOrganizations: organizationContext.switcherOrganizations, unscopedSurfacesClosed: organizationContext.unscopedSurfacesClosed, auditedScopedSurfaces: organizationContext.auditedSurfaces , blockedSchedulesReported: reviewCorrections.blockedSchedulesReported, privacyOrganizationsWhenScoped: reviewCorrections.privacyOrganizationsWhenScoped , organizationBypassesBlocked: organizationBoundary.bypassAttemptsBlocked, growthTrialDays: organizationBoundary.trialDays , scanDeadLetterRecovered: scanRecovery.recoveredToClean , onboardingRowsLeaked: twoOrgOnboarding.rowsLeakedToPriorOrganization , diagnosticDeadLetters: runtimeDiagnostics.deadLetterScans, diagnosticBlocked: runtimeDiagnostics.blockedSchedules };
 }
 
 try {

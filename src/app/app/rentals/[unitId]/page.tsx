@@ -3,7 +3,18 @@ import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { getRentalWorkspace } from "@/lib/data/homeowner-rentals";
+import { getRentalUnitActivity, rentalActivityHref } from "@/lib/data/rental-activity";
 export const dynamic = "force-dynamic";
+
+function activityDateFormat(timeZone: string) {
+  const options = { dateStyle: "medium", timeStyle: "short" } as const;
+  try {
+    return new Intl.DateTimeFormat("en-US", { ...options, timeZone });
+  } catch {
+    return new Intl.DateTimeFormat("en-US", { ...options, timeZone: "UTC" });
+  }
+}
+
 export default async function RentalPage({ params }: { params: Promise<{ unitId: string }> }) {
   const { unitId } = await params;
   if (!z.uuid().safeParse(unitId).success) notFound();
@@ -24,6 +35,9 @@ export default async function RentalPage({ params }: { params: Promise<{ unitId:
   const occupied = tenancies.some((tenancy) => tenancy.status !== "scheduled");
   const scheduled = tenancies.filter((tenancy) => tenancy.status === "scheduled");
   const details = unit.rental_details ?? {};
+  const activity = workspace.mode === "ready" && workspace.organization
+    ? await getRentalUnitActivity(workspace.organization.organizationId, unit.id) : null;
+  const formatActivityDate = activityDateFormat(property.time_zone);
   return <div className="mx-auto max-w-4xl space-y-8">
     <Link href="/app/rentals" className="text-sm font-medium text-primary">Back to my rentals</Link>
     {preview && <p className="rounded-lg border p-4 text-sm">Sample rental preview. These are fictional details, not a saved rental. Connect your workspace to use this flow.</p>}
@@ -47,6 +61,27 @@ export default async function RentalPage({ params }: { params: Promise<{ unitId:
         </ul>
       </div> : null}
     </section>
+    {activity && activity.mode !== "unavailable" && <section aria-labelledby="rental-activity" className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
+      <h2 id="rental-activity" className="text-xl font-semibold">Rental activity</h2>
+      {activity.mode === "error" ? <p role="alert" className="text-sm text-muted-foreground">Activity could not be loaded. Refresh to try again.</p>
+        : <>
+          {activity.nextAction && <div className="flex flex-wrap items-center gap-3 rounded-lg bg-muted/45 p-3">
+            <span className="text-sm font-medium">Next up</span>
+            <Button asChild variant="outline" size="sm"><Link href={rentalActivityHref(unit.id, activity.nextAction)}>{activity.nextAction.label}</Link></Button>
+          </div>}
+          {activity.events.length ? <ol className="divide-y border-y">
+            {activity.events.map((event) => <li key={event.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3 text-sm">
+              <div className="min-w-0 space-y-1">
+                <Link className="font-medium underline-offset-4 hover:underline focus-visible:underline" href={rentalActivityHref(unit.id, event)}>
+                  {event.label}
+                </Link>
+                {event.reference && <p className="break-words font-mono text-xs text-muted-foreground">{event.reference}</p>}
+              </div>
+              <time dateTime={event.occurredAt} className="text-xs text-muted-foreground">{formatActivityDate.format(new Date(event.occurredAt))}</time>
+            </li>)}
+          </ol> : <p className="text-sm text-muted-foreground">Verified questions, tours, applications, and signing updates will appear here.</p>}
+        </>}
+    </section>}
     <section><h2 className="text-xl font-semibold">What is private or shared</h2><dl className="mt-4 grid gap-4 sm:grid-cols-2">{["entrance", "kitchen", "bathroom", "laundry"].map((key) => <div key={key} className="border-b pb-3"><dt className="capitalize text-muted-foreground">{key}</dt><dd className="mt-1 font-medium">{typeof details[key] === "string" ? String(details[key]).replace("none", "Not provided") : "Not recorded"}</dd></div>)}</dl>
       {["utilitiesNotes", "parkingNotes"].map((key) => typeof details[key] === "string" && details[key] ? <div key={key} className="mt-5"><h3 className="font-medium">{key === "utilitiesNotes" ? "Utilities" : "Parking"}</h3><p className="mt-2 whitespace-pre-wrap break-words text-muted-foreground">{String(details[key])}</p></div> : null)}</section>
   </div>;

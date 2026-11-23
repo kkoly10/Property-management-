@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ApplicationRecoveryForm } from "./recovery-form";
@@ -11,6 +12,7 @@ type Status = {
   applicantNote: string; status: "submitted" | "lease_preparation";
   listingTitle: string; rentAmountMinor: number; currencyCode: string;
   listingAvailableOn: string; version: number;
+  evidenceAvailable?: boolean;
 };
 type State = "loading" | "ready" | "unavailable" | "error" | "withdrawn";
 class RequestFailure extends Error {
@@ -148,6 +150,7 @@ export function ApplicationStatus({ reference: validatedReference }: { reference
       {uncertain ? <p className="text-sm text-muted-foreground">
         The response was interrupted. Retry this same withdrawal to confirm it.
       </p> : null}
+      {data.evidenceAvailable === true ? <Button asChild><Link href={`/applications/evidence?ref=${encodeURIComponent(data.applicationReference)}`}>Open private application documents</Link></Button> : null}
       <Button type="button" variant="outline" disabled={busy} onClick={withdraw}>
         {busy ? "Withdrawing…" : uncertain ? "Retry withdrawal" : "Withdraw my application"}
       </Button>

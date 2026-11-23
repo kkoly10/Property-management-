@@ -25,16 +25,18 @@ const APP_SURFACE_PREFIXES = [
   "/app", "/onboarding", "/settings", "/platform", "/login", "/signup", "/auth", "/invitations",
   "/forgot-password", "/reset-password",
 ];
-const RENTAL_PUBLIC_PREFIXES = ["/search", "/l", "/inquiries/verify", "/tours/verify", "/applications"];
+const RENTAL_PUBLIC_PREFIXES = ["/search", "/l", "/inquiries/verify", "/inquiries/conversation", "/tours/verify", "/applications"];
 // Application capability endpoints must not be issued on an operator, owner,
 // resident or marketing origin. Operator decisions belong on the app host.
 const RENTAL_APPLICATION_PUBLIC_APIS = new Set([
   "/api/v1/rental-applications", "/api/v1/rental-applications/verify",
   "/api/v1/rental-applications/status", "/api/v1/rental-applications/withdraw",
   "/api/v1/rental-applications/recover", "/api/v1/rental-applications/recover/confirm",
+  "/api/v1/rental-applications/evidence", "/api/v1/rental-applications/evidence/file",
 ]);
 const RENTAL_APPLICATION_OPERATOR_APIS = new Set([
   "/api/v1/rental-applications/prepare", "/api/v1/rental-applications/close",
+  "/api/v1/rental-applications/evidence-review", "/api/v1/rental-applications/evidence-review/file",
 ]);
 
 function underPrefix(pathname: string, prefixes: readonly string[]): boolean {
@@ -53,6 +55,12 @@ export function routeForHost(rawHost: string | null | undefined, pathname: strin
   const classification = classifyHost(rawHost);
   const hostname = normalizeHostname(rawHost);
   const { marketing, rentals } = hostConfig();
+
+  if (pathname === "/api/v1/rental-conversations" || pathname === "/api/v1/rental-conversations/manage") {
+    const requiredHost = pathname.endsWith("/manage") ? "app" : "rentals";
+    return classification.kind === requiredHost || classification.kind === "development"
+      ? { type: "continue" } : { type: "reject" };
+  }
 
   // B4 has origin-scoped public capability cookies. Never serve applicant
   // verification/status/withdrawal on an operator or other sibling origin.

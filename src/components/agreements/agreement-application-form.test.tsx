@@ -25,8 +25,10 @@ it("pins the prepared rental and displays the applicant without editable signer 
     mfaVerified: true, units: [{ id: unitId, propertyId, code: "101", property: "Fixture rental" }],
     documents: [file, { ...file, id: otherUnit, unitId: otherUnit, title: "Other rental PDF" }],
   }} application={{
-    applicationId, setupId, unitId, applicationVersion: 3, agreementId: null,
+    applicationId, setupId, unitId, applicationVersion: 3, setupRevision: 9, agreementId: null,
     name: "Verified Applicant", email: "verified@example.test",
+    terms: { startDate: "2027-02-01", endDate: "2028-01-31", rentAmount: "1500", rentFrequency: "monthly",
+      firstChargeDueDate: "2027-02-01", openingBalance: "0", currency: "USD" },
   }} />);
 
   expect(screen.getByText("Verified Applicant · verified@example.test")).toBeInTheDocument();
@@ -41,6 +43,7 @@ it("pins the prepared rental and displays the applicant without editable signer 
   expect(values.get("applicationId")).toBe(applicationId);
   expect(values.get("applicationVersion")).toBe("3");
   expect(values.get("setupId")).toBe(setupId);
+  expect(values.get("setupRevision")).toBe("9");
   expect(values.get("versionId")).toBe(versionId);
   expect(values.has("emails")).toBe(false);
   expect(values.has("unitId")).toBe(false);

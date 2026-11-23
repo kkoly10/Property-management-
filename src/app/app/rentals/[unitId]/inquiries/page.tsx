@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getRentalInquiryWorkspace } from "@/lib/data/rental-inquiries";
 import { rentalInquiryTopicLabels } from "@/lib/rental-inquiry-topics";
+import { OperatorRentalConversation } from "@/components/rentals/operator-rental-conversation";
 import { InquiryActions } from "./inquiry-actions";
 
 export const dynamic = "force-dynamic";
@@ -65,6 +66,9 @@ export default async function RentalInquiriesPage({ params }: { params: Promise<
                   <MessageSquareText aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                   <p className="whitespace-pre-wrap break-words text-sm leading-6">{item.question}</p>
                 </div>
+                {workspace.organizationId && !preview ? (
+                  <OperatorRentalConversation organizationId={workspace.organizationId} kind="inquiry" id={item.id} />
+                ) : null}
               </div>
               <div className="flex shrink-0 flex-row gap-2 md:flex-col md:items-end">
                 <Button asChild size="sm" variant="outline">

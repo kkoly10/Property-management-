@@ -18,7 +18,7 @@ export async function fileAgreementAction(_previous: ActionState, form: FormData
   if (session.mode !== "ready" || session.organizationId !== request.data.organizationId) {
     return { status: "error", message: "The active workspace changed. Reopen this agreement in its workspace." };
   }
-  const { error } = await session.supabase.rpc("file_executed_rental_agreement", {
+  const { data, error } = await session.supabase.rpc("file_executed_rental_agreement", {
     p_organization_id: session.organizationId,
     p_agreement_id: request.data.agreementId,
   });
@@ -30,6 +30,10 @@ export async function fileAgreementAction(_previous: ActionState, form: FormData
       AGREEMENT_ISSUED_ADDRESS_UNAVAILABLE: "Create a new signing request. This package predates the renter verification required for tenancy setup.",
     };
     return { status: "error", message: messages[error.message] ?? "The agreement could not be filed. Verify access and try again." };
+  }
+  const receipt = z.object({ agreementId: z.uuid(), documentId: z.uuid() }).safeParse(data);
+  if (!receipt.success || receipt.data.agreementId !== request.data.agreementId) {
+    return { status: "error", message: "Filing could not be confirmed. Retry the same request." };
   }
   revalidatePath("/app/agreements/" + request.data.agreementId);
   revalidatePath("/app/rentals/[unitId]/setup", "page");

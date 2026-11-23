@@ -44,7 +44,7 @@ function hasUsableAuthCredential(payload: Record<string, unknown>): boolean {
 
 export async function runNotificationDispatch(
   supabase: Client,
-  input: { channel: string; limit: number; workerRunId: string; stallMinutes: number },
+  input: { channel: string; limit: number; workerRunId: string; stallMinutes: number; exactJobId?: string },
 ): Promise<JobOutcome> {
   const transport = getNotificationTransport();
   if (!transport) {
@@ -55,15 +55,24 @@ export async function runNotificationDispatch(
     };
   }
 
-  const { error: sweepError } = await supabase.rpc("requeue_stalled_notification_jobs", { p_stall_minutes: input.stallMinutes });
-  if (sweepError) return { ok: false, status: 422, error: "Stalled notification jobs could not be swept." };
+  if (!input.exactJobId) {
+    const { error: sweepError } = await supabase.rpc("requeue_stalled_notification_jobs", { p_stall_minutes: input.stallMinutes });
+    if (sweepError) return { ok: false, status: 422, error: "Stalled notification jobs could not be swept." };
+  }
 
   const claimRunId = crypto.randomUUID();
-  const { data: claim, error: claimError } = await supabase.rpc("claim_notification_jobs", {
-    p_channel: input.channel,
-    p_limit: input.limit,
-    p_worker_run_id: claimRunId,
-  });
+  const batchArgs = { p_channel: input.channel, p_limit: input.limit, p_worker_run_id: claimRunId };
+  let claimed = input.exactJobId
+    ? await supabase.rpc("claim_rental_fast_notification_job", {
+        p_job_id: input.exactJobId, p_worker_run_id: claimRunId,
+      })
+    : await supabase.rpc("claim_notification_jobs_v2", batchArgs);
+  // During a schema rollout only an explicitly missing RPC is safe to retry through the legacy
+  // batch. Any other error could follow a successful claim whose response was lost.
+  if (!input.exactJobId && claimed.error?.code === "PGRST202") {
+    claimed = await supabase.rpc("claim_notification_jobs", batchArgs);
+  }
+  const { data: claim, error: claimError } = claimed;
   if (claimError || !claim) {
     const code = claimError?.message ?? "";
     if (code.includes("INVALID_NOTIFICATION_CHANNEL")) return { ok: false, status: 422, error: "That notification channel is not supported." };
@@ -88,6 +97,9 @@ export async function runNotificationDispatch(
     } else if (job.templateCode === "rental_application_recovery"
       && !(typeof job.payload.expiresAt === "string" && Date.parse(job.payload.expiresAt) > Date.now())) {
       outcome = { ok: false, errorCode: "APPLICATION_RECOVERY_LINK_EXPIRED", retryable: false };
+    } else if (["rental_agreement_signing_requested", "rental_inquiry_reply", "rental_tour_reply", "rental_conversation_access"].includes(job.templateCode)
+      && !(typeof job.payload.expiresAt === "string" && Date.parse(job.payload.expiresAt) > Date.now())) {
+      outcome = { ok: false, errorCode: "RENTAL_ACCESS_LINK_EXPIRED", retryable: false };
     } else if (requiresAuthCredential(job.payload) && !hasUsableAuthCredential(job.payload)) {
       // FAIL CLOSED. An invitation queued under this architecture says, in its own copy, that opening
       // the link signs the recipient in. Without the credential that sentence is false: the bare

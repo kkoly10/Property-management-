@@ -199,19 +199,72 @@ export async function validateSharedListing(db, { assert, expectDatabaseError, c
     "Public listing omitted the approved coarse location.");
   assert(publicDto.photos[0].documentVersionId === photo.finalized.versionId,
     "Public listing silently substituted a different photo version.");
+  assert(publicDto.applicationRequirements === null, "A legacy listing acquired requirements automatically.");
 
   // Editing a live listing must fail safe: the changed snapshot goes back to draft until republished.
   await act();
-  const editedDetails = { ...withPhoto, summary: "Updated private basement listing details waiting for explicit republication." };
-  const edited = await save(rental.unitId, published.version, editedDetails);
+  const applicationRequirements = {
+    criteriaText: "The landlord reviews income and credit information.",
+    requiredDocumentTypes: ["income_evidence", "credit_evidence"],
+    acceptedAlternatives: "An offer letter can be considered instead of paystubs.",
+  };
+  await expectDatabaseError(
+    () => save(rental.unitId, published.version, {
+      ...withPhoto,
+      applicationRequirements: { ...applicationRequirements, requiredDocumentTypes: ["identity", "identity"] },
+    }),
+    "INVALID_APPLICATION_REQUIREMENTS",
+  );
+  await expectDatabaseError(
+    () => save(rental.unitId, published.version, {
+      ...withPhoto,
+      applicationRequirements: { ...applicationRequirements, requirementsVersion: randomUUID() },
+    }),
+    "INVALID_APPLICATION_REQUIREMENTS",
+  );
+  const editedDetails = { ...withPhoto, applicationRequirements };
+  const editKey = randomUUID();
+  const edited = await save(rental.unitId, published.version, editedDetails, editKey);
   assert(edited.status === "draft" && edited.version === published.version + 1,
     "Editing a published listing changed live public content instead of returning it to draft.");
+  const firstRequirements = edited.applicationRequirements;
+  assert(firstRequirements?.requirementsVersion && firstRequirements.criteriaText === applicationRequirements.criteriaText
+    && JSON.stringify(firstRequirements.requiredDocumentTypes) === '["credit_evidence","income_evidence"]',
+  "Listing requirements were not versioned and normalized.");
+  assert((await save(rental.unitId, published.version, editedDetails, editKey)).applicationRequirements.requirementsVersion
+    === firstRequirements.requirementsVersion, "An exact retry minted another criteria version.");
   await db.exec("reset role; set role service_role");
   assert(await rpc("get_public_rental_listing", "$1", [published.publicId]) === null,
     "Edited draft remained public before republication.");
+  await expectDatabaseError(
+    () => db.query("select private.get_rental_listing_application_requirements($1)", [draft.listingId]),
+    "permission denied",
+  );
   await act();
-  const republishedAfterEdit = await setStatus(draft.listingId, edited.version, "published");
+  const retained = await save(rental.unitId, edited.version, withPhoto);
+  assert(retained.applicationRequirements.requirementsVersion === firstRequirements.requirementsVersion,
+    "A legacy payload cleared established application requirements.");
+  const reordered = await save(rental.unitId, retained.version, {
+    ...withPhoto, applicationRequirements: {
+      ...applicationRequirements,
+      requiredDocumentTypes: [...applicationRequirements.requiredDocumentTypes].reverse(),
+    },
+  });
+  assert(reordered.applicationRequirements.requirementsVersion === firstRequirements.requirementsVersion,
+    "Reorder-only changes minted another criteria version.");
+  const revised = await save(rental.unitId, reordered.version, {
+    ...withPhoto, applicationRequirements: { ...applicationRequirements, acceptedAlternatives: "Ask about alternatives." },
+  });
+  assert(revised.applicationRequirements.requirementsVersion !== firstRequirements.requirementsVersion,
+    "A change to published application requirements kept the previous version.");
+  const republishedAfterEdit = await setStatus(draft.listingId, revised.version, "published");
+  await db.exec("reset role; set role service_role");
+  const publicRequirements = (await rpc("get_public_rental_listing", "$1", [republishedAfterEdit.publicId]))?.applicationRequirements;
+  assert(publicRequirements?.acceptedAlternatives === "Ask about alternatives."
+    && publicRequirements.requirementsVersion === revised.applicationRequirements.requirementsVersion,
+  "The latest public requirements did not match the published listing version.");
 
+  await act();
   const pauseKey = randomUUID();
   const paused = await setStatus(draft.listingId, republishedAfterEdit.version, "paused", pauseKey);
   assert(paused.status === "paused" && paused.version === republishedAfterEdit.version + 1, "Published listing did not pause.");
@@ -282,6 +335,9 @@ export async function validateSharedListing(db, { assert, expectDatabaseError, c
   assert(relisted.listingId !== closed.listingId && relisted.publicId !== rotated.publicId
     && relisted.status === "draft" && relisted.version === 1,
     "A closed unit could not start a fresh later listing.");
+  const withRequirements = await save(rental.unitId, relisted.version, editedDetails);
+  const cleared = await save(rental.unitId, withRequirements.version, { ...withPhoto, applicationRequirements: null });
+  assert(cleared.applicationRequirements === null, "Explicitly removing application requirements failed.");
 
   // A professional organization is not accepted by the homeowner-only command.
   await db.exec("reset role");
@@ -289,6 +345,14 @@ export async function validateSharedListing(db, { assert, expectDatabaseError, c
     "select id from public.properties where organization_id=$1 limit 1", [professionalOrg],
   )).rows[0];
   assert(!professionalProperty, "Professional fixture unexpectedly has a property.");
+  const originalCriteria = await db.query(`
+    select after_data->'applicationRequirements'->>'criteriaText' as "criteriaText"
+    from audit.audit_events
+    where organization_id=$1 and resource_id=$2 and action_code='rental_listing.saved'
+      and after_data->'applicationRequirements'->>'requirementsVersion'=$3
+  `, [org, draft.listingId, firstRequirements.requirementsVersion]);
+  assert(originalCriteria.rows.some((row) => row.criteriaText === firstRequirements.criteriaText),
+    "The original public criteria version was not retained in the listing audit.");
 
   await db.exec("reset role");
   return {
@@ -302,5 +366,6 @@ export async function validateSharedListing(db, { assert, expectDatabaseError, c
     closedHidden: true,
     relistingAfterClose: true,
     liveEditReturnsToDraft: true,
+    versionedApplicationRequirements: true,
   };
 }

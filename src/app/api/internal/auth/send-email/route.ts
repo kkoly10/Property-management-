@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { carriesCredentialInUrl } from "@/lib/runtime/worker-auth";
 import { verifyStandardWebhook } from "@/lib/notifications/standard-webhooks";
-import { AUTH_EMAIL_ACTION_TYPES, VERIFY_OTP_TYPE, isAuthEmailActionType, renderAuthEmail, isSecurityNotification } from "@/lib/notifications/auth-email";
+import { VERIFY_OTP_TYPE, isAuthEmailActionType, renderAuthEmail, isSecurityNotification } from "@/lib/notifications/auth-email";
 import { renderEmailHtml } from "@/lib/notifications/html-email";
 import { resolveLanguage } from "@/lib/notifications/templates";
 import { senderFor, type MailAudience } from "@/lib/notifications/sender";
@@ -251,6 +251,3 @@ export async function POST(request: Request) {
   // Supabase takes an empty 200 as "sent".
   return NextResponse.json({}, { headers: { "cache-control": "private, no-store" } });
 }
-
-/** Exported for the test that asserts every documented action type is handled. */
-export const SUPPORTED_AUTH_ACTIONS = AUTH_EMAIL_ACTION_TYPES;

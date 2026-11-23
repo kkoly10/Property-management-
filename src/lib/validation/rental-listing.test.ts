@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applicationRequirementsSnapshotSchema,
   rentalDiscoverySearchSchema,
   rentalListingDetailsSchema,
   rentalListingStatusSchema,
@@ -36,6 +37,29 @@ describe("shared rental listing validation", () => {
     expect(saveRentalListingSchema.safeParse({ organizationId: id, unitId: id, expectedVersion: -1, details }).success).toBe(false);
     expect(rentalListingStatusSchema.safeParse({ organizationId: id, listingId: id, expectedVersion: 1, status: "published" }).success).toBe(true);
     expect(rentalListingStatusSchema.safeParse({ organizationId: id, listingId: id, expectedVersion: 1, status: "discoverable" }).success).toBe(false);
+  });
+
+  it("accepts optional structured public criteria and reserves the version for the server", () => {
+    const requirements = {
+      criteriaText: "  The landlord reviews income. ",
+      requiredDocumentTypes: ["income_evidence"],
+      acceptedAlternatives: "An offer letter is accepted.",
+    };
+    const parsed = rentalListingDetailsSchema.parse({ ...details, applicationRequirements: requirements });
+    expect(parsed.applicationRequirements?.criteriaText).toBe("The landlord reviews income.");
+    expect(rentalListingDetailsSchema.parse({ ...details, applicationRequirements: null }).applicationRequirements).toBeNull();
+    expect(rentalListingDetailsSchema.safeParse({ ...details, applicationRequirements: {
+      ...requirements, requirementsVersion: id,
+    } }).success).toBe(false);
+    expect(applicationRequirementsSnapshotSchema.safeParse({ ...requirements, requirementsVersion: id }).success).toBe(true);
+    for (const invalid of [
+      { ...requirements, requiredDocumentTypes: ["income_evidence", "income_evidence"] },
+      { ...requirements, requiredDocumentTypes: ["bank_statement"] },
+      { ...requirements, criteriaText: "x".repeat(1601) },
+      { criteriaText: "", requiredDocumentTypes: [], acceptedAlternatives: "" },
+    ]) {
+      expect(rentalListingDetailsSchema.safeParse({ ...details, applicationRequirements: invalid }).success).toBe(false);
+    }
   });
 });
 

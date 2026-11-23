@@ -37,11 +37,16 @@ function job(payload: Record<string, unknown>, overrides: Record<string, unknown
   };
 }
 
-function supabaseWith(jobs: unknown[]): SupabaseClient {
+function supabaseWith(jobs: unknown[], modernClaimError?: string): SupabaseClient {
   return {
     rpc: vi.fn(async (fn: string, args: Record<string, unknown>) => {
       rpcCalls.push({ fn, args });
-      if (fn === "claim_notification_jobs") return { data: { jobs }, error: null };
+      if (fn === "claim_notification_jobs_v2" && modernClaimError) {
+        return { data: null, error: { code: modernClaimError, message: "Claim failed." } };
+      }
+      if (["claim_notification_jobs_v2", "claim_notification_jobs", "claim_rental_fast_notification_job"].includes(fn)) {
+        return { data: { jobs }, error: null };
+      }
       return { data: null, error: null };
     }),
   } as unknown as SupabaseClient;
@@ -110,7 +115,7 @@ describe("the invitation credential guard", () => {
     expect(called("complete_notification_attempt")).toHaveLength(1);
     expect(called("fail_notification_attempt")).toHaveLength(0);
     expect(called("complete_notification_attempt")[0].args.p_worker_run_id)
-      .toBe(called("claim_notification_jobs")[0].args.p_worker_run_id);
+      .toBe(called("claim_notification_jobs_v2")[0].args.p_worker_run_id);
   });
 
   it("retries an ambiguous relay acknowledgement with the same message idempotency key", async () => {
@@ -122,7 +127,7 @@ describe("the invitation credential guard", () => {
     await runNotificationDispatch(client, DISPATCH);
     await runNotificationDispatch(client, DISPATCH);
     expect(called("complete_notification_attempt")).toHaveLength(0);
-    const claims = called("claim_notification_jobs").map(call => call.args.p_worker_run_id);
+    const claims = called("claim_notification_jobs_v2").map(call => call.args.p_worker_run_id);
     expect(new Set(claims).size).toBe(2);
     expect(called("fail_notification_attempt").map(call => call.args)).toEqual(claims.map(run => ({
       p_notification_job_id: "11111111-1111-4111-8111-111111111111",
@@ -156,5 +161,27 @@ describe("the invitation credential guard", () => {
     expect(result.ok).toBe(true);
     expect(relayCalls).toHaveLength(1);
     expect(called("fail_notification_attempt")).toHaveLength(0);
+  });
+});
+
+describe("notification claims during a rolling release", () => {
+  it("falls back with the same batch arguments only when the updated RPC is missing", async () => {
+    const result = await runNotificationDispatch(supabaseWith([], "PGRST202"), DISPATCH);
+    expect(result.ok).toBe(true);
+    expect(called("claim_notification_jobs")).toEqual(called("claim_notification_jobs_v2")
+      .map(({ args }) => ({ fn: "claim_notification_jobs", args })));
+
+    rpcCalls = [];
+    const denied = await runNotificationDispatch(supabaseWith([], "42501"), DISPATCH);
+    expect(denied.ok).toBe(false);
+    expect(called("claim_notification_jobs")).toHaveLength(0);
+  });
+
+  it("keeps exact dispatch on the single-job RPC without sweeping or claiming a batch", async () => {
+    const exactJobId = "11111111-1111-4111-8111-111111111111";
+    const result = await runNotificationDispatch(supabaseWith([]), { ...DISPATCH, exactJobId });
+    expect(result.ok).toBe(true);
+    expect(rpcCalls.map(({ fn }) => fn)).toEqual(["claim_rental_fast_notification_job"]);
+    expect(rpcCalls[0].args.p_job_id).toBe(exactJobId);
   });
 });

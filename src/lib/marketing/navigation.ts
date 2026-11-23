@@ -71,7 +71,7 @@ export const AUTHENTICATED_PREFIXES = [
  * A secure document link is redeemed anonymously — the token is the credential — so redirecting it to
  * `/login` would break the delivery mechanism for exactly the recipients who have no account.
  */
-export const ANONYMOUS_EXCEPTIONS = ["/documents/secure"];
+export const ANONYMOUS_EXCEPTIONS = ["/documents/secure", "/documents/agreements/claim"];
 
 /**
  * True when a path is a public, session-independent page whose HTML is identical for every visitor.

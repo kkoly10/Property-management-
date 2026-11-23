@@ -4,6 +4,7 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getRentalApplicationWorkspace } from "@/lib/data/rental-applications";
+import { rentalEvidenceWorklist } from "@/lib/rental-evidence/http";
 import { ApplicationActions } from "./application-actions";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export default async function RentalApplicationsPage({
   if (workspace.mode === "error") return (
     <p role="alert">Applications could not be loaded. Refresh to retry.</p>
   );
+  const evidence = await rentalEvidenceWorklist(workspace.organizationId, unitId);
   return (
     <main className="mx-auto max-w-5xl space-y-7">
       <Link href={`/app/rentals/${unitId}`} className="text-sm font-medium text-primary">
@@ -47,8 +49,10 @@ export default async function RentalApplicationsPage({
         </div>
       ) : (
         <div className="divide-y rounded-xl border bg-card">
-          {workspace.items.map((item) => (
-            <article key={item.id} className="grid gap-4 p-5 md:grid-cols-[1fr_auto]">
+          {workspace.items.map((item) => {
+            const review = evidence.get(item.id);
+            return (
+            <article key={item.id} id={`application-${item.publicReference}`} className="grid scroll-mt-24 gap-4 p-5 target:bg-muted/45 md:grid-cols-[1fr_auto]">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="font-semibold">{item.firstName} {item.lastName}</h2>
@@ -74,18 +78,25 @@ export default async function RentalApplicationsPage({
                 <Button asChild size="sm" variant="outline">
                   <a href={`mailto:${encodeURIComponent(item.email)}`}>Reply by email</a>
                 </Button>
-                {item.status === "submitted" || item.status === "lease_preparation" ? (
+                {review?.reviewer && ["submitted", "changes_requested", "selected"].includes(review.status) ? (
+                  <Button asChild size="sm" variant="outline"><Link href={`/app/rentals/${unitId}/applications/${item.id}/evidence`}>Review private documents</Link></Button>
+                ) : null}
+                {(item.status === "submitted" || item.status === "lease_preparation") && (!review || review.status === "selected") ? (
                   <ApplicationActions organizationId={workspace.organizationId ?? ""}
                     applicationId={item.id} initialVersion={item.version}
                     status={item.status} disabled={workspace.mode === "setup"}
                     unitId={unitId} />
                 ) : null}
+                {review && review.status !== "selected" ? <span className="text-xs text-muted-foreground">
+                  {review.status === "submitted" ? "Private review pending" : review.status === "changes_requested" ? "Waiting for applicant changes"
+                    : review.status === "declined" ? "Declined" : "Waiting for applicant documents"}
+                </span> : null}
                 {item.status === "converted" ? (
                   <span className="text-xs text-muted-foreground">Converted to signed tenancy</span>
                 ) : null}
               </div>
             </article>
-          ))}
+          ); })}
         </div>
       )}
     </main>

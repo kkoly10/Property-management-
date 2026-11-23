@@ -133,6 +133,11 @@ test.describe("every page fits a phone", () => {
       const response = await page.goto(route, {
         waitUntil: isApplicantStatus ? "domcontentloaded" : "networkidle",
       });
+      // Restricted application evidence is intentionally disabled in the ordinary demo build.
+      if (route === "/applications/evidence" || /^\/app\/rentals\/[^/]+\/applications\/[^/]+\/evidence$/.test(route)) {
+        expect(response?.status(), `${route} must fail closed while evidence collection is disabled`).toBe(404);
+        return;
+      }
       if (isApplicantStatus) {
         await expect(page.getByRole("heading", { name: "Application status" })).toBeVisible();
         await expect(page.getByText("Application access is unavailable")).toBeVisible();
