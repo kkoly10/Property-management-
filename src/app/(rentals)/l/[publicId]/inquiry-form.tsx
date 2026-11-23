@@ -7,14 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { rentalInquiryTopics, rentalInquiryTopicLabels } from "@/lib/rental-inquiry-topics";
 
-type Fields = { firstName: string; lastName: string; email: string; question: string };
+type Fields = { firstName: string; lastName: string; email: string; question: string; topic: string };
 class RequestFailure extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
 export function RentalInquiryForm({ publicId }: { publicId: string }) {
-  const [fields, setFields] = useState<Fields>({ firstName: "", lastName: "", email: "", question: "" });
+  const [fields, setFields] = useState<Fields>({ firstName: "", lastName: "", email: "", question: "", topic: "" });
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const [sent, setSent] = useState(false);
@@ -41,6 +42,7 @@ export function RentalInquiryForm({ publicId }: { publicId: string }) {
           lastName: fields.lastName,
           email: fields.email,
           question: fields.question,
+          topic: fields.topic || undefined,
           locale: "en-US",
         },
       };
@@ -86,7 +88,7 @@ export function RentalInquiryForm({ publicId }: { publicId: string }) {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5">
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>Question not confirmed</AlertTitle>
@@ -101,31 +103,42 @@ export function RentalInquiryForm({ publicId }: { publicId: string }) {
           </AlertDescription>
         </Alert>
       ) : null}
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-3 min-[380px]:grid-cols-2">
         <div>
           <Label htmlFor="inquiry-first-name">First name</Label>
-          <Input id="inquiry-first-name" className="mt-2" autoComplete="given-name"
+          <Input id="inquiry-first-name" className="mt-1.5" autoComplete="given-name"
             value={fields.firstName} disabled={locked} onChange={(e) => edit("firstName", e.target.value)} />
         </div>
         <div>
           <Label htmlFor="inquiry-last-name">Last name</Label>
-          <Input id="inquiry-last-name" className="mt-2" autoComplete="family-name"
+          <Input id="inquiry-last-name" className="mt-1.5" autoComplete="family-name"
             value={fields.lastName} disabled={locked} onChange={(e) => edit("lastName", e.target.value)} />
         </div>
       </div>
 
       <div>
         <Label htmlFor="inquiry-email">Email</Label>
-        <Input id="inquiry-email" className="mt-2" type="email" autoComplete="email"
+        <Input id="inquiry-email" className="mt-1.5" type="email" autoComplete="email"
           value={fields.email} disabled={locked} onChange={(e) => edit("email", e.target.value)} />
       </div>
       <div>
+        <Label htmlFor="inquiry-topic">Topic <span className="font-normal text-muted-foreground">(optional)</span></Label>
+        <select id="inquiry-topic"
+          className="mt-1.5 h-11 w-full rounded-md border border-input bg-card px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 sm:h-10 sm:text-sm"
+          value={fields.topic} disabled={locked} onChange={(e) => edit("topic", e.target.value)}>
+          <option value="">Select a topic</option>
+          {rentalInquiryTopics.map((topic) => (
+            <option key={topic} value={topic}>{rentalInquiryTopicLabels[topic].en}</option>
+          ))}
+        </select>
+      </div>
+      <div>
         <Label htmlFor="inquiry-question">Question about this rental</Label>
-        <Textarea id="inquiry-question" className="mt-2 min-h-28" maxLength={2000}
-          placeholder="Ask about the space, utilities, parking, availability, or another rental detail."
+        <Textarea id="inquiry-question" className="mt-1.5 min-h-24" maxLength={2000}
+          placeholder="For example, is water included in the rent?"
           value={fields.question} disabled={locked} onChange={(e) => edit("question", e.target.value)} />
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          Do not include Social Security numbers, ID numbers, banking details, or other sensitive information.
+        <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+          Do not include Social Security numbers, ID numbers, or banking details.
         </p>
       </div>
       <Button type="button" onClick={submit} disabled={busy || sent}>
@@ -133,8 +146,7 @@ export function RentalInquiryForm({ publicId }: { publicId: string }) {
         {uncertain ? "Retry same question" : busy ? "Sending…" : "Email my question"}
       </Button>
       <p className="text-xs leading-5 text-muted-foreground">
-        Crecy verifies your email before the landlord can see the question. Verification does not reserve the rental,
-        approve an application, or guarantee a response.
+        Sending a question does not reserve the rental, approve an application, or guarantee a response.
       </p>
     </div>
   );

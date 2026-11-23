@@ -31,10 +31,12 @@ test("discovery filters fail closed without exposing unlisted share links", asyn
 test("a discoverable search result opens the same inquiry-tour-application listing surface", async ({ page }) => {
   await page.goto(`/l/${DISCOVERABLE}`);
 
-  await expect(page.getByText("Rental on Crecy")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Garden-level apartment" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Send the landlord a verified question/i })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Request a verified tour/i })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Apply for this rental/i })).toBeVisible();
+  await expect(page.getByRole("tabpanel", { name: "Question" })).toBeVisible();
+  await page.getByRole("tab", { name: "Tour" }).click();
+  await expect(page.getByRole("tabpanel", { name: "Tour" })).toBeVisible();
+  await page.getByRole("tab", { name: "Apply" }).click();
+  await expect(page.getByRole("tabpanel", { name: "Apply" })).toBeVisible();
+  await expect(page.getByRole("tabpanel")).toHaveCount(1);
   await expect(page.locator("body")).not.toContainText("123 Example Street");
 });

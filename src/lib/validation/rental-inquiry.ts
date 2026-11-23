@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { rentalInquiryTopics } from "@/lib/rental-inquiry-topics";
 
 export const rentalInquiryLocales = ["en-US", "en-CA", "es-MX", "fr-CA"] as const;
 
@@ -8,6 +9,7 @@ export const submitRentalInquirySchema = z.object({
   lastName: z.string().trim().min(1).max(80),
   email: z.email().trim().max(320),
   question: z.string().trim().min(10).max(2000),
+  topic: z.enum(rentalInquiryTopics).optional(),
   locale: z.enum(rentalInquiryLocales).default("en-US"),
 }).strict();
 

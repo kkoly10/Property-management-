@@ -402,7 +402,7 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 - **Media:** the landlord uploads PNG/JPEG photos through the existing private document upload + malware-scan pipeline. Pending/rejected photos cannot be selected for publication.
 - **Publish state:** `draft → published ↔ paused → closed`; editing a published/paused listing saves the changed snapshot back as `draft`. Closed is terminal for that record, while a later relisting creates a fresh draft/public id. Initial publish remains `unlisted`; B5 discovery is a separate explicit post-publish action.
 - **Share URL:** `rent.crecyos.com/l/:publicId`. “Unlisted” means absent from Crecy discovery and search indexing, not secret; anyone holding the URL can view it.
-- **Public content:** title, summary, rent, availability, space snapshot, coarse city/region/country, lease/pets/utilities/parking and selected clean photos. Street/postal and management/tenant records stay private.
+- **Public content:** title, rent, availability, and coarse city/region/country lead the page. The summary, space, lease term, pets, utilities, and parking follow the gallery of selected clean photos. The contact card shows one form at a time, and a mobile link jumps directly to it. Street/postal and management/tenant records stay private.
 - **Recovery:** stale edits return a version conflict; uncertain save/publish/pause/close/link-rotation operations retain and retry the same body/idempotency key while editing is locked; share-link rotation invalidates the old public id.
 - **B1 baseline:** the original shared-listing slice introduced no inquiry, tour, application, screening or marketplace-search flow. B2–B5 add those capabilities later without replacing the same listing record.
 
@@ -420,7 +420,7 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 
 ## Homeowner B3 — verified tour requests
 
-- **Public listing:** `/l/:publicId` includes a separate “Request a verified tour” card. The visitor enters contact details and up to three preferred times; the page states the rental time zone and that verification does not confirm a tour.
+- **Public listing:** The Tour tab on `/l/:publicId` accepts contact details and up to three preferred times. It shows the rental time zone and states that verification does not confirm a tour.
 - **Verification:** `/tours/verify` reads the token from the URL fragment, removes the fragment, and waits for an explicit “Verify my email” action before POSTing.
 - **Landlord queue:** `/app/rentals/:unitId/tours` shows only email-verified requests, their submitted preferences in the property time zone, and confirmation controls.
 - **Private location:** the landlord meeting location is never copied into the public listing. It is disclosed only to the verified visitor after one time is confirmed.

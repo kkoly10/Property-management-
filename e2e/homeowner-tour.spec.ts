@@ -8,8 +8,9 @@ for (const width of [390, 1440]) {
   test(`public verified-tour intake fits ${width}px and stays non-evaluative`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/l/${PUBLIC_ID}`);
-    const tourCard = page.getByRole("heading", { name: "Request a verified tour" }).locator("..");
-    await expect(tourCard.getByRole("heading", { name: "Request a verified tour" })).toBeVisible();
+    await page.getByRole("tab", { name: "Tour" }).click();
+    const tourCard = page.getByRole("tabpanel", { name: "Tour" });
+    await expect(tourCard).toBeVisible();
     await expect(tourCard.getByLabel("First name")).toBeVisible();
     await expect(tourCard.getByLabel("Email")).toBeVisible();
     await expect(tourCard.getByLabel("Preferred time 1")).toBeVisible();

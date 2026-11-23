@@ -146,11 +146,11 @@ describe("the Resend relay", () => {
     vi.stubEnv("CRECY_MAIL_REPLY_TO_OPERATOR", "support@crecyos.com");
     const templateCode = "message_rental_inquiry_received";
     const unitId = "b4b58943-a1cf-412f-a949-a89a375ddd9a";
-    const workspace = `https://app.crecyos.com/app/rentals/${unitId}/inquiries`;
+    const workspace = `https://app.crecyos.com/app/rentals/${unitId}/inquiries#inquiry-INQ-1234ABCDEF90`;
     const rendered = renderNotification({
       templateCode,
       locale: "en-US",
-      payload: { unitId, inquiryReference: "INQ-1234ABCDEF90" },
+      payload: { unitId, inquiryReference: "INQ-1234ABCDEF90", listingTitle: "Garden apartment", topic: "utilities" },
     })!;
     const response = await POST(message({ templateCode, ...rendered }));
     expect(await response.json()).toEqual({ messageId: "resend-123" });
@@ -159,7 +159,9 @@ describe("the Resend relay", () => {
     expect(outbound.reply_to).toBe("support@crecyos.com");
     expect(outbound.subject).toBe("New rental inquiry");
     expect(outbound.text).toContain(workspace);
+    expect(outbound.text).toContain("Topic: Utilities");
     expect(outbound.html).toContain(`href="${workspace}"`);
+    expect(outbound.html).toContain("Open in Crecy dashboard");
     expect(outbound.headers["List-Unsubscribe"]).toBe("<https://app.crecyos.com/settings/notifications>");
     expect(outbound.headers["List-Unsubscribe-Post"]).toBeUndefined();
   });

@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { getRentalWorkspace } from "@/lib/data/homeowner-rentals";
+import { isRentalInquiryTopic, type RentalInquiryTopic } from "@/lib/rental-inquiry-topics";
 
 export type RentalInquiryItem = {
   id: string;
@@ -11,6 +12,7 @@ export type RentalInquiryItem = {
   lastName: string;
   email: string;
   question: string;
+  topic: RentalInquiryTopic | null;
   status: "open" | "closed";
   verifiedAt: string;
   createdAt: string;
@@ -37,6 +39,7 @@ function previewItem(): RentalInquiryItem {
     lastName: "Renter",
     email: "jamie.renter@example.com",
     question: "Is the driveway parking space available every day, and is water included in the monthly rent?",
+    topic: "parking",
     status: "open",
     verifiedAt: "2026-09-26T08:00:00Z",
     createdAt: "2026-09-26T07:55:00Z",
@@ -64,7 +67,7 @@ export async function getRentalInquiryWorkspace(unitId: string): Promise<RentalI
     const supabase = await createClient();
     const organizationId = rental.organization.organizationId;
     const { data, error } = await supabase.from("rental_inquiries")
-      .select("id,public_reference,listing_id,unit_id,first_name,last_name,email,question,status,verified_at,created_at,version")
+      .select("id,public_reference,listing_id,unit_id,first_name,last_name,email,question,topic,status,verified_at,created_at,version")
       .eq("organization_id", organizationId)
       .eq("unit_id", unitId)
       .in("status", ["open", "closed"])
@@ -86,6 +89,7 @@ export async function getRentalInquiryWorkspace(unitId: string): Promise<RentalI
         lastName: String(row.last_name),
         email: String(row.email),
         question: String(row.question),
+        topic: isRentalInquiryTopic(row.topic) ? row.topic : null,
         status: row.status === "closed" ? "closed" : "open",
         verifiedAt: String(row.verified_at),
         createdAt: String(row.created_at),

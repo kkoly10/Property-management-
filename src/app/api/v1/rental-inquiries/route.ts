@@ -48,6 +48,7 @@ export async function POST(request: Request) {
       p_network_hash: hash,
       p_locale: parsed.data.locale,
       p_idempotency_key: operationKey,
+      ...(parsed.data.topic ? { p_topic: parsed.data.topic } : {}),
     });
     if (error || !data) {
       const message = error?.message ?? "";

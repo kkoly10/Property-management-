@@ -8,12 +8,20 @@ for (const width of [390, 1440]) {
   test(`public verified-question intake fits ${width}px without marketplace claims`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/l/${PUBLIC_ID}`);
-    const questionCard = page.getByRole("heading", { name: "Send the landlord a verified question" }).locator("..");
-    await expect(questionCard.getByRole("heading", { name: "Send the landlord a verified question" })).toBeVisible();
+    const questionCard = page.getByRole("tabpanel", { name: "Question" });
+    await expect(questionCard).toBeVisible();
     await expect(questionCard.getByLabel("First name")).toBeVisible();
     await expect(questionCard.getByLabel("Email")).toBeVisible();
     await expect(questionCard.getByLabel("Question about this rental")).toBeVisible();
-    await expect(page.getByText(/not included in Crecy search/i)).toBeVisible();
+    const photos = await page.getByRole("region", { name: "Rental photos" }).boundingBox();
+    const facts = await page.getByRole("heading", { name: "Rental details" }).boundingBox();
+    expect(facts!.y - (photos!.y + photos!.height)).toBeLessThan(80);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/i);
+    if (width === 390) {
+      await page.getByRole("link", { name: "Contact the landlord" }).click();
+      await expect(page).toHaveURL(/#rental-actions$/);
+      await expect(questionCard.getByRole("button", { name: "Email my question" })).toBeInViewport({ ratio: 1 });
+    }
     expect(await page.evaluate(() =>
       document.documentElement.scrollWidth - document.documentElement.clientWidth,
     )).toBeLessThanOrEqual(1);

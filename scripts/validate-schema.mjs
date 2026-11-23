@@ -36,6 +36,7 @@ const rentalTourSql = await readFile(resolve(root, "supabase/migrations/20261007
 const rentalApplicationSql = await readFile(resolve(root, "supabase/migrations/20261008020000_verified_rental_applications.sql"), "utf8");
 const rentalMarketplaceSql = await readFile(resolve(root, "supabase/migrations/20261009205544_rental_marketplace_discovery.sql"), "utf8");
 const rentalInquiryNotificationSql = await readFile(resolve(root, "supabase/migrations/20261123030424_notify_homeowner_of_verified_rental_inquiry.sql"), "utf8");
+const rentalInquirySummarySql = await readFile(resolve(root, "supabase/migrations/20261123034643_add_rental_inquiry_topic_and_landlord_summary.sql"), "utf8");
 const rentalApplicationRecoverySql = await readFile(resolve(root, "supabase/migrations/20261122165800_rental_application_access_recovery.sql"), "utf8");
 const foundationSql = await readFile(resolve(root, "supabase/migrations/20260720095008_phase_1_foundation.sql"), "utf8");
 const portfolioSql = await readFile(resolve(root, "supabase/migrations/20260720104921_phase_2_portfolio_foundation.sql"), "utf8");
@@ -924,6 +925,7 @@ async function validateRecurringCharges() {
   await db.exec(rentalApplicationSql);
   await db.exec(rentalMarketplaceSql);
   await db.exec(rentalInquiryNotificationSql);
+  await db.exec(rentalInquirySummarySql);
   await db.exec(ownershipInvariantsSql);
   await db.exec(scopedPaymentExportSql);
   await db.exec(platformBillingSql);

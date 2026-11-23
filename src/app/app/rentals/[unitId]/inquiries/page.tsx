@@ -5,6 +5,7 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getRentalInquiryWorkspace } from "@/lib/data/rental-inquiries";
+import { rentalInquiryTopicLabels } from "@/lib/rental-inquiry-topics";
 import { InquiryActions } from "./inquiry-actions";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +46,8 @@ export default async function RentalInquiriesPage({ params }: { params: Promise<
       {workspace.items.length ? (
         <div className="divide-y rounded-xl border bg-card">
           {workspace.items.map((item) => (
-            <article key={item.id} className="grid gap-5 p-5 md:grid-cols-[1fr_auto]">
+            <article key={item.id} id={`inquiry-${item.publicReference}`}
+              className="grid scroll-mt-24 gap-5 p-5 target:bg-muted/45 md:grid-cols-[1fr_auto]">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="font-semibold">{item.firstName} {item.lastName}</h2>
@@ -57,6 +59,7 @@ export default async function RentalInquiriesPage({ params }: { params: Promise<
                     <Mail aria-hidden="true" className="h-4 w-4" />{item.email}
                   </span>
                   <span>{received(item.createdAt)}</span>
+                  {item.topic ? <span>{rentalInquiryTopicLabels[item.topic].en}</span> : null}
                 </div>
                 <div className="mt-4 flex items-start gap-3 rounded-lg bg-muted/45 p-4">
                   <MessageSquareText aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />

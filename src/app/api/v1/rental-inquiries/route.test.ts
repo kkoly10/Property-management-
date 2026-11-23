@@ -10,7 +10,7 @@ import { POST } from "./route";
 
 const publicId = "81000000-0000-4000-8000-000000000081";
 const secret = "inquiry-test-secret-that-is-at-least-32-characters-long";
-function request(ip: string | null = "203.0.113.9", realIp?: string) {
+function request(ip: string | null = "203.0.113.9", realIp?: string, topic?: string) {
   return new Request("https://rent.crecyos.com/api/v1/rental-inquiries", {
     method: "POST",
     headers: {
@@ -25,6 +25,7 @@ function request(ip: string | null = "203.0.113.9", realIp?: string) {
       lastName: "Renter",
       email: "jamie@example.com",
       question: "Is water included in the monthly rent?",
+      topic,
       locale: "en-US",
     }),
   });
@@ -88,6 +89,13 @@ describe("public rental inquiry route", () => {
       message: "Check your email to verify your question before it is shared.",
     });
     expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("passes a controlled topic and rejects arbitrary labels before the database call", async () => {
+    expect((await POST(request(undefined, undefined, "utilities"))).status).toBe(202);
+    expect(mocks.rpc).toHaveBeenCalledWith("submit_public_rental_inquiry", expect.objectContaining({ p_topic: "utilities" }));
+    expect((await POST(request(undefined, undefined, "private request notes"))).status).toBe(400);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when the listing stopped accepting questions", async () => {

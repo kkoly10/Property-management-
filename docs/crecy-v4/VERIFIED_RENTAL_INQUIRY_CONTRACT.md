@@ -10,7 +10,7 @@ is introduced by this slice. B5 later adds optional marketplace discovery over t
 
 ## Public flow
 1. Published `/l/:publicId` shows an inquiry form.
-2. Visitor supplies first name, last name, email and a bounded question about the rental.
+2. Visitor supplies first name, last name, email, a bounded question about the rental and an optional topic from the provided list.
 3. The public command validates the still-published listing, rate limits by private hashed signals,
    creates a `pending_verification` inquiry and queues one verification email.
 4. Email links to `rent.crecyos.com/inquiries/verify#token=...`. The credential stays in the URL fragment,
@@ -22,9 +22,9 @@ is introduced by this slice. B5 later adds optional marketplace discovery over t
 ## Landlord alert
 
 - The first verified transition queues one `message_rental_inquiry_received` email for an active, property-authorized workspace owner with a confirmed email. Prefer the listing creator if eligible. Otherwise choose the earliest effective eligible owner, with creation time and membership ID as tie-breakers.
-- The queued alert identifies the recipient by user ID and respects their Messages email preference at claim. It contains only the unit ID and inquiry reference. The operator inbox requires sign-in and property access to read contact details or the question.
+- The queued alert identifies the recipient by user ID and respects their Messages email preference at claim. Its summary includes the public listing title, selected topic if supplied, and inquiry reference. The email links directly to the inquiry in the Crecy dashboard. The operator inbox requires sign-in and property access to read contact details or the full question.
 - Verification still succeeds if no eligible owner exists. Replay and closure produce no additional alert.
-- Deploy the worker template before applying the queue-trigger migration so the worker recognizes the new template when the first alert is queued.
+- The summary migration extends the already deployed alert job and preserves the original submit signature. Apply it before deploying the form and dashboard changes.
 
 ## Privacy and authorization
 - Base inquiry rows contain contact PII and are never anonymous-readable.

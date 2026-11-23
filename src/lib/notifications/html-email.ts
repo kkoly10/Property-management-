@@ -170,7 +170,7 @@ export function renderEmailHtml(input: EmailHtmlInput): string {
   const detailsHtml = details.length
     ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;background:${palette.soft};border-radius:10px;">
       <tr><td style="padding:14px 16px;">
-        ${details.map((d) => `<p style="margin:0 0 6px;font-size:14px;line-height:1.5;color:${palette.ink};"><span style="color:${palette.muted};">${escapeHtml(d.label)}:</span> <strong style="font-weight:600;">${escapeHtml(d.value)}</strong></p>`).join("")}
+        ${details.map((d) => `<p style="margin:0 0 6px;font-size:14px;line-height:1.5;color:${palette.ink};">${escapeHtml(d.label)}: <strong style="font-weight:600;">${escapeHtml(d.value)}</strong></p>`).join("")}
       </td></tr></table>`
     : "";
 

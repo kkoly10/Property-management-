@@ -111,18 +111,24 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
   assert(published.status === "published", "Inquiry fixture listing did not publish.");
 
   const networkHash = "b".repeat(64);
-  const submit = async (email, question, key, publicId = published.publicId, firstName = "Jamie", lastName = "Renter") => {
+  const submit = async (email, question, key, publicId = published.publicId, firstName = "Jamie", lastName = "Renter", topic) => {
     await db.exec("reset role; set role service_role");
     return rpc(
       "submit_public_rental_inquiry",
-      "$1,$2,$3,$4,$5,$6,'en-US',$7",
-      [publicId, firstName, lastName, email, question, networkHash, key],
+      `$1,$2,$3,$4,$5,$6,'en-US',$7${topic === undefined ? "" : ",$8"}`,
+      [publicId, firstName, lastName, email, question, networkHash, key, ...(topic === undefined ? [] : [topic])],
     );
   };
 
   const firstKey = randomUUID();
   const question = "Is water included, and is the parking space available every day?";
-  const accepted = await submit("Jamie.Renter@example.com", question, firstKey);
+  const submitUtilityQuestion = (email, body, topic = "utilities") =>
+    submit(email, body, firstKey, published.publicId, "Jamie", "Renter", topic);
+  await expectDatabaseError(
+    () => submitUtilityQuestion("Jamie.Renter@example.com", question, "Private notes"),
+    "INVALID_INQUIRY_TOPIC",
+  );
+  const accepted = await submitUtilityQuestion("Jamie.Renter@example.com", question);
   assert(accepted.accepted === true, "Published share listing did not accept an inquiry.");
 
   await db.exec("reset role");
@@ -133,6 +139,7 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
   assert(rows.rows.length === 1 && rows.rows[0].status === "pending_verification",
     "Inquiry was not stored pending verification.");
   const inquiry = rows.rows[0];
+  assert(inquiry.topic === "utilities", "The selected inquiry topic was not persisted.");
   const landlordJobs = async (id) => (await db.query(`select id,recipient_user_id,recipient_address,channel,locale,payload
     from private.notification_jobs where organization_id=$1 and template_code='message_rental_inquiry_received'
       and idempotency_key like $2`, [org, `rental-inquiry-landlord:${id}:%`])).rows;
@@ -152,7 +159,7 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
   );
   assert(visible.rows.length === 0, "Pending inquiry leaked into landlord RLS reads.");
 
-  const replay = await submit("  JAMIE.RENTER@example.com  ", question, firstKey);
+  const replay = await submitUtilityQuestion("  JAMIE.RENTER@example.com  ", question);
   assert(replay.accepted === true, "Exact public inquiry replay did not return accepted.");
   await db.exec("reset role");
   assert((await db.query("select count(*)::integer c from public.rental_inquiries where organization_id=$1", [org])).rows[0].c === 1,
@@ -163,7 +170,11 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
     "Inquiry replay queued another verification message.");
 
   await expectDatabaseError(
-    () => submit("jamie.renter@example.com", question + " Changed.", firstKey),
+    () => submitUtilityQuestion("jamie.renter@example.com", question + " Changed."),
+    "IDEMPOTENCY_CONFLICT",
+  );
+  await expectDatabaseError(
+    () => submitUtilityQuestion("jamie.renter@example.com", question, "parking"),
     "IDEMPOTENCY_CONFLICT",
   );
 
@@ -183,8 +194,9 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
     && homeownerAlerts[0].recipient_address === null && homeownerAlerts[0].channel === "email",
   "Verification did not queue exactly one email for the authorized owner-publisher by user ID.");
   const landlordAlert = homeownerAlerts[0];
-  assert(Object.keys(landlordAlert.payload).length === 2 && landlordAlert.payload.unitId === rental.unitId
-    && landlordAlert.payload.inquiryReference === inquiry.public_reference,
+  assert(Object.keys(landlordAlert.payload).length === 4 && landlordAlert.payload.unitId === rental.unitId
+    && landlordAlert.payload.inquiryReference === inquiry.public_reference
+    && landlordAlert.payload.listingTitle === listingDetails.title && landlordAlert.payload.topic === "utilities",
   "Homeowner email payload contains unexpected data.");
 
   await act();

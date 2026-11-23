@@ -8,7 +8,8 @@ for (const width of [390, 1440]) {
   test(`public application form fits ${width}px and requires no screening`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/l/${PUBLIC_ID}`);
-    const card = page.getByRole("heading", { name: "Apply for this rental" }).locator("..");
+    await page.getByRole("tab", { name: "Apply" }).click();
+    const card = page.getByRole("tabpanel", { name: "Apply" });
     await expect(card.getByLabel("Email address")).toBeVisible();
     const moveIn = card.getByLabel("Desired move-in date");
     await expect(moveIn).toBeVisible();

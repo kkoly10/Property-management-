@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { CalendarDays, CarFront, CircleDollarSign, DoorOpen, PawPrint, UtilityPole } from "lucide-react";
+import { CalendarDays, CarFront, DoorOpen, MapPin, PawPrint, UtilityPole } from "lucide-react";
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { buttonVariants } from "@/components/ui/button";
 import { getPublicRentalListing } from "@/lib/data/rental-listings";
-import { RentalInquiryForm } from "./inquiry-form";
-import { RentalTourForm } from "./tour-form";
-import { RentalApplicationForm } from "./application-form";
+import { RentalListingActions } from "./rental-listing-actions";
+import { RentalListingGallery } from "./rental-listing-gallery";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -46,129 +46,67 @@ export default async function SharedRentalListingPage({ params }: { params: Prom
   const minimumMoveInOn = [listing.availableOn, localDateAfterDays(listing.timeZone, 1)].sort().at(-1) ?? listing.availableOn;
   const maximumMoveInOn = localDateAfterDays(listing.timeZone, 365);
 
+  const availableOnLabel = new Intl.DateTimeFormat("en-US", {
+    month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+  }).format(new Date(`${listing.availableOn}T00:00:00Z`));
+  const space = [
+    listing.unitType?.replaceAll("_", " "),
+    listing.bedrooms == null ? null : `${listing.bedrooms} bedroom${listing.bedrooms === 1 ? "" : "s"}`,
+    listing.bathrooms == null ? null : `${listing.bathrooms} bathroom${listing.bathrooms === 1 ? "" : "s"}`,
+  ].filter(Boolean).join(" · ");
+
   return (
-    <div className="mx-auto max-w-[1180px] px-5 py-8 sm:py-12 lg:px-8">
+    <article className="mx-auto max-w-[1180px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8">
       {listing.preview ? (
-        <div className="mb-5 rounded-lg border bg-white px-4 py-3 text-xs text-muted-foreground">
-          Representative local preview. A connected listing uses the landlord&apos;s scanner-clean photos and saved listing details.
-        </div>
+        <p className="mb-4 rounded-lg border bg-card px-3 py-2 text-xs text-muted-foreground">
+          Preview listing with example photos and details.
+        </p>
       ) : null}
-      <div className="grid gap-8 lg:grid-cols-[1.35fr_0.65fr] lg:gap-12">
+      <header className="gap-5 sm:flex sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <div className="overflow-hidden rounded-[1.5rem] border bg-white">
-            {listing.photos[0]?.url ? (
-              // The public media route rechecks availability and the approved photo before serving it.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={listing.photos[0].url} alt={listing.photos[0].altText || listing.title}
-                className="aspect-[4/3] w-full object-cover sm:aspect-[16/9]" />
-            ) : (
-              <div className="flex aspect-[4/3] items-center justify-center bg-muted text-sm text-muted-foreground sm:aspect-[16/9]">
-                Photo temporarily unavailable
-              </div>
-            )}
-          </div>
-          {listing.photos.length > 1 ? (
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {listing.photos.slice(1, 7).map((photo, index) => (
-                <div key={index} className="overflow-hidden rounded-xl border bg-white">
-                  {photo.url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={photo.url} alt={photo.altText || `${listing.title} photo ${index + 2}`}
-                      className="aspect-[4/3] w-full object-cover" />
-                  ) : <div className="aspect-[4/3] bg-muted" />}
-                </div>
-              ))}
-            </div>
-          ) : null}
+          <h1 className="break-words text-3xl font-semibold tracking-tight sm:text-4xl">{listing.title}</h1>
+          <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
+            <MapPin aria-hidden="true" className="size-4 shrink-0" />
+            {location}
+          </p>
+        </div>
+        <div className="mt-4 shrink-0 sm:mt-0 sm:text-right">
+          <p className="text-2xl font-semibold tracking-tight">
+            {money(listing.rentAmountMinor, listing.currencyCode)} <span className="text-sm font-normal text-muted-foreground">/ month</span>
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">Available <time dateTime={listing.availableOn}>{availableOnLabel}</time></p>
+        </div>
+      </header>
+      <a href="#rental-actions" className={buttonVariants({ className: "mt-4 w-full sm:w-auto lg:hidden" })}>
+        Contact the landlord
+      </a>
 
+      <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(350px,0.52fr)] lg:gap-6">
+        <div className="min-w-0 space-y-5">
+          <RentalListingGallery photos={listing.photos.slice(0, 7)} title={listing.title} />
+          <section aria-labelledby="rental-details" className="rounded-2xl border bg-card p-4 sm:p-5">
+            <h2 id="rental-details" className="text-xl font-semibold tracking-tight">Rental details</h2>
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-foreground/90">{listing.summary}</p>
+            <dl className="mt-4 grid gap-x-5 gap-y-3 border-t pt-4 min-[380px]:grid-cols-2">
+              <Detail icon={DoorOpen} label="Space" value={space} />
+              <Detail icon={CalendarDays} label="Lease term" value={listing.leaseTermText} />
+              <Detail icon={UtilityPole} label="Utilities" value={listing.utilitiesText} />
+              <Detail icon={CarFront} label="Parking" value={listing.parkingText} />
+              <Detail icon={PawPrint} label="Pets" value={listing.petsText} />
+            </dl>
+          </section>
         </div>
 
-        <aside className="lg:sticky lg:top-6 lg:self-start">
-          <div className="rounded-[1.5rem] border bg-white p-6 shadow-[0_18px_50px_rgba(31,35,48,.08)]">
-            <p className="text-sm font-semibold text-primary">
-              {listing.visibility === "discoverable" ? "Rental on Crecy" : "Unlisted rental"}
-            </p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-[-0.045em] text-balance">{listing.title}</h1>
-            <p className="mt-3 text-sm text-muted-foreground">{location}</p>
-            <div className="mt-6 flex items-end justify-between gap-4 border-y py-5">
-              <div>
-                <p className="text-xs text-muted-foreground">Monthly rent</p>
-                <p className="mt-1 text-3xl font-semibold tracking-[-0.04em]">{money(listing.rentAmountMinor, listing.currencyCode)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-muted-foreground">Available</p>
-                <p className="mt-1 text-sm font-semibold">{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(`${listing.availableOn}T00:00:00Z`))}</p>
-              </div>
-            </div>
-            <p className="mt-5 whitespace-pre-wrap text-sm leading-7 text-foreground/85">{listing.summary}</p>
-            <div className="mt-6 rounded-xl bg-muted/55 p-4 text-sm leading-6 text-muted-foreground">
-              {listing.visibility === "discoverable"
-                ? "The landlord chose to include this listing in Crecy discovery. You can ask a question, request a tour, or apply below through the same rental workflow."
-                : "This landlord shared the page directly. It is not included in Crecy search. You can ask a question, request a tour, or apply below without creating a renter account."}
-            </div>
-          </div>
-          <div className="mt-4 rounded-[1.5rem] border bg-white p-6">
-            <p className="text-sm font-semibold text-primary">Ask about this rental</p>
-            <h2 className="mt-2 text-xl font-semibold tracking-[-0.025em]">Send the landlord a verified question</h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Your question appears in the landlord&apos;s Crecy workspace only after you verify your email.
-            </p>
-            <div className="mt-5">
-              <RentalInquiryForm publicId={listing.publicId} />
-            </div>
-          </div>
-          <div className="mt-4 rounded-[1.5rem] border bg-white p-6">
-            <p className="text-sm font-semibold text-primary">See the rental</p>
-            <h2 className="mt-2 text-xl font-semibold tracking-[-0.025em]">Request a verified tour</h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Suggest up to three times. The landlord confirms one separately after your email is verified.
-            </p>
-            <div className="mt-5">
-              <RentalTourForm publicId={listing.publicId} timeZone={listing.timeZone} />
-            </div>
-          </div>
-          <div className="mt-4 rounded-[1.5rem] border bg-white p-6">
-            <h2 className="text-xl font-semibold">Apply for this rental</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Verify your email to submit a minimal application. No screening or fees are collected here.
-            </p>
-            <div className="mt-5">
-              <RentalApplicationForm publicId={listing.publicId} availableOn={minimumMoveInOn} latestMoveInOn={maximumMoveInOn} />
-            </div>
-          </div>
+        <aside className="min-w-0">
+          <RentalListingActions publicId={listing.publicId} timeZone={listing.timeZone}
+            availableOn={minimumMoveInOn} latestMoveInOn={maximumMoveInOn} />
         </aside>
       </div>
 
-      <section className="mt-12 border-t pt-10">
-        <div className="grid gap-10 lg:grid-cols-[0.72fr_1.28fr]">
-          <div>
-            <p className="text-sm font-semibold text-primary">Rental details</p>
-            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">Know what is included before you ask.</h2>
-          </div>
-          <div className="grid gap-0 border-y sm:grid-cols-2">
-            <Detail icon={DoorOpen} label="Space" value={[
-              listing.unitType?.replaceAll("_", " "),
-              listing.bedrooms == null ? null : `${listing.bedrooms} bedroom${listing.bedrooms === 1 ? "" : "s"}`,
-              listing.bathrooms == null ? null : `${listing.bathrooms} bathroom${listing.bathrooms === 1 ? "" : "s"}`,
-            ].filter(Boolean).join(" · ") || "Ask the landlord"} />
-            <Detail icon={CalendarDays} label="Lease term" value={listing.leaseTermText || "Ask the landlord"} />
-            <Detail icon={UtilityPole} label="Utilities" value={listing.utilitiesText || "Ask the landlord"} />
-            <Detail icon={CarFront} label="Parking" value={listing.parkingText || "Ask the landlord"} />
-            <Detail icon={PawPrint} label="Pets" value={listing.petsText || "Ask the landlord"} />
-            <Detail icon={CircleDollarSign} label="Rent" value={`${money(listing.rentAmountMinor, listing.currencyCode)} / month`} />
-          </div>
-        </div>
-      </section>
-
-      <section className="mt-12 rounded-[1.5rem] bg-[#111827] px-6 py-8 text-white sm:px-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-white/55">Privacy boundary</p>
-        <h2 className="mt-3 max-w-2xl text-2xl font-semibold tracking-[-0.035em]">The listing is public to anyone with this link. The management record is not.</h2>
-        <p className="mt-4 max-w-3xl text-sm leading-7 text-white/65">
-          This page does not expose the property&apos;s full street address, postal code, tenant records,
-          payments, private documents or the landlord&apos;s Crecy workspace.
-        </p>
-      </section>
-    </div>
+      <p className="mt-5 border-t pt-4 text-xs leading-5 text-muted-foreground">
+        This listing shows the rental&apos;s general location. The full address and private records stay in Crecy.
+      </p>
+    </article>
   );
 }
 
@@ -178,10 +116,14 @@ function Detail({
   icon: typeof DoorOpen; label: string; value: string;
 }) {
   return (
-    <div className="border-b p-5 sm:odd:border-r sm:[&:nth-last-child(-n+2)]:border-b-0">
-      <Icon aria-hidden="true" className="h-5 w-5 text-primary" />
-      <p className="mt-4 text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="mt-1 break-words text-sm font-semibold capitalize">{value}</p>
+    <div className="flex min-w-0 items-start gap-2.5">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-primary">
+        <Icon aria-hidden="true" className="size-4" />
+      </div>
+      <div className="min-w-0">
+        <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+        <dd className="mt-0.5 break-words text-sm font-medium first-letter:uppercase">{value || "Ask the landlord"}</dd>
+      </div>
     </div>
   );
 }

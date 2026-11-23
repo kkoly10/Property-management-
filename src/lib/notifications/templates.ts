@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { originForAudience, rentalsOrigin, type LinkAudience } from "@/lib/runtime/host";
 import { EMAIL_CHROME } from "@/lib/notifications/email-brand";
+import { isRentalInquiryTopic, rentalInquiryTopicLabels } from "@/lib/rental-inquiry-topics";
 
 /**
  * Transactional message bodies for the notification worker.
@@ -141,14 +142,32 @@ function inquiryWorkspaceLink(p: Record<string, unknown>): string | undefined {
   const unit = z.uuid().safeParse(p.unitId);
   const origin = originForAudience("operator");
   if (!unit.success || !origin) return undefined;
-  return `${origin}/app/rentals/${unit.data}/inquiries`;
+  const reference = inquiryReference(p);
+  return `${origin}/app/rentals/${unit.data}/inquiries${reference ? `#inquiry-${reference}` : ""}`;
 }
 
-function inquiryReferenceDetails(p: Record<string, unknown>, label: string): NotificationDetail[] {
+function inquiryReference(p: Record<string, unknown>): string | null {
   const reference = p.inquiryReference;
-  return typeof reference === "string" && /^INQ-[0-9A-F]{12}$/.test(reference)
-    ? [{ label, value: reference }]
-    : [];
+  return typeof reference === "string" && /^INQ-[0-9A-F]{12}$/.test(reference) ? reference : null;
+}
+
+const INQUIRY_SUMMARY_LABELS = {
+  en: { listing: "Listing", topic: "Topic", general: "General rental question", reference: "Inquiry reference" },
+  es: { listing: "Anuncio", topic: "Tema", general: "Pregunta general sobre el alquiler", reference: "Referencia de la consulta" },
+  fr: { listing: "Annonce", topic: "Sujet", general: "Question générale sur la location", reference: "Référence de la question" },
+};
+
+function inquirySummary(p: Record<string, unknown>, language: NotificationLanguage): NotificationDetail[] {
+  const labels = INQUIRY_SUMMARY_LABELS[language];
+  const title = typeof p.listingTitle === "string" ? text(p.listingTitle) : "";
+  const topic = isRentalInquiryTopic(p.topic) ? rentalInquiryTopicLabels[p.topic][language] : labels.general;
+  const reference = inquiryReference(p);
+
+  return [
+    ...(title ? [{ label: labels.listing, value: title }] : []),
+    { label: labels.topic, value: topic },
+    ...(reference ? [{ label: labels.reference, value: reference }] : []),
+  ];
 }
 
 function applicationVerificationLink(p: Record<string, unknown>, fragment: "token" | "recovery" = "token"): string {
@@ -490,10 +509,10 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
       heading: "You received a new rental inquiry",
       paragraphs: [
         "A prospective renter verified their email and sent you a question.",
-        "Sign in to Crecy to read and reply.",
+        "Open the inquiry in your Crecy dashboard to read the full question and reply by email.",
       ],
-      details: inquiryReferenceDetails(p, "Inquiry reference"),
-      ctaLabel: "Open rental inquiries",
+      details: inquirySummary(p, "en"),
+      ctaLabel: "Open in Crecy dashboard",
       ctaUrl: inquiryWorkspaceLink(p),
     }, "en"),
     es: (p) => compose({
@@ -501,10 +520,10 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
       heading: "Recibiste una nueva consulta",
       paragraphs: [
         "Una persona interesada verificó su correo y te envió una pregunta.",
-        "Inicia sesión en Crecy para leerla y responder.",
+        "Abre la consulta en tu panel de Crecy para leer la pregunta completa y responder por correo.",
       ],
-      details: inquiryReferenceDetails(p, "Referencia de la consulta"),
-      ctaLabel: "Abrir consultas de alquiler",
+      details: inquirySummary(p, "es"),
+      ctaLabel: "Abrir en el panel de Crecy",
       ctaUrl: inquiryWorkspaceLink(p),
     }, "es"),
     fr: (p) => compose({
@@ -512,10 +531,10 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
       heading: "Vous avez reçu une nouvelle question",
       paragraphs: [
         "Une personne intéressée a vérifié son courriel et vous a envoyé une question.",
-        "Connectez-vous à Crecy pour lire la question et y répondre.",
+        "Ouvrez la demande dans votre tableau de bord Crecy pour lire la question complète et répondre par courriel.",
       ],
-      details: inquiryReferenceDetails(p, "Référence de la question"),
-      ctaLabel: "Ouvrir les questions sur la location",
+      details: inquirySummary(p, "fr"),
+      ctaLabel: "Ouvrir dans le tableau de bord Crecy",
       ctaUrl: inquiryWorkspaceLink(p),
     }, "fr"),
   },

@@ -32,6 +32,7 @@ describe("public rental inquiry form", () => {
       .mockResolvedValueOnce(okay({ accepted: true }));
     render(<RentalInquiryForm publicId={PUBLIC_ID} />);
     fill();
+    fireEvent.change(screen.getByLabelText(/topic/i), { target: { value: "utilities" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Email my question" }));
     await screen.findByText("Confirm the previous submission");
@@ -41,6 +42,7 @@ describe("public rental inquiry form", () => {
     await screen.findByText("Check your email");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ topic: "utilities" });
     expect(fetchMock.mock.calls[1][1].headers["idempotency-key"])
       .toBe(fetchMock.mock.calls[0][1].headers["idempotency-key"]);
   });
