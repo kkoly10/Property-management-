@@ -18,6 +18,14 @@ is introduced by this slice. B5 later adds optional marketplace discovery over t
 5. The verification page does not mutate on GET. The person explicitly presses Verify; only the POST
    consumes the token.
 6. Successful verification changes the inquiry to `open`. Only then can the landlord read it.
+
+## Landlord alert
+
+- The first verified transition queues one `message_rental_inquiry_received` email for an active, property-authorized workspace owner with a confirmed email. Prefer the listing creator if eligible. Otherwise choose the earliest effective eligible owner, with creation time and membership ID as tie-breakers.
+- The queued alert identifies the recipient by user ID and respects their Messages email preference at claim. It contains only the unit ID and inquiry reference. The operator inbox requires sign-in and property access to read contact details or the question.
+- Verification still succeeds if no eligible owner exists. Replay and closure produce no additional alert.
+- Deploy the worker template before applying the queue-trigger migration so the worker recognizes the new template when the first alert is queued.
+
 ## Privacy and authorization
 - Base inquiry rows contain contact PII and are never anonymous-readable.
 - Landlord reads require current `lease.manage` or `property.manage` scope on the exact property.

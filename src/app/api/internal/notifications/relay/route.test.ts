@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderNotification } from "@/lib/notifications/templates";
 import { POST } from "./route";
 
 const SECRET = "relay-secret-that-is-long-enough";
@@ -35,7 +36,10 @@ beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_LIVING_ROOT_DOMAIN", "crecyliving.com");
   resendReplies(200, { id: "resend-123" });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 describe("the Resend relay", () => {
   it("sends and returns the provider message id", async () => {
@@ -135,6 +139,29 @@ describe("the Resend relay", () => {
     sent = [];
     await POST(message({ templateCode: "conversation_message_received" }));
     expect(payload().headers["List-Unsubscribe"]).toBe("<https://crecyliving.com/more/preferences>");
+  });
+
+  it("sends a verified rental inquiry alert as multipart Crecy OS messages mail", async () => {
+    vi.stubEnv("CRECY_MAIL_FROM_OPERATOR", "Crecy <notifications@mail.crecyos.com>");
+    vi.stubEnv("CRECY_MAIL_REPLY_TO_OPERATOR", "support@crecyos.com");
+    const templateCode = "message_rental_inquiry_received";
+    const unitId = "b4b58943-a1cf-412f-a949-a89a375ddd9a";
+    const workspace = `https://app.crecyos.com/app/rentals/${unitId}/inquiries`;
+    const rendered = renderNotification({
+      templateCode,
+      locale: "en-US",
+      payload: { unitId, inquiryReference: "INQ-1234ABCDEF90" },
+    })!;
+    const response = await POST(message({ templateCode, ...rendered }));
+    expect(await response.json()).toEqual({ messageId: "resend-123" });
+    const outbound = payload();
+    expect(outbound.from).toBe("Crecy <notifications@mail.crecyos.com>");
+    expect(outbound.reply_to).toBe("support@crecyos.com");
+    expect(outbound.subject).toBe("New rental inquiry");
+    expect(outbound.text).toContain(workspace);
+    expect(outbound.html).toContain(`href="${workspace}"`);
+    expect(outbound.headers["List-Unsubscribe"]).toBe("<https://app.crecyos.com/settings/notifications>");
+    expect(outbound.headers["List-Unsubscribe-Post"]).toBeUndefined();
   });
 
   it("omits List-Unsubscribe on category mail whose recipient surface is ambiguous", async () => {

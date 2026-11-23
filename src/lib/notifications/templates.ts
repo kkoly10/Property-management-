@@ -1,6 +1,7 @@
+import "server-only";
+import { z } from "zod";
 import { originForAudience, rentalsOrigin, type LinkAudience } from "@/lib/runtime/host";
 import { EMAIL_CHROME } from "@/lib/notifications/email-brand";
-import "server-only";
 
 /**
  * Transactional message bodies for the notification worker.
@@ -134,6 +135,20 @@ function inquiryVerificationLink(p: Record<string, unknown>): string {
     return origin ? `${origin}/inquiries/verify` : "/inquiries/verify";
   }
   return `${origin}/inquiries/verify#token=${encodeURIComponent(token)}`;
+}
+
+function inquiryWorkspaceLink(p: Record<string, unknown>): string | undefined {
+  const unit = z.uuid().safeParse(p.unitId);
+  const origin = originForAudience("operator");
+  if (!unit.success || !origin) return undefined;
+  return `${origin}/app/rentals/${unit.data}/inquiries`;
+}
+
+function inquiryReferenceDetails(p: Record<string, unknown>, label: string): NotificationDetail[] {
+  const reference = p.inquiryReference;
+  return typeof reference === "string" && /^INQ-[0-9A-F]{12}$/.test(reference)
+    ? [{ label, value: reference }]
+    : [];
 }
 
 function applicationVerificationLink(p: Record<string, unknown>, fragment: "token" | "recovery" = "token"): string {
@@ -435,37 +450,73 @@ const TEMPLATES: Record<string, Record<NotificationLanguage, TemplateBuilder>> =
 
   rental_inquiry_verification: {
     en: (p) => compose({
-      subject: `Verify your question about ${text(p.listingTitle, "this rental")}`,
-      heading: "Verify your email before your question is shared",
+      subject: "Confirm your rental inquiry",
+      heading: "Confirm your rental inquiry",
       paragraphs: [
-        `Crecy received a question about ${text(p.listingTitle, "this rental")}.`,
-        "Verify this email address to send the question to the landlord. Verification does not reserve the rental or approve an application.",
+        "Verify your email to share your question with the landlord.",
+        `You sent a question about ${text(p.listingTitle, "this rental")}. On the next page, select “Verify my email” to send it. Verification does not reserve the rental or approve an application.`,
       ],
       ctaLabel: "Verify my email",
       ctaUrl: inquiryVerificationLink(p),
       securityNote: "This link expires in 60 minutes. If you did not send this question, ignore this message.",
     }, "en"),
     es: (p) => compose({
-      subject: `Verifica tu pregunta sobre ${text(p.listingTitle, "este alquiler")}`,
-      heading: "Verifica tu correo antes de enviar tu pregunta",
+      subject: "Confirma tu consulta sobre el alquiler",
+      heading: "Confirma tu consulta sobre el alquiler",
       paragraphs: [
-        `Crecy recibió una pregunta sobre ${text(p.listingTitle, "este alquiler")}.`,
-        "Verifica este correo para enviar la pregunta al propietario. La verificación no reserva el alquiler ni aprueba una solicitud.",
+        "Verifica tu correo para compartir tu pregunta con el propietario.",
+        `Enviaste una pregunta sobre ${text(p.listingTitle, "este alquiler")}. Confirma tu correo en la página que se abre. La verificación no reserva el alquiler ni aprueba una solicitud.`,
       ],
       ctaLabel: "Verificar mi correo",
       ctaUrl: inquiryVerificationLink(p),
       securityNote: "Este enlace vence en 60 minutos. Si no enviaste esta pregunta, ignora este mensaje.",
     }, "es"),
     fr: (p) => compose({
-      subject: `Vérifiez votre question concernant ${text(p.listingTitle, "cette location")}`,
-      heading: "Vérifiez votre adresse e-mail avant l'envoi",
+      subject: "Confirmez votre question sur la location",
+      heading: "Confirmez votre question sur la location",
       paragraphs: [
-        `Crecy a reçu une question concernant ${text(p.listingTitle, "cette location")}.`,
-        "Vérifiez cette adresse e-mail pour envoyer la question au propriétaire. La vérification ne réserve pas le logement et n'approuve aucune demande.",
+        "Vérifiez votre adresse courriel pour transmettre votre question au propriétaire.",
+        `Vous avez posé une question sur ${text(p.listingTitle, "cette location")}. Confirmez votre adresse courriel sur la page qui s’ouvre. La vérification ne réserve pas le logement et n’approuve aucune demande.`,
       ],
-      ctaLabel: "Vérifier mon e-mail",
+      ctaLabel: "Vérifier mon adresse courriel",
       ctaUrl: inquiryVerificationLink(p),
-      securityNote: "Ce lien expire dans 60 minutes. Si vous n'avez pas envoyé cette question, ignorez ce message.",
+      securityNote: "Ce lien expire dans 60 minutes. Si vous n’avez pas envoyé cette question, ignorez ce message.",
+    }, "fr"),
+  },
+
+  message_rental_inquiry_received: {
+    en: (p) => compose({
+      subject: "New rental inquiry",
+      heading: "You received a new rental inquiry",
+      paragraphs: [
+        "A prospective renter verified their email and sent you a question.",
+        "Sign in to Crecy to read and reply.",
+      ],
+      details: inquiryReferenceDetails(p, "Inquiry reference"),
+      ctaLabel: "Open rental inquiries",
+      ctaUrl: inquiryWorkspaceLink(p),
+    }, "en"),
+    es: (p) => compose({
+      subject: "Nueva consulta sobre tu alquiler",
+      heading: "Recibiste una nueva consulta",
+      paragraphs: [
+        "Una persona interesada verificó su correo y te envió una pregunta.",
+        "Inicia sesión en Crecy para leerla y responder.",
+      ],
+      details: inquiryReferenceDetails(p, "Referencia de la consulta"),
+      ctaLabel: "Abrir consultas de alquiler",
+      ctaUrl: inquiryWorkspaceLink(p),
+    }, "es"),
+    fr: (p) => compose({
+      subject: "Nouvelle question sur votre location",
+      heading: "Vous avez reçu une nouvelle question",
+      paragraphs: [
+        "Une personne intéressée a vérifié son courriel et vous a envoyé une question.",
+        "Connectez-vous à Crecy pour lire la question et y répondre.",
+      ],
+      details: inquiryReferenceDetails(p, "Référence de la question"),
+      ctaLabel: "Ouvrir les questions sur la location",
+      ctaUrl: inquiryWorkspaceLink(p),
     }, "fr"),
   },
 

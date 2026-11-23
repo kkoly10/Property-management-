@@ -4,7 +4,8 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
   const actor = "fa000000-0000-4000-8000-000000000001";
   const outsider = "fa000000-0000-4000-8000-000000000002";
   const scoped = "fa000000-0000-4000-8000-000000000003";
-  await db.exec(`reset role; insert into auth.users(id) values ('${actor}'),('${outsider}'),('${scoped}')`);
+  await db.exec(`reset role; insert into auth.users(id,email,email_confirmed_at) values
+    ('${actor}','inquiry-landlord@example.invalid',now()),('${outsider}',null,null),('${scoped}',null,null)`);
   const binding = "operator_terms@0.1.0-draft+privacy_notice@0.1.0-draft#0123456789abcdef";
   const org = (await createOrganizationAsServer(
     db, actor,
@@ -45,6 +46,26 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
       space: { ...details.space, name: "Other room", type: "room" },
     }), randomUUID(),
   ]);
+  await db.exec("reset role");
+  const alternate = randomUUID();
+  const wrongPropertyOwner = randomUUID();
+  const expiredOwner = randomUUID();
+  const unconfirmedOwner = randomUUID();
+  const wrongPropertyMembership = randomUUID();
+  await db.query(`insert into auth.users(id,email,email_confirmed_at) values
+    ($1,'inquiry-alternate@example.invalid',now()),($2,'inquiry-wrong-property@example.invalid',now()),
+    ($3,'inquiry-expired@example.invalid',now()),($4,'inquiry-unconfirmed@example.invalid',null)`,
+  [alternate, wrongPropertyOwner, expiredOwner, unconfirmedOwner]);
+  await db.query(`insert into public.organization_memberships(organization_id,user_id,role_code,status,starts_at,ends_at) values
+    ($1,$2,'org_owner','active',now()-interval '1 day',null),
+    ($1,$3,'org_owner','active',now()-interval '5 days',now()-interval '1 day'),
+    ($1,$4,'org_owner','active',now()-interval '6 days',null)`, [org, alternate, expiredOwner, unconfirmedOwner]);
+  await db.query(`insert into public.organization_memberships(id,organization_id,user_id,role_code,status,starts_at)
+    values ($1,$2,$3,'org_owner','active',now()-interval '7 days')`, [wrongPropertyMembership, org, wrongPropertyOwner]);
+  await db.query(`insert into public.membership_property_scopes(organization_id,membership_id,property_id)
+    values ($1,$2,$3)`, [org, wrongPropertyMembership, other.propertyId]);
+  await db.query("update public.profiles set locale='fr-CA' where user_id=$1", [alternate]);
+  await act();
 
   const listingDetails = {
     title: "Garden apartment",
@@ -112,6 +133,10 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
   assert(rows.rows.length === 1 && rows.rows[0].status === "pending_verification",
     "Inquiry was not stored pending verification.");
   const inquiry = rows.rows[0];
+  const landlordJobs = async (id) => (await db.query(`select id,recipient_user_id,recipient_address,channel,locale,payload
+    from private.notification_jobs where organization_id=$1 and template_code='message_rental_inquiry_received'
+      and idempotency_key like $2`, [org, `rental-inquiry-landlord:${id}:%`])).rows;
+  assert((await landlordJobs(inquiry.id)).length === 0, "Pending inquiry queued a landlord notification.");
   const job = (await db.query(
     "select id,payload,status from private.notification_jobs where idempotency_key=$1",
     [`rental-inquiry-verification:${inquiry.id}`],
@@ -152,6 +177,15 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
   const verifiedReplay = await rpc("verify_public_rental_inquiry", "$1", [rawToken]);
   assert(verifiedReplay.verified === true && verifiedReplay.inquiryReference === inquiry.public_reference,
     "Verified token replay was not idempotent.");
+  await db.exec("reset role");
+  const homeownerAlerts = await landlordJobs(inquiry.id);
+  assert(homeownerAlerts.length === 1 && homeownerAlerts[0].recipient_user_id === actor
+    && homeownerAlerts[0].recipient_address === null && homeownerAlerts[0].channel === "email",
+  "Verification did not queue exactly one email for the authorized owner-publisher by user ID.");
+  const landlordAlert = homeownerAlerts[0];
+  assert(Object.keys(landlordAlert.payload).length === 2 && landlordAlert.payload.unitId === rental.unitId
+    && landlordAlert.payload.inquiryReference === inquiry.public_reference,
+  "Homeowner email payload contains unexpected data.");
 
   await act();
   visible = await db.query(
@@ -232,6 +266,7 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
   const expired = await rpc("verify_public_rental_inquiry", "$1", [expJob.payload.verificationToken]);
   assert(expired.verified === false, "Expired verification token was accepted.");
   await db.exec("reset role");
+  assert((await landlordJobs(expInquiry.id)).length === 0, "Expired verification queued a landlord notification.");
   assert((await db.query("select status from public.rental_inquiries where id=$1", [expInquiry.id])).rows[0].status === "expired",
     "Expired inquiry did not leave pending state.");
   assert((await db.query(
@@ -279,6 +314,50 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
   const verifiedAfterClose = await rpc("verify_public_rental_inquiry", "$1", [rawToken]);
   assert(verifiedAfterClose.verified === true && verifiedAfterClose.status === "closed",
     "Verification replay after close did not preserve the verified result.");
+  await db.exec("reset role");
+  assert((await landlordJobs(inquiry.id)).length === 1, "Closing or replaying duplicated the landlord notification.");
+
+  await db.exec("begin");
+  try {
+    await db.query(`insert into public.notification_preferences(user_id,category,channel,enabled)
+      values ($1,'messages','email',false)`, [actor]);
+    await db.exec("set local role service_role");
+    const optedOut = await rpc("claim_notification_jobs", "'email',100,$1", ["inquiry-landlord-opt-out-worker"]);
+    assert(!optedOut.jobs.some((contact) => contact.notificationJobId === landlordAlert.id),
+      "Messages opt-out let the landlord alert reach the email worker.");
+    await db.exec("reset role");
+    const suppressed = (await db.query("select status,last_error from private.notification_jobs where id=$1",
+      [landlordAlert.id])).rows[0];
+    assert(suppressed.status === "canceled" && suppressed.last_error === "RECIPIENT_OPTED_OUT",
+      "Messages opt-out did not use canonical worker suppression.");
+  } finally {
+    await db.exec("rollback; reset role");
+  }
+
+  const nextInquiries = (await db.query(`select i.id,j.payload->>'verificationToken' as token
+    from public.rental_inquiries i
+    join private.rental_inquiry_verifications v on v.inquiry_id=i.id and v.organization_id=i.organization_id
+    join private.notification_jobs j on j.id=v.notification_job_id
+    where i.organization_id=$1 and i.status='pending_verification' order by i.id limit 2`, [org])).rows;
+  assert(nextInquiries.length === 2, "Expected two pending synthetic follow-up inquiries.");
+
+  await db.query("update auth.users set email_confirmed_at=null where id=$1", [actor]);
+  await db.exec("set role service_role");
+  assert((await rpc("verify_public_rental_inquiry", "$1", [nextInquiries[0].token])).status === "open",
+    "Eligible fallback verification did not open the inquiry.");
+  await db.exec("reset role");
+  const fallback = await landlordJobs(nextInquiries[0].id);
+  assert(fallback.length === 1 && fallback[0].recipient_user_id === alternate && fallback[0].locale === "fr-CA",
+    "An earlier expired, wrong-property or unconfirmed owner displaced the eligible fallback.");
+
+  await db.query("update auth.users set email_confirmed_at=null where id=$1", [alternate]);
+  await db.exec("set role service_role");
+  assert((await rpc("verify_public_rental_inquiry", "$1", [nextInquiries[1].token])).status === "open",
+    "An inquiry with no eligible mail recipient failed to verify.");
+  await db.exec("reset role");
+  assert((await landlordJobs(nextInquiries[1].id)).length === 0,
+    "Inquiry with no eligible owner queued an email.");
+  await db.query("update auth.users set email_confirmed_at=now() where id=any($1::uuid[])", [[actor, alternate]]);
 
   // Paused/closed/draft share links cannot accept new questions.
   await act();
@@ -306,5 +385,7 @@ export async function validateRentalInquiry(db, { assert, expectDatabaseError, c
     directWriteDenied: true,
     pausedListingDenied: true,
     closeIdempotent: true,
+    landlordNotificationScopedAndIdempotent: true,
+    landlordMessagesOptOutHonored: true,
   };
 }

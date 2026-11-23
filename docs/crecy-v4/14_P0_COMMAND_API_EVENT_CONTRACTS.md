@@ -788,6 +788,7 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
   organization/property/unit from the published unlisted `public_id`; none are accepted from the visitor.
 - `VerifyPublicRentalInquiry` consumes an opaque email-verification token only on POST. GET renders the
   verification surface and never changes inquiry state.
+- The first verified transition queues at most one `message_rental_inquiry_received` email for the authorized workspace owner. The job references the operator inbox with a unit ID and inquiry reference and uses existing Messages preferences. [Recipient and rollout rules](VERIFIED_RENTAL_INQUIRY_CONTRACT.md#landlord-alert)
 - `CloseRentalInquiry` requires an authenticated current operator with `lease.manage` or
   `property.manage` on the exact property and an expected inquiry version.
 - Submit and close are durably idempotent. Public submit namespaces its stored idempotency key to the

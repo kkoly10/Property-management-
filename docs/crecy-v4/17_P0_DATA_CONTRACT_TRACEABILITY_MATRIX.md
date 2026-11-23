@@ -77,6 +77,7 @@ upload recovery and recipient-only signed-version handoff. Preserve existing eng
 | Capability | Primary tables | Command/query | Authorization | Required event/tests |
 |---|---|---|---|---|
 | Verified rental question intake | `rental_inquiries`, `private.rental_inquiry_verifications`, `private.rental_inquiry_attempts`, `private.notification_jobs` | `SubmitPublicRentalInquiry`, `VerifyPublicRentalInquiry`, `CloseRentalInquiry` | public submit/verify only through validated service route; landlord read/close requires exact-property `lease.manage` or `property.manage`; no anon base-table grant | pending hidden, wrong/expired token, token replay, normalized-email and keyed-network rate limits, terminal token scrub, wrong-property/outsider denial, direct-write denial, paused listing denial, close replay |
+| Verified rental question alert | `rental_inquiries`, `private.notification_jobs`, `notification_preferences` | `VerifyPublicRentalInquiry` first verified transition | current confirmed workspace owner with exact property scope and signed-in inbox access | one alert to an eligible owner, no alert before verification or on replay/close, Messages opt-out, no prospect details in payload |
 
 ## Homeowner B3 trace — verified tour requests
 

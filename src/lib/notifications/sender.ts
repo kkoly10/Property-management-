@@ -39,6 +39,7 @@ export type MailAudience = LinkAudience;
  */
 export const TEMPLATE_AUDIENCE: Record<string, MailAudience> = {
   rental_inquiry_verification: "operator",
+  message_rental_inquiry_received: "operator",
   rental_tour_verification: "operator",
   rental_application_verification: "operator",
   rental_application_recovery: "operator",
@@ -162,6 +163,7 @@ export function senderFor(templateCode: string, audienceOverride?: MailAudience 
  */
 const RECIPIENT_AUDIENCE: Record<string, MailAudience | null> = {
   rental_inquiry_verification: null,
+  message_rental_inquiry_received: "operator",
   rental_tour_verification: null,
   rental_application_verification: null,
   rental_application_recovery: null,
