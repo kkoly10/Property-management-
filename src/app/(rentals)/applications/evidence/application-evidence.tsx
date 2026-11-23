@@ -11,15 +11,26 @@ import { evidenceFileTypes, evidenceLabels, evidencePacketSchema, evidenceScoreS
   type EvidenceType } from "@/lib/validation/rental-evidence";
 
 const api = "/api/v1/rental-applications/evidence";
-class EvidenceRequestError extends Error {
-  constructor(message: string, readonly code?: string) { super(message); }
+const fileStatus = {
+  awaiting_upload: "Upload not verified",
+  quarantined: "Waiting for security scan",
+  scanning: "Checking file",
+  clean: "Ready",
+  rejected: "Remove and replace this file",
+} satisfies Record<EvidencePacket["files"][number]["status"], string>;
+function needsScan(file: EvidencePacket["files"][number]) {
+  return file.status === "quarantined" || file.status === "scanning";
 }
 
-async function requestEvidence(url: string, command?: Record<string, unknown>) {
+class EvidenceRequestError extends Error {
+  constructor(message: string, readonly code?: string, readonly status?: number) { super(message); }
+}
+
+async function requestEvidence(url: string, command?: Record<string, unknown>, signal?: AbortSignal) {
   const response = await fetch(url, command ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(command) }
-    : { cache: "no-store" });
+    : { cache: "no-store", signal });
   const body = await response.json().catch(() => null);
-  if (!response.ok || !body) throw new EvidenceRequestError(body?.error ?? "Private evidence could not be loaded.", body?.code);
+  if (!response.ok || !body) throw new EvidenceRequestError(body?.error ?? "Private evidence could not be loaded.", body?.code, response.status);
   return body;
 }
 
@@ -75,7 +86,7 @@ export function ApplicationEvidence({ reference, returnTo, verifiedApplicationEm
   reference: string; returnTo: string; verifiedApplicationEmail?: string;
 }) {
   if (verifiedApplicationEmail) return <ApplicantAccount email={verifiedApplicationEmail} returnTo={returnTo} />;
-  return <PacketEditor reference={reference} returnTo={returnTo} />;
+  return <PacketEditor key={reference} reference={reference} returnTo={returnTo} />;
 }
 
 function PacketEditor({ reference, returnTo }: { reference: string; returnTo: string }) {
@@ -83,11 +94,12 @@ function PacketEditor({ reference, returnTo }: { reference: string; returnTo: st
   const [error, setError] = useState("");
   const [needsMfa, setNeedsMfa] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [consent, setConsent] = useState(false);
   const [score, setScore] = useState("");
   const [scoreSource, setScoreSource] = useState<EvidenceScoreSource | "">("");
   const [scoreObservedOn, setScoreObservedOn] = useState("");
-  const [acknowledgeRequirementsChange, setAcknowledgeRequirementsChange] = useState(false);
+  const [acknowledgedVersion, setAcknowledgedVersion] = useState<string | null>();
   const [alternatives, setAlternatives] = useState<EvidenceType[]>([]);
   const [documentType, setDocumentType] = useState<EvidenceType | "">("");
   const [file, setFile] = useState<File | null>(null);
@@ -99,7 +111,7 @@ function PacketEditor({ reference, returnTo }: { reference: string; returnTo: st
     setScore(parsed.score === null ? "" : String(parsed.score));
     setScoreSource(parsed.scoreSource ?? "");
     setScoreObservedOn(parsed.scoreObservedOn ?? "");
-    setAcknowledgeRequirementsChange(false);
+    setAcknowledgedVersion(undefined);
     setAlternatives(parsed.alternativeDocumentTypes);
     setDocumentType((value) => value && parsed.allowedDocumentTypes.includes(value) ? value : parsed.allowedDocumentTypes[0] ?? "");
   }, []);
@@ -111,12 +123,80 @@ function PacketEditor({ reference, returnTo }: { reference: string; returnTo: st
     try { update(await requestEvidence(`${api}?ref=${reference}`)); }
     catch (cause) { report(cause); }
   }, [reference, report, update]);
+  const refreshScanStatus = useCallback(async (expectedVersion: number, signal: AbortSignal) => {
+    const received = evidencePacketSchema.parse(await requestEvidence(`${api}?ref=${reference}`, undefined,
+      AbortSignal.any([signal, AbortSignal.timeout(8_000)])));
+    if (signal.aborted) return false;
+    if (received.version !== expectedVersion) {
+      setError("This application changed in another window. Reload it before continuing.");
+      return false;
+    }
+    setPacket((current) => current?.version === expectedVersion
+      ? { ...current, files: received.files, currentRequirementsVersion: received.currentRequirementsVersion }
+      : current);
+    return received.files.some(needsScan);
+  }, [reference]);
   useEffect(() => {
     let active = true;
     void requestEvidence(`${api}?ref=${reference}`).then((data) => { if (active) update(data); })
       .catch((cause: unknown) => { if (active) report(cause); });
     return () => { active = false; };
   }, [reference, report, update]);
+
+  const pendingCount = packet?.files.filter(needsScan).length ?? 0;
+  const packetVersion = packet?.version;
+  const packetBound = packet?.bound === true;
+  useEffect(() => {
+    if (!packetVersion || !packetBound || !pendingCount || busy || refreshing || needsMfa) return;
+    const version = packetVersion;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    let running = false;
+    let polls = 0;
+    const schedule = (delay: number) => {
+      if (document.visibilityState === "visible" && !controller.signal.aborted) {
+        timer = window.setTimeout(() => void poll(), delay);
+      }
+    };
+    async function poll() {
+      running = true;
+      let pending = true;
+      try {
+        pending = await refreshScanStatus(version, controller.signal);
+      } catch (cause) {
+        if (!controller.signal.aborted && cause instanceof EvidenceRequestError
+          && (cause.status === 401 || cause.status === 403 || cause.status === 404)) {
+          pending = false;
+          setPacket(null);
+          report(cause);
+        }
+      } finally {
+        running = false;
+      }
+      polls++;
+      if (pending) schedule(polls < 12 ? 3_000 : 12_000);
+    }
+    const onVisibilityChange = () => {
+      window.clearTimeout(timer);
+      if (!running) schedule(0);
+    };
+    schedule(3_000);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [busy, needsMfa, packetBound, packetVersion, pendingCount, refreshScanStatus, refreshing, report]);
+
+  async function refreshFiles() {
+    if (!packet || busy || refreshing) return;
+    setRefreshing(true);
+    setError("");
+    try { await refreshScanStatus(packet.version, AbortSignal.timeout(8_000)); }
+    catch (cause) { report(cause); }
+    finally { setRefreshing(false); }
+  }
 
   async function perform(command: Record<string, unknown>) {
     if (busy) return;
@@ -151,6 +231,14 @@ function PacketEditor({ reference, returnTo }: { reference: string; returnTo: st
     } catch (cause) { report(cause); }
     finally { await refresh(); setBusy(false); }
   }
+  async function verifyUpload(fileId: string) {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try { await requestEvidence(api, { action: "finalize", reference, fileId }); }
+    catch (cause) { report(cause); }
+    finally { await refresh(); setBusy(false); }
+  }
 
   if (needsMfa) return <MfaSetup returnTo={returnTo} requireChallenge />;
   if (!packet) return <p role={error ? "alert" : "status"} className="text-sm">{error || "Opening your packet…"}</p>;
@@ -159,6 +247,8 @@ function PacketEditor({ reference, returnTo }: { reference: string; returnTo: st
     {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}</div>;
   const editable = packet.status === "draft" || packet.status === "changes_requested";
   const requirementsChanged = packet.currentRequirementsVersion !== packet.requirements.requirementsVersion;
+  const acknowledgeRequirementsChange = acknowledgedVersion === packet.currentRequirementsVersion;
+  const incompleteFiles = packet.files.some((item) => item.status !== "clean");
 
   return <div className="space-y-6">
     <section className="space-y-3 rounded-xl border bg-card p-5">
@@ -170,7 +260,7 @@ function PacketEditor({ reference, returnTo }: { reference: string; returnTo: st
       {requirementsChanged ? <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm">
         <p>The landlord updated the listing after you applied. The requirements shown here still apply to this application.</p>
         {editable ? <label className="flex items-start gap-2"><input type="checkbox" checked={acknowledgeRequirementsChange}
-          onChange={(event) => setAcknowledgeRequirementsChange(event.target.checked)} /> I understand the listing has changed.</label> : null}
+          onChange={(event) => setAcknowledgedVersion(event.target.checked ? packet.currentRequirementsVersion : undefined)} /> I understand the listing has changed.</label> : null}
       </div> : null}
       {packet.requestedDocumentTypes.length ? <p className="text-sm font-medium">The landlord requested changes to {packet.requestedDocumentTypes.map((type) => evidenceLabels[type].toLowerCase()).join(", ")}.</p> : null}
     </section>
@@ -200,10 +290,16 @@ function PacketEditor({ reference, returnTo }: { reference: string; returnTo: st
     </section> : null}
     <section className="space-y-4 rounded-xl border bg-card p-5">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Your files</h2>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => { setError(""); void refresh(); }}>Refresh scan status</Button></div>
+        <Button variant="outline" size="sm" disabled={busy || refreshing} onClick={() => void refreshFiles()}>Refresh scan status</Button></div>
+      {packet.files.length ? <p role="status" className="text-sm text-muted-foreground">
+        {pendingCount ? `Checking ${pendingCount} ${pendingCount === 1 ? "file" : "files"}. This page updates automatically, and scans continue if you leave.`
+          : incompleteFiles ? "Finish verification or replace files that could not be checked." : "All uploaded files are ready."}
+      </p> : null}
       <ul className="space-y-2 text-sm">{packet.files.map((item) => <li key={item.id} className="flex flex-wrap items-center gap-3">
-        <span>{evidenceLabels[item.documentType]} · {item.status.replaceAll("_", " ")}</span>
+        <span>{evidenceLabels[item.documentType]} · {fileStatus[item.status]}</span>
         {item.status === "clean" ? <a className="text-primary underline" href={`${api}/file?ref=${reference}&fileId=${item.id}`}>Download</a> : null}
+        {editable && item.status === "awaiting_upload" ? <Button variant="outline" size="sm" disabled={busy}
+          onClick={() => void verifyUpload(item.id)}>Verify upload</Button> : null}
         {editable ? <Button variant="ghost" size="sm" disabled={busy} onClick={() => void perform({ action: "remove", fileId: item.id, version: packet.version })}>Remove</Button> : null}
       </li>)}</ul>
       {editable && packet.consented && consent ? <div className="space-y-3">
@@ -217,7 +313,7 @@ function PacketEditor({ reference, returnTo }: { reference: string; returnTo: st
       </div> : null}
     </section>
     {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-    {editable ? <Button disabled={busy || !packet.consented || !consent || (requirementsChanged && !acknowledgeRequirementsChange)}
+    {editable ? <Button disabled={busy || incompleteFiles || !packet.consented || !consent || (requirementsChanged && !acknowledgeRequirementsChange)}
       onClick={() => void perform({ action: "submit", version: packet.version, acknowledgeRequirementsChange,
         currentRequirementsVersion: packet.currentRequirementsVersion })}>Submit for landlord review</Button>
       : <p role="status" className="text-sm font-medium">{packet.status === "selected" ? "The landlord selected your application for lease preparation." : "Your packet is submitted for landlord review."}</p>}

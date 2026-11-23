@@ -59,6 +59,7 @@ export default async function RentalToursPage({ params }: { params: Promise<{ un
                     <Badge variant={item.status === "confirmed" ? "success" : "info"}>
                       {item.status === "cancelled" ? "Canceled" : item.status}
                     </Badge>
+                    {item.renterChangePending ? <Badge variant="warning">New times proposed</Badge> : null}
                     <span className="font-mono text-xs text-muted-foreground">{item.publicReference}</span>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -95,6 +96,11 @@ export default async function RentalToursPage({ params }: { params: Promise<{ un
                       </ul>
                     </div>
                   )}
+                  {item.renterChangePending && item.status === "confirmed" ? (
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      The renter sent alternatives. The current appointment holds until you confirm a new time.
+                    </p>
+                  ) : null}
                   {workspace.organizationId && !preview ? (
                     <OperatorRentalConversation organizationId={workspace.organizationId} kind="tour" id={item.id} />
                   ) : null}

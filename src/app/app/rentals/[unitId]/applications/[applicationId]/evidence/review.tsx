@@ -9,12 +9,13 @@ import { evidenceLabels, evidencePacketSchema, evidenceScoreSourceLabels, type E
 const api = "/api/v1/rental-applications/evidence-review";
 const statusLabels = { submitted: "Ready for review", changes_requested: "Changes requested", selected: "Selected for lease preparation", declined: "Declined" };
 type Scope = { organizationId: string; unitId: string; applicationId: string };
+type ReviewerPacket = EvidencePacket & { creditDecisionRestricted: boolean };
 
 export function EvidenceReview({ scope }: { scope: Scope }) {
   const query = new URLSearchParams(scope).toString();
   const back = `/app/rentals/${scope.unitId}/applications`;
   const returnTo = `${back}/${scope.applicationId}/evidence`;
-  const [packet, setPacket] = useState<EvidencePacket | null>(null);
+  const [packet, setPacket] = useState<ReviewerPacket | null>(null);
   const [decision, setDecision] = useState<keyof typeof statusLabels | null>(null);
   const [selected, setSelected] = useState<EvidenceType[]>([]);
   const [busy, setBusy] = useState(false);
@@ -34,7 +35,7 @@ export function EvidenceReview({ scope }: { scope: Scope }) {
           return;
         }
         if (body?.status === "declined" || body?.status === "changes_requested") { setDecision(body.status); return; }
-        setPacket(evidencePacketSchema.parse(body));
+        setPacket({ ...evidencePacketSchema.parse(body), creditDecisionRestricted: body?.creditDecisionRestricted === true });
       } catch {
         if (!controller.signal.aborted) setError("The packet could not be loaded.");
       }
@@ -67,7 +68,7 @@ export function EvidenceReview({ scope }: { scope: Scope }) {
   if (stepUp) return <MfaSetup returnTo={returnTo} requireChallenge />;
   if (decision) return <p role="status" className="text-sm font-medium">{statusLabels[decision]}. <Link className="text-primary underline" href={back}>Return to applications</Link></p>;
   if (!packet) return <p role={error ? "alert" : "status"} className="text-sm">{error || "Loading the private packet…"}</p>;
-  const hasCredit = packet.score !== null || packet.files.some((item) => item.documentType === "credit_evidence")
+  const hasCredit = packet.creditDecisionRestricted || packet.score !== null || packet.files.some((item) => item.documentType === "credit_evidence")
     || packet.requirements.requiredDocumentTypes.includes("credit_evidence");
   return <div className="space-y-6 rounded-xl border bg-card p-5">
     <p className="text-sm font-medium">{packet.status === "selected" ? statusLabels.selected : statusLabels.submitted}</p>

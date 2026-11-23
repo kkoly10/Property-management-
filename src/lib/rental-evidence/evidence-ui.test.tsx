@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationEvidence } from "@/app/(rentals)/applications/evidence/application-evidence";
 import { EvidenceReview } from "@/app/app/rentals/[unitId]/applications/[applicationId]/evidence/review";
@@ -17,7 +17,7 @@ const packet = {
   score: null, scoreSource: null, scoreObservedOn: null, alternativeDocumentTypes: [], requestedDocumentTypes: [], files: [],
 } satisfies EvidencePacket;
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("private applicant workspace", () => {
   it("captures exact notice acceptance before the file controls become available", async () => {
@@ -53,6 +53,31 @@ describe("private applicant workspace", () => {
     expect(await screen.findByText("Your packet is submitted for landlord review.")).toBeVisible();
     expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ action: "submit", reference,
       acknowledgeRequirementsChange: true, currentRequirementsVersion: scope.unitId });
+  });
+
+  it("updates scan status automatically without erasing a score draft or acknowledging changed criteria", async () => {
+    vi.useFakeTimers();
+    const file = { id: scope.unitId, documentType: "income_evidence", sizeBytes: 85 };
+    const pending = { ...packet, consented: true, currentRequirementsVersion: scope.unitId,
+      files: [{ ...file, status: "quarantined" }] };
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json(pending)).mockResolvedValueOnce(Response.json({
+      ...pending, currentRequirementsVersion: scope.organizationId, files: [{ ...file, status: "clean" }],
+    }));
+    vi.stubGlobal("fetch", fetch);
+    await act(async () => { render(<ApplicationEvidence reference={reference} returnTo={`/applications/evidence?ref=${reference}`} />); });
+    const score = screen.getByLabelText(/Self-reported credit score/);
+    const acknowledgment = screen.getByRole("checkbox", { name: /understand the listing has changed/i });
+    fireEvent.change(score, { target: { value: "703" } });
+    fireEvent.click(acknowledgment);
+    expect(screen.getByText(/this page updates automatically/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Submit for landlord review" })).toBeDisabled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(screen.getByText("All uploaded files are ready.")).toBeVisible();
+    expect(score).toHaveValue(703);
+    expect(acknowledgment).not.toBeChecked();
+    expect(screen.getByRole("link", { name: "Download" })).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("requires a manual category checklist before selecting and keeps credit adverse action gated", async () => {

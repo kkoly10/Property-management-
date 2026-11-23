@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { LivingCommunityIdentity } from "@/components/crecy/living-community-identity";
 import { LivingCommunityGallery } from "@/components/living/living-community-gallery";
+import { ResidentMoveInChecklist } from "@/components/living/resident-move-in-checklist";
 import { LivingShell } from "@/components/living/living-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ import { getResidentBalance } from "@/lib/data/finance";
 import { getResidentLivingCommunityPresentations } from "@/lib/data/living-community";
 import { getResidentMaintenanceWorkspace } from "@/lib/data/maintenance";
 import { getConversationWorkspace } from "@/lib/data/messaging";
+import { getResidentMoveInChecklist } from "@/lib/data/resident-move-in";
 
 export const dynamic = "force-dynamic";
 
@@ -36,12 +38,13 @@ const shortDate = (value: string) => new Intl.DateTimeFormat("en-US", {
 }).format(new Date(`${value}T12:00:00.000Z`));
 
 export default async function ResidentHomePage() {
-  const [summary, announcements, maintenance, conversations, communities] = await Promise.all([
+  const [summary, announcements, maintenance, conversations, communities, moveIns] = await Promise.all([
     getResidentBalance(),
     getRecipientAnnouncementWorkspace(),
     getResidentMaintenanceWorkspace(),
     getConversationWorkspace(),
     getResidentLivingCommunityPresentations(),
+    getResidentMoveInChecklist(),
   ]);
 
   const home = summary.items[0];
@@ -78,6 +81,8 @@ export default async function ResidentHomePage() {
             <AlertDescription>Refresh and try again. Request {summary.requestId}.</AlertDescription>
           </Alert>
         ) : null}
+
+        {moveIns.map((moveIn) => <ResidentMoveInChecklist key={moveIn.tenancyId} moveIn={moveIn} canMessage />)}
 
         {home ? (
           <>
@@ -142,7 +147,7 @@ export default async function ResidentHomePage() {
               </div>
             </section>
           </>
-        ) : (
+        ) : moveIns.length ? null : (
           <Alert variant="warning">
             <CircleAlert aria-hidden="true" className="h-5 w-5" />
             <AlertTitle>No active home found</AlertTitle>

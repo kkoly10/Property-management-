@@ -6384,25 +6384,59 @@ async function validateRecurringCharges() {
   const rentalAgreements = await validateRentalAgreements(db, { assert, expectDatabaseError });
   await db.exec(await readFile(resolve(root, "supabase/migrations/20261123055219_applicant_agreement_claim_and_binding.sql"), "utf8"));
   await db.exec(await readFile(resolve(root, "supabase/migrations-contract/20261123060522_retire_unapproved_application_agreement_issue.sql"), "utf8"));
+  await db.exec(await readFile(resolve(root, "supabase/migrations/20261122144012_queue_attempt_and_runtime_health.sql"), "utf8"));
+  await db.exec(await readFile(resolve(root, "supabase/migrations/20261122152304_record_tenancy_move_in_handover.sql"), "utf8"));
   for (const migration of [
     "20261123055428_rental_lifecycle_notifications.sql",
     "20261123055758_rental_tour_changes.sql",
     "20261123060114_private_rental_conversations.sql",
     "20261123061152_rental_unit_activity_timeline.sql",
     "20261123062221_agreement_invitation_delivery_state.sql",
+    "20261123125332_rental_application_progress_and_decisions.sql",
+    "20261123125342_rental_agreement_invitation_recovery.sql",
+    "20261123125349_accelerate_private_rental_evidence_scans.sql",
+    "20261123125557_pause_listing_when_applicant_lease_is_executed.sql",
+    "20261123125907_maintain_vercel_scanner_signature_snapshot.sql",
+    "20261123130410_manage_verified_renter_tours.sql",
+    "20261123130423_resident_move_in_checklist.sql",
+    "20261123130632_gate_rental_application_document_intake.sql",
   ]) {
     await db.exec(await readFile(resolve(root, "supabase/migrations", migration), "utf8"));
   }
   const { validateRentalWorkflowCommunication } = await import("./validate-rental-workflow-communication.mjs");
-  Object.assign(rentalInquiry, { workflow: await validateRentalWorkflowCommunication(db, { assert, expectDatabaseError, createOrganizationAsServer }) });
+  await db.exec("reset role; set role authenticated");
+  await expectDatabaseError(() => db.query("select public.get_current_vercel_scanner_snapshot()"), "permission denied");
+  await db.exec("reset role; set role service_role");
+  const refreshClaim = "d11d6401-020b-4877-a772-031baad52fb5";
+  const otherRefresh = "af01196f-6770-4cf6-99f7-bfda6ec906dc";
+  const getSnapshot = async () => (await db.query("select public.get_current_vercel_scanner_snapshot() as id")).rows[0].id;
+  const claimSnapshot = async (claim) => (await db.query("select public.claim_vercel_scanner_snapshot_refresh($1,'snap_seed_fixture') as id", [claim])).rows[0].id;
+  const publishSnapshot = async (claim, old) => (await db.query(`select public.complete_vercel_scanner_snapshot_refresh(
+    $1,'snap_current_fixture',now()-make_interval(hours=>$2),now()+interval '6 days') as ok`, [claim,old])).rows[0].ok;
+  assert(await getSnapshot() === null && await claimSnapshot(refreshClaim) === "snap_seed_fixture" && await claimSnapshot(otherRefresh) === null,
+    "Only one scanner refresh worker may claim the cold image.");
+  assert(!await publishSnapshot(otherRefresh,2) && !await publishSnapshot(refreshClaim,52) && await publishSnapshot(refreshClaim,2),
+    "Scanner snapshot publication was not fenced by the active worker and signature age.");
+  assert(await getSnapshot() === "snap_current_fixture", "The verified scanner snapshot was not selectable.");
+  await db.exec("reset role");
+  const { validateRentalEvidenceScanAdmission } = await import("./validate-rental-evidence-scan-admission.mjs");
+  const { validateRentalProspectTours } = await import("./validate-rental-prospect-tours.mjs");
+  Object.assign(rentalInquiry, { workflow: await validateRentalWorkflowCommunication(db, {
+    assert, expectDatabaseError, createOrganizationAsServer,
+    proveRenterTours: (connection, fixture) => validateRentalProspectTours(connection, { assert, expectDatabaseError }, fixture),
+  }) });
   Object.assign(rentalAgreements, await validateFirstTimeAgreementSigning(db, {
-    assert, expectDatabaseError, assertNotifications: true, assertActivity: true, assertDelivery: true,
+    assert, expectDatabaseError, assertNotifications: true, assertActivity: true, assertDelivery: true, assertRecovery: true,
+    assertMoveIn: true,
   }));
   Object.assign(rentalApplication, { privateEvidence: await validateRentalEvidence(db, {
     assert, expectDatabaseError,
-    proveSelectedAgreement: (connection, fixture) => proveSelectedApplicationAgreement(connection, fixture, { assert, expectDatabaseError }),
+    proveScanAdmission: (connection, fixture) => validateRentalEvidenceScanAdmission(connection, { assert, expectDatabaseError }, fixture),
+    proveSelectedAgreement: (connection, fixture) => proveSelectedApplicationAgreement(connection, fixture, {
+      assert, expectDatabaseError, assertListingPaused: true,
+    }),
   }) });
-  const tenancyMoveIn = await validateTenancyMoveIn(db, { assert, expectDatabaseError });
+  const tenancyMoveIn = await validateTenancyMoveIn(db, { assert, expectDatabaseError, migrationsApplied: true, assertResidentChecklist: true });
   const tenancyRenewal = await validateTenancyRenewal(db, { assert, expectDatabaseError, createOrganizationAsServer });
   const signedImport = await validateImportedTenancyAgreement(db, { assert, expectDatabaseError });
   const maintenanceCostApproval = await validateMaintenanceCostApproval(db, {
@@ -6416,7 +6450,7 @@ async function validateRecurringCharges() {
   await validateOrganizationClosure(db);
   // Exercise the legacy fixture paths before retiring the unfenced worker commands.
   await validateRuntimeReliability(db, {
-    assert, expectDatabaseError, organizationId: organization.organizationId, ownerUserId: admin,
+    assert, expectDatabaseError, organizationId: organization.organizationId, ownerUserId: admin, attemptMigrationApplied: true,
     documentId: deliveryDoc, platformAdmin, platformAgent,
   });
   const privacyRequestContinuity = await validatePrivacyRequestContinuity(db, {

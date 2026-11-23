@@ -11,6 +11,7 @@ vi.mock("@/lib/data/signatures", () => ({ resolveEsignConsent: () => null }));
 vi.mock("./agreement-forms", () => ({
   AgreementCloseForm: () => null, AgreementFilingForm: () => null,
   AgreementIssueForm: () => null, AgreementSignatureForm: () => null,
+  AgreementInvitationResendForm: () => <button>Resend signing invitation</button>,
 }));
 
 import { AgreementDetail } from "./agreement-pages";
@@ -50,6 +51,13 @@ it("keeps the operator page usable when the rollout has no delivery projection",
   render(await AgreementDetail({ surface: "operator", agreementId }));
   expect(screen.getByText("Status unavailable")).toBeVisible();
   expect(screen.getByText("Awaiting signatures · 0 of 2 signed")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Resend signing invitation" })).toBeNull();
+});
+
+it("offers a deliberate recovery action only when the exact invitation is eligible", async () => {
+  data.delivery.mockResolvedValue({ agreementId, state: "failed", reissue: null, resendEligible: true });
+  render(await AgreementDetail({ surface: "operator", agreementId }));
+  expect(screen.getByRole("button", { name: "Resend signing invitation" })).toBeVisible();
 });
 
 it("links an expired invitation to its exact authorized signing setup", async () => {
@@ -58,6 +66,7 @@ it("links an expired invitation to its exact authorized signing setup", async ()
   render(await AgreementDetail({ surface: "operator", agreementId }));
   expect(screen.getByRole("link", { name: "Return to application signing" }))
     .toHaveAttribute("href", `/app/rentals/${unitId}/applications/${applicationId}/agreement`);
+  expect(screen.queryByRole("button", { name: "Resend signing invitation" })).toBeNull();
 });
 
 it("withholds operator delivery metadata and gives the renter an expiry recovery step", async () => {

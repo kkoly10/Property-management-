@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { getAgreementFiling, getAgreementInvitationDelivery, getAgreementIssueOptions, getRentalAgreement, listRentalAgreements, type AgreementSurface } from "@/lib/data/rental-agreements";
+import { ResidentMoveInChecklist } from "@/components/living/resident-move-in-checklist";
+import { getResidentMoveInChecklist } from "@/lib/data/resident-move-in";
 import { resolveEsignConsent } from "@/lib/data/signatures";
 import { hostConfig } from "@/lib/runtime/host";
-import { AgreementCloseForm, AgreementFilingForm, AgreementIssueForm, AgreementSignatureForm } from "./agreement-forms";
+import { AgreementCloseForm, AgreementFilingForm, AgreementInvitationResendForm, AgreementIssueForm, AgreementSignatureForm } from "./agreement-forms";
 
 const labels = { open: "Awaiting signatures", executed: "All parties signed", declined: "Declined", void: "Voided", expired: "Expired" };
 const invitationLabels = {
@@ -68,10 +70,12 @@ export async function AgreementDetail({ surface, agreementId }: { surface: Agree
   const consent = resolveEsignConsent();
   const open = agreement.status === "open";
   const executed = agreement.status === "executed";
-  const [filing, invitation] = await Promise.all([
+  const [filing, invitation, moveIns] = await Promise.all([
     executed && organizationId ? getAgreementFiling(organizationId, agreement.agreementId) : null,
     surface === "operator" && organizationId && agreement.applicationLinked
       ? getAgreementInvitationDelivery(organizationId, agreement.agreementId) : null,
+    surface === "participant" && executed && agreement.applicationLinked && agreement.myCapacity === "lessee"
+      ? getResidentMoveInChecklist(agreement.agreementId) : [],
   ]);
   const maySign = open && agreement.myCapacity && !agreement.iSigned && consent;
   const artifacts = "/api/v1/rental-agreements/" + agreement.agreementId + "/artifacts?surface=" + surface;
@@ -98,6 +102,7 @@ export async function AgreementDetail({ surface, agreementId }: { surface: Agree
       {agreement.applicationLinked && <p className="text-sm">{receiptStatus}</p>}
       <Button asChild><a href={artifacts + "&kind=bundle"}>Download signed package</a></Button>
     </section>}
+    {moveIns.map((moveIn) => <ResidentMoveInChecklist key={moveIn.tenancyId} moveIn={moveIn} />)}
     {surface === "operator" && agreement.applicationLinked && (open || invitation?.state || invitation?.reissue)
       ? <section className="space-y-3 rounded-xl border p-4" aria-label="Renter signing invitation">
       <h2 className="font-semibold">Renter signing invitation</h2>
@@ -105,6 +110,10 @@ export async function AgreementDetail({ surface, agreementId }: { surface: Agree
         <dt className="text-muted-foreground">Email delivery</dt>
         <dd className="font-medium">{invitation?.state ? invitationLabels[invitation.state] : "Status unavailable"}</dd>
       </dl>
+      {open && organizationId && invitation?.resendEligible ? <>
+        <p className="text-sm text-muted-foreground">Resending requires <Link className="underline" href={mfaHref}>MFA verification</Link>.</p>
+        <AgreementInvitationResendForm agreementId={agreement.agreementId} organizationId={organizationId} operationId={crypto.randomUUID()} />
+      </> : null}
       {agreement.status === "expired" && invitation?.reissue && <>
         <p className="text-sm text-muted-foreground">Return to the application to send a fresh signing request.</p>
         <Button asChild variant="outline"><Link href={`/app/rentals/${invitation.reissue.unitId}/applications/${invitation.reissue.applicationId}/agreement`}>

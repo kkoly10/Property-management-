@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 
 export async function validateFirstTimeAgreementSigning(db, {
-  assert, expectDatabaseError, assertNotifications = false, assertActivity = false, assertDelivery = false,
+  assert, expectDatabaseError, assertNotifications = false, assertActivity = false, assertDelivery = false, assertRecovery = false,
+  assertMoveIn = false,
 }) {
   await db.exec("reset role");
   const owner = randomUUID();
@@ -80,7 +81,8 @@ export async function validateFirstTimeAgreementSigning(db, {
     await operator();
     const queued = await readDelivery();
     assert(queued.agreementId===agreement && queued.state==="queued" && queued.reissue===null
-      && Object.keys(queued).sort().join(",")==="agreementId,reissue,state",
+      && Object.keys(queued).sort().join(",")===(assertRecovery ? "agreementId,reissue,resendEligible,state" : "agreementId,reissue,state")
+      && (!assertRecovery || queued.resendEligible===true),
       "Expected the exact invite to expose queue status without recipient or credential fields.");
     await expectDatabaseError(() => readDelivery(null), "AGREEMENT_FORBIDDEN");
     await expectDatabaseError(() => readDelivery(organizationId, randomUUID()), "AGREEMENT_FORBIDDEN");
@@ -119,17 +121,64 @@ export async function validateFirstTimeAgreementSigning(db, {
       await operator();
       const expired = await readDelivery();
       assert(expired.state===null && expired.reissue.applicationId===application && expired.reissue.unitId===unitId
+        && (!assertRecovery || expired.resendEligible===false)
         && Object.keys(expired.reissue).sort().join(",")==="applicationId,unitId",
         "An unrelated job was correlated, or the expired invitation lost its exact authorized application return.");
     } finally {
       await db.exec("rollback; reset role");
     }
   }
+  let activeDigest = invite.digest;
+  const resend = (operationId = randomUUID()) => rpc("resend_rental_agreement_invitation($1,$2,$3)",
+    [organizationId, agreement, operationId]);
+  if (assertRecovery) {
+    await role("anon");
+    await expectDatabaseError(() => resend(), "permission denied");
+    await role("authenticated", outsider, "aal2");
+    await expectDatabaseError(() => resend(), "ORGANIZATION_SCOPE_DENIED");
+    await role("authenticated", owner);
+    await expectDatabaseError(() => resend(), "MFA_REQUIRED");
+    await operator();
+    await expectDatabaseError(() => resend(), "AGREEMENT_INVITATION_RESEND_COOLDOWN");
+    let previous = invite.job_id;
+    for (let attempt=0; attempt<3; attempt++) {
+      await db.exec("reset role");
+      await db.query("update private.notification_jobs set created_at=now()-interval '6 minutes' where id=$1", [previous]);
+      await operator();
+      const operationId = randomUUID();
+      const updated = await resend(operationId);
+      const replay = await resend(operationId);
+      assert(updated.agreementId===agreement && !updated.replayed && replay.replayed
+        && updated.notificationJobId===replay.notificationJobId && updated.notificationJobId!==previous,
+        "Retry rotated the exact agreement a second time.");
+      await db.exec("reset role");
+      const { rows: [mail] } = await db.query(`select j.id,j.recipient_address,j.payload->>'signingInvitationToken' token,
+        j.payload->>'agreementId' agreement_id,c.token_hash,
+        c.expires_at=a.expires_at and (j.payload->>'expiresAt')::timestamptz=a.expires_at as keeps_expiry,
+        old.status='canceled' and not (old.payload ? 'signingInvitationToken') as replaced
+        from private.rental_agreement_signer_claims c join private.notification_jobs j on j.id=c.notification_job_id
+        join private.rental_agreements a on a.id=c.agreement_id
+        join private.notification_jobs old on old.id=$2 where c.agreement_id=$1`, [agreement, previous]);
+      assert(mail.id===updated.notificationJobId && mail.recipient_address===email && mail.agreement_id===agreement
+        && mail.replaced && mail.keeps_expiry && mail.token_hash!==activeDigest
+        && mail.token_hash===createHash("sha256").update(mail.token).digest("hex"),
+        "Resend did not supersede the previous job with the original verified recipient, deadline, and exact agreement.");
+      await service();
+      assert((await rpc("begin_rental_application_signer_access($1,false)", [activeDigest]))===null,
+        "A replaced invitation still resolved access.");
+      previous = mail.id;
+      activeDigest = mail.token_hash;
+    }
+    await db.exec("reset role");
+    await db.query("update private.notification_jobs set created_at=now()-interval '6 minutes' where id=$1", [previous]);
+    await operator();
+    await expectDatabaseError(() => resend(), "AGREEMENT_INVITATION_RESEND_LIMIT");
+  }
   const sign = (actor, name) => rpc("sign_rental_agreement($1,$2,$3,$4,$5,'esign_consent@1.0.0#260463bcf84a7827',true,true)",
     [actor, agreement, version, sha, name]);
   await service();
-  assert((await rpc("begin_rental_application_signer_access($1,true)", [invite.digest])).agreementId===agreement
-    && (await rpc("begin_rental_application_signer_access($1,true)", [invite.digest])).throttled,
+  assert((await rpc("begin_rental_application_signer_access($1,true)", [activeDigest])).agreementId===agreement
+    && (await rpc("begin_rental_application_signer_access($1,true)", [activeDigest])).throttled,
   "The invitation did not resolve the exact pending signer with a send throttle.");
   assert((await sign(owner, "Test landlord")).status==="open", "Landlord alone executed an unclaimed applicant agreement.");
   await role("authenticated", outsider);
@@ -154,12 +203,44 @@ export async function validateFirstTimeAgreementSigning(db, {
   assert(executed.status==="executed" && executed.actorId===renter && executed.sourceVersionId===version && executed.capacity==="lessee",
     "The returned signature receipt did not identify the exact actor or reviewed version.");
   await operator();
+  if (assertRecovery) await expectDatabaseError(() => resend(), "AGREEMENT_INVITATION_NOT_OPEN");
   const filed = await rpc("file_executed_rental_agreement($1,$2)", [organizationId, agreement]);
   const next = await getDraft();
   assert(filed.applicationSetupId===prepared.setupId && next.draft.documentVersionId===version && next.revision===draft.revision+1,
     "The exact filed version was not selected automatically in the frozen draft.");
   const activated = await rpc("activate_homeowner_lease_episode($1,$2,$3,$4,true,true)",
     [organizationId, unitId, prepared.setupId, next.revision]);
+  if (assertMoveIn) {
+    const moveIn = (id = null) => rpc("get_resident_move_in_checklist($1)", [id]);
+    await db.exec("reset role; begin");
+    try {
+      await role("authenticated", renter);
+      assert((await moveIn()).items.length===0, "A signer without a resident invitation accessed the resident home projection.");
+      const signedChecklist = (await moveIn(agreement)).items;
+      assert(signedChecklist.length===1 && signedChecklist[0].tenancyId===activated.tenancyId && signedChecklist[0].startOn===start,
+        "The named renter lost their exact upcoming checklist before portal enrollment.");
+      await role("authenticated", outsider);
+      assert((await moveIn(agreement)).items.length===0, "A different account obtained an executed agreement's move-in.");
+      await operator();
+      assert((await moveIn(agreement)).items.length===0, "A landlord signer obtained the renter-only checklist.");
+      await db.exec("reset role");
+      await db.query(`insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status)
+        select $2,t.organization_id,'resident_person',m.person_id,'active' from public.tenancies t
+        join public.household_members m on m.organization_id=t.organization_id and m.household_id=t.household_id
+        where t.id=$1 and m.is_financially_responsible`, [activated.tenancyId, renter]);
+      await role("authenticated", renter);
+      assert((await moveIn()).items[0]?.tenancyId===activated.tenancyId,
+        "An enrolled renter lost move-in access ahead of the future household start.");
+      await db.exec("reset role");
+      await db.query("update public.user_relationships set status='revoked' where user_id=$1 and organization_id=$2", [renter, organizationId]);
+      await role("authenticated", renter);
+      assert((await moveIn()).items.length===0 && (await moveIn(agreement)).items.length===0,
+        "Revocation left a move-in checklist accessible on one of the renter surfaces.");
+    } finally {
+      await db.exec("rollback; reset role");
+    }
+    await operator();
+  }
   if (assertActivity) {
     const [inquiry, tour] = [randomUUID(), randomUUID()];
     const outsideScope = await rpc("create_homeowner_rental($1,$2::jsonb,$3)", [organizationId, JSON.stringify({
@@ -236,10 +317,12 @@ export async function validateFirstTimeAgreementSigning(db, {
     "Execution must enqueue one exact notice for each signer without leaking the package.");
   }
   return { firstTimeClaim: true, frozenTerms: true, latestPdf: true, namedReceipt: true, persistentExecutedReceipt: true,
-    ...(assertActivity && { scopedRentalActivity: true }), ...(assertDelivery && { scopedInvitationDelivery: true }) };
+    ...(assertActivity && { scopedRentalActivity: true }), ...(assertDelivery && { scopedInvitationDelivery: true }),
+    ...(assertRecovery && { exactInvitationResendRecovery: true }),
+    ...(assertMoveIn && { exactSignerAndResidentMoveIn: true }) };
 }
 
-export async function proveSelectedApplicationAgreement(db, fixture, { assert, expectDatabaseError }) {
+export async function proveSelectedApplicationAgreement(db, fixture, { assert, expectDatabaseError, assertListingPaused = false }) {
   const { organizationId, propertyId, unitId, applicationId, applicantId, reviewerId } = fixture;
   const rpc = async (sql, values = []) => (await db.query("select public." + sql + " as result", values)).rows[0].result;
   const role = async (databaseRole, actor, aal = "aal1") => {
@@ -249,9 +332,10 @@ export async function proveSelectedApplicationAgreement(db, fixture, { assert, e
   };
   await db.exec("reset role");
   const { rows: [application] } = await db.query(`select a.version,a.desired_move_in_on::text as start,
-    (a.desired_move_in_on+365)::text as end
+    (a.desired_move_in_on+365)::text as end,l.id as listing_id,l.public_id,l.version as listing_version
     from public.rental_applications a join private.rental_application_evidence_packets p
       on p.application_id=a.id and p.organization_id=a.organization_id
+    join public.rental_listings l on l.id=a.listing_id and l.organization_id=a.organization_id
     where a.id=$1 and a.organization_id=$2 and a.unit_id=$3 and p.status='selected' and p.version=p.reviewed_version`,
   [applicationId, organizationId, unitId]);
   assert(application, "Signing proof did not use the same manually selected application and reviewed packet.");
@@ -294,6 +378,19 @@ export async function proveSelectedApplicationAgreement(db, fixture, { assert, e
   "Counter-signing did not queue for only the authorized owner or leaked restricted fields.");
   await role("service_role");
   assert((await sign(reviewerId, "Fixture Landlord")).status==="executed", "Landlord counter-signing did not execute the same packet.");
+  if (assertListingPaused) {
+    assert((await sign(reviewerId, "Fixture Landlord")).replayed, "A replay could repeat lease execution.");
+    assert((await rpc("get_public_rental_listing($1)", [application.public_id])) === null,
+      "The public share link still accepts leads for a signed rental.");
+    await db.exec("reset role");
+    const { rows: [listing] } = await db.query(`select l.status,l.version,
+      (select count(*)::int from audit.audit_events e where e.resource_id=l.id
+        and e.after_data->>'reason'='application_lease_executed') as pauses
+      from public.rental_listings l where l.id=$1 and l.organization_id=$2`,
+    [application.listing_id, organizationId]);
+    assert(listing.status==="paused" && listing.version===application.listing_version+1 && listing.pauses===1,
+      "The linked listing was not paused and audited exactly once.");
+  }
   await role("authenticated", applicantId);
   const packageResult = await rpc("get_rental_agreement_artifacts($1,null)", [agreement]);
   assert(packageResult.source.versionId===version && JSON.parse(packageResult.evidenceText).signatures.length===2,
@@ -311,5 +408,6 @@ export async function proveSelectedApplicationAgreement(db, fixture, { assert, e
     "Selected agreement did not retain exact delivery, final notices, and agreement-only authority.");
   await role("authenticated", applicantId);
   await expectDatabaseError(() => rpc("claim_rental_application_agreement($1)", [randomUUID()]), "AGREEMENT_CLAIM_UNAVAILABLE");
-  return { selectedEvidenceToExecutedAgreement: true, exactCounterSign: true };
+  return { selectedEvidenceToExecutedAgreement: true, exactCounterSign: true,
+    ...(assertListingPaused && { exactListingPaused: true }) };
 }

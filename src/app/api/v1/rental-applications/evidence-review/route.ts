@@ -2,8 +2,10 @@ import { evidenceError, evidenceReply, rentalEvidenceEnabled } from "@/lib/renta
 import { getOrganizationContext } from "@/lib/organization/context";
 import { createClient } from "@/lib/supabase/server";
 import { evidencePacketSchema, evidenceReviewCommandSchema, evidenceReviewScopeSchema } from "@/lib/validation/rental-evidence";
+import { z } from "zod";
 
 const unavailable = () => evidenceReply({ error: "Private evidence is unavailable." }, 404);
+const reviewerPacketSchema = evidencePacketSchema.extend({ creditDecisionRestricted: z.boolean().optional() });
 
 export async function GET(request: Request) {
   if (!rentalEvidenceEnabled()) return unavailable();
@@ -19,7 +21,7 @@ export async function GET(request: Request) {
     if (result.data?.status === "declined" || result.data?.status === "changes_requested") {
       return evidenceReply({ status: result.data.status });
     }
-    const packet = evidencePacketSchema.safeParse(result.data);
+    const packet = reviewerPacketSchema.safeParse(result.data);
     return packet.success ? evidenceReply(packet.data) : evidenceError();
   } catch {
     return evidenceError();

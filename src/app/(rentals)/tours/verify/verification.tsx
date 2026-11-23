@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { prospectTourReference } from "@/lib/rental-conversation";
 
 type Result = { verified: boolean; tourReference?: string | null; message?: string };
 
@@ -65,6 +67,7 @@ export function TourVerification() {
   }
 
   if (state === "success") {
+    const safeReference = prospectTourReference.safeParse(reference);
     return (
       <Alert>
         <CheckCircle2 aria-hidden="true" className="h-5 w-5" />
@@ -72,6 +75,9 @@ export function TourVerification() {
         <AlertDescription>
           The landlord can now see your preferred times. Your tour is not confirmed until the landlord confirms one.
           {reference ? <> Reference <span className="font-mono">{reference}</span>.</> : null}
+          {safeReference.success ? <Link
+            className="mt-2 block w-fit underline underline-offset-4"
+            href={`/inquiries/conversation?ref=${encodeURIComponent(safeReference.data)}`}>Manage or change this tour</Link> : null}
         </AlertDescription>
       </Alert>
     );

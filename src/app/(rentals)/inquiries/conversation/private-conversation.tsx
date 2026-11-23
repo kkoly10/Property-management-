@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { conversationRequest, RentalConversationThread } from "@/components/rentals/rental-conversation-thread";
+import { ProspectTourActions } from "@/components/rentals/prospect-tour-actions";
 import { conversationReference, conversationState, conversationToken, type RentalConversationState } from "@/lib/rental-conversation";
 
 const endpoint = "/api/v1/rental-conversations";
@@ -29,7 +30,8 @@ export function PrivateRentalConversation({ initialReference }: { initialReferen
   function receive(value: unknown) {
     const parsed = conversationState.safeParse(value);
     if (!parsed.success) throw new Error("The conversation could not be confirmed.");
-    setThread(parsed.data);
+    setThread((current) => current?.reference === parsed.data.reference && current.tour && !parsed.data.tour
+      ? { ...parsed.data, tour: current.tour } : parsed.data);
   }
 
   useEffect(() => {
@@ -75,6 +77,15 @@ export function PrivateRentalConversation({ initialReference }: { initialReferen
       {thread && !token.success ? (
         <>
           <p className="text-sm text-muted-foreground">{thread.reference}</p>
+          {thread.tour ? <ProspectTourActions reference={thread.reference} tour={thread.tour} onChange={(tour) => {
+            const exact = thread.reference;
+            setThread((current) => current?.reference === exact
+              ? { ...current, tour, canReply: tour.status !== "cancelled" && current.canReply } : current);
+            const query = `?ref=${encodeURIComponent(exact)}`;
+            void conversationRequest(endpoint + query).then((value) => {
+              if (!readHash() && window.location.search === query) receive(value);
+            }).catch(() => {});
+          }} /> : null}
           <RentalConversationThread key={thread.reference} state={thread} showQuestion
             onReply={async (body, operation) => {
               const updated = await conversationRequest(endpoint, { action: "reply", body, operation, reference: thread.reference });

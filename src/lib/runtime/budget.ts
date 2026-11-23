@@ -48,6 +48,9 @@ export const SCAN_SANDBOX_WORKER_BATCH_SIZE = 1;
 export const SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS = 40_000;
 export const SCAN_SANDBOX_CLEANUP_TIMEOUT_MS = 3_000;
 export const SCAN_SANDBOX_SESSION_TIMEOUT_MS = 45_000;
+export const RENTAL_EVIDENCE_SCAN_CONCURRENCY = 3;
+export const RENTAL_EVIDENCE_SCAN_BUDGET_MS = 52_000;
+export const RENTAL_EVIDENCE_SCAN_RPC_TIMEOUT_MS = 4_000;
 
 /**
  * The worst case: every job in the batch stalls until its timeout, in `concurrency`-sized waves.

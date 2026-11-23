@@ -50,6 +50,12 @@ const APPLICATION = "98000000-0000-4000-8000-000000000098";
 const UNIT = "99000000-0000-4000-8000-000000000099";
 const SETUP = "9a000000-0000-4000-8000-00000000009a";
 const OPERATION = "9b000000-0000-4000-8000-00000000009b";
+const activeProgress = {
+  applicationReference: REF_A, listingTitle: "Rental", status: "submitted",
+  firstName: "Jamie", lastName: "Applicant", email: "jamie@example.com",
+  desiredMoveInOn: "2026-11-01", leaseTermText: "", applicantNote: "",
+  rentAmountMinor: 150000, currencyCode: "USD", version: 2, evidenceAvailable: true,
+};
 
 function cookieName(reference: string) {
   const name = applicationAccessCookieName(reference);
@@ -231,15 +237,16 @@ describe("rental application status HTTP boundary", () => {
     mocks.cookieValues.set(cookieName(REF_A), TOKEN_A);
     mocks.cookieValues.set(cookieName(REF_B), TOKEN_B);
     mocks.rpc.mockResolvedValue({
-      data: { applicationReference: REF_A, status: "submitted" },
+      data: activeProgress,
       error: null,
     });
 
     const response = await getApplicationStatus(statusRequest(REF_A));
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
-    expect(mocks.rpc).toHaveBeenCalledWith("get_public_rental_application_for_access", {
+    expect(mocks.rpc).toHaveBeenCalledWith("get_rental_application_progress", {
       p_access_token: TOKEN_A,
+      p_reference: REF_A,
     });
   });
 
@@ -260,6 +267,29 @@ describe("rental application status HTTP boundary", () => {
 
     const response = await getApplicationStatus(statusRequest(REF_A));
     expect(response.status).toBe(404);
+  });
+
+  it("keeps the pending state when document access is paused", async () => {
+    vi.stubEnv("CRECY_RENTAL_EVIDENCE_ENABLED", "0");
+    mocks.cookieValues.set(cookieName(REF_A), TOKEN_A);
+    mocks.rpc.mockResolvedValue({ data: { ...activeProgress, status: "evidence_pending" }, error: null });
+    const response = await getApplicationStatus(statusRequest(REF_A));
+    expect(await response.json()).toMatchObject({ status: "evidence_pending", evidenceAvailable: false });
+  });
+
+  it.each(["declined", "closed"])("returns only a minimal %s receipt", async (status) => {
+    mocks.cookieValues.set(cookieName(REF_A), TOKEN_A);
+    mocks.rpc.mockResolvedValue({ data: { ...activeProgress, status, documents: ["private"] }, error: null });
+    const response = await getApplicationStatus(statusRequest(REF_A));
+    expect(await response.json()).toEqual({ applicationReference: REF_A, listingTitle: "Rental", status });
+  });
+
+  it("distinguishes a failed status query from an expired capability", async () => {
+    mocks.cookieValues.set(cookieName(REF_A), TOKEN_A);
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: "database details" } });
+    const response = await getApplicationStatus(statusRequest(REF_A));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "Application status is temporarily unavailable." });
   });
 });
 
@@ -354,6 +384,19 @@ describe("rental application submission HTTP boundary", () => {
     expect(mocks.rpc).toHaveBeenCalledWith("submit_rental_application_with_requirements", expect.objectContaining({
       p_public_id: PUBLIC_ID, p_requirements_version: OPERATION, p_idempotency_key: "application-submit-key",
     }));
+  });
+
+  it.each([
+    ["1", "1", "submit_rental_application_with_document_intake"],
+    ["1", "0", "submit_rental_application_with_requirements"],
+    ["0", "1", "submit_rental_application_with_requirements"],
+  ])("uses the expected command when the evidence surface is %s and new intake is %s", async (surface, intake, command) => {
+    vi.stubEnv("CRECY_RENTAL_EVIDENCE_ENABLED", surface);
+    vi.stubEnv("CRECY_RENTAL_EVIDENCE_INTAKE_ENABLED", intake);
+    mocks.rpc.mockResolvedValue({ data: { accepted: true }, error: null });
+    const response = await submitApplication(submitRequest("203.0.113.8", undefined, OPERATION));
+    expect(response.status).toBe(202);
+    expect(mocks.rpc).toHaveBeenCalledWith(command, expect.objectContaining({ p_requirements_version: OPERATION }));
   });
 });
 

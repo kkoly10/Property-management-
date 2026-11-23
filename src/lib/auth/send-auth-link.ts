@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createAgreementSignInLink } from "@/lib/auth/agreement-sign-in-link";
 import { passwordRecoveryUrl } from "@/lib/auth/password-recovery";
 import { renderAuthEmail } from "@/lib/notifications/auth-email";
 import { renderEmailHtml } from "@/lib/notifications/html-email";
@@ -25,11 +26,29 @@ export async function sendAuthLink(input: AuthLink) {
     confirmUrl.searchParams.set("type", input.actionType);
     confirmUrl.searchParams.set("next", input.next);
   }
-  const rendered = renderAuthEmail({ actionType: input.actionType, language: "en", confirmUrl: confirmUrl.toString() });
-  const sender = senderFor("auth_email", input.audience);
+  await deliverAuthLink(input.email, input.actionType, input.audience, confirmUrl);
+}
+
+export async function sendAgreementSignInLink(input: {
+  email: string;
+  tokenHash: string;
+  invitationHash: string;
+  agreementId: string;
+}) {
+  const origin = originForAudience("resident");
+  if (!origin) return false;
+  const url = createAgreementSignInLink(origin, {
+    agreementId: input.agreementId, invitationHash: input.invitationHash, tokenHash: input.tokenHash,
+  });
+  return deliverAuthLink(input.email, "magiclink", "resident", url);
+}
+
+async function deliverAuthLink(email: string, actionType: AuthLink["actionType"], audience: LinkAudience, confirmUrl: URL) {
+  const rendered = renderAuthEmail({ actionType, language: "en", confirmUrl: confirmUrl.toString() });
+  const sender = senderFor("auth_email", audience);
   const message = {
     from: sender.from,
-    to: input.email,
+    to: email,
     subject: rendered.subject,
     text: rendered.body,
     html: renderEmailHtml({
@@ -47,12 +66,12 @@ export async function sendAuthLink(input: AuthLink) {
       unsubscribeUrl: null,
     }),
     replyTo: sender.replyTo,
-    tags: [{ name: "auth_action", value: input.actionType }, { name: "audience", value: sender.audience }],
+    tags: [{ name: "auth_action", value: actionType }, { name: "audience", value: sender.audience }],
     // A newly rendered credential is a new delivery. The provider retry below reuses these exact
     // bytes and the key, without putting credential material in provider metadata.
-    idempotencyKey: `auth-${input.actionType}-${crypto.randomUUID()}`,
+    idempotencyKey: `auth-${actionType}-${crypto.randomUUID()}`,
   };
 
   const sent = await sendViaResend(message);
-  if (!sent.ok && sent.retryable) await sendViaResend(message);
+  return (!sent.ok && sent.retryable ? await sendViaResend(message) : sent).ok;
 }

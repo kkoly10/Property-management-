@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-export async function validateRentalWorkflowCommunication(db, { assert, expectDatabaseError, createOrganizationAsServer }) {
+export async function validateRentalWorkflowCommunication(db, { assert, expectDatabaseError, createOrganizationAsServer, proveRenterTours }) {
   const owner = randomUUID();
   const renter = "rental-flow-renter@example.test";
   const network = "a".repeat(64);
@@ -42,7 +42,7 @@ export async function validateRentalWorkflowCommunication(db, { assert, expectDa
   assert((await rpc("claim_rental_fast_notification_job($1,'rental-exact-replay')", [job])).jobs.length === 0,
     "Another worker claimed the same in-flight mail.");
   const token = claimed.jobs[0].payload.verificationToken;
-  await rpc("complete_notification_job($1,'relay','workflow-renter-receipt')", [job]);
+  await rpc("complete_notification_attempt($1,'rental-exact-worker','relay','workflow-renter-receipt')", [job]);
   assert((await rpc("verify_public_rental_inquiry($1)", [token])).verified, "Renter verification failed.");
   await db.exec("reset role");
   const inquiry = (await db.query("select id,public_reference from public.rental_inquiries where organization_id=$1", [organizationId])).rows[0];
@@ -75,7 +75,7 @@ export async function validateRentalWorkflowCommunication(db, { assert, expectDa
   await rpc("submit_public_rental_tour_request($1,'Synthetic','Visitor',$2,$3::jsonb,$4,'en-US',$5)",
     [listing, renter, JSON.stringify([`${date}T10:00`, `${date}T12:00`, `${date}T15:00`]), network, randomUUID()]);
   await db.exec("reset role");
-  const tour = (await db.query(`select t.id,j.payload->>'verificationToken' as token
+  const tour = (await db.query(`select t.id,t.public_reference,j.payload->>'verificationToken' as token
     from public.rental_tour_requests t join private.rental_tour_verifications v on v.tour_request_id=t.id
     join private.notification_jobs j on j.id=v.notification_job_id where t.organization_id=$1`, [organizationId])).rows[0];
   await service();
@@ -87,6 +87,9 @@ export async function validateRentalWorkflowCommunication(db, { assert, expectDa
   const confirmed = await confirm(2, 0);
   const changed = await confirm(confirmed.version, 1);
   assert(changed.confirmedStartAt !== confirmed.confirmedStartAt, "Tour reschedule did not persist.");
+  const renterTourControls = await proveRenterTours?.(db, {
+    tour, renter, date, network, operator, confirmed: changed, confirm, organizationId, owner,
+  });
   const cancelKey = randomUUID();
   const cancel = () => rpc("cancel_rental_tour($1,$2,$3,$4)", [organizationId, tour.id, changed.version, cancelKey]);
   assert((await cancel()).status === "cancelled" && (await cancel()).status === "cancelled", "Tour cancellation did not replay.");
@@ -144,6 +147,6 @@ export async function validateRentalWorkflowCommunication(db, { assert, expectDa
     && row.attempts === 0 && row.last_error === "RECIPIENT_OPTED_OUT"),
   "The updated worker did not preserve preference suppression for newer templates.");
 
-  return { exactExpeditedSend: true, verifiedConversation: true, tourChanges: true,
+  return { exactExpeditedSend: true, verifiedConversation: true, tourChanges: true, renterTourControls,
     applicationNotices: true, rollingDeploymentTemplateFence: true };
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-export async function validateTenancyMoveIn(db, { assert, expectDatabaseError, migrationsApplied = false }) {
+export async function validateTenancyMoveIn(db, { assert, expectDatabaseError, migrationsApplied = false, assertResidentChecklist = false }) {
   await db.exec("reset role");
   if (!migrationsApplied) await db.exec(await readFile(new URL("../supabase/migrations/20261122152304_record_tenancy_move_in_handover.sql", import.meta.url), "utf8"));
 
@@ -40,8 +40,29 @@ export async function validateTenancyMoveIn(db, { assert, expectDatabaseError, m
   await db.exec("reset role");
   await db.query("update public.tenancies set status='scheduled' where id=$1", [tenure.tenancyId]);
   await db.query("update public.leases set signed_document_version_id=$2 where id=$1", [tenure.leaseId, versionId]);
+  const resident = randomUUID();
+  if (assertResidentChecklist) {
+    await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'move-in-resident@example.com',now())", [resident]);
+    await db.query(`insert into public.user_relationships(user_id,organization_id,relationship_type,relationship_id,status)
+      select $2,t.organization_id,'resident_person',m.person_id,'active' from public.tenancies t
+      join public.household_members m on m.organization_id=t.organization_id and m.household_id=t.household_id
+      where t.id=$1 and m.is_financially_responsible`, [tenure.tenancyId,resident]);
+  }
 
   const status = () => rpc("get_tenancy_move_in($1,$2)",[organizationId,tenure.tenancyId]);
+  const checkResident = async (expectedState, appointmentOn = null, handedOverOn = null) => {
+    if (!assertResidentChecklist) return;
+    await act(outsider);
+    assert((await rpc("get_resident_move_in_checklist(null)")).items.length===0, "An outsider obtained a move-in date.");
+    await act(resident);
+    const checklist = (await rpc("get_resident_move_in_checklist(null)")).items;
+    const item = checklist[0];
+    assert(checklist.length===1 && item.tenancyId===tenure.tenancyId && item.startOn===today
+      && item.state===expectedState && item.appointmentOn===appointmentOn && item.handedOverOn===handedOverOn
+      && Object.keys(item).sort().join(",")==="appointmentOn,handedOverOn,propertyName,startOn,state,tenancyId,unitCode",
+      "Resident move-in projection did not follow the exact handover or included private operator fields.");
+    await act();
+  };
   const change = (version, action, date, { operation = randomUUID(), keys = null, condition = null, keepDates = false } = {}) =>
     rpc("record_tenancy_move_in($1,$2,$3,$4,$5,$6,$7,$8,$9)",[organizationId,tenure.tenancyId,version,operation,action,date,keys,condition,keepDates]);
   const runClock = async () => {
@@ -56,14 +77,18 @@ export async function validateTenancyMoveIn(db, { assert, expectDatabaseError, m
   await expectDatabaseError(() => change(0,"plan",today), "ORGANIZATION_SCOPE_DENIED");
   await act();
   assert((await status()).state === "unplanned", "New handover status was not empty.");
+  await checkResident("unplanned");
   const operation = randomUUID();
   const first = await change(0,"plan",tomorrow,{operation});
   assert(first.state === "planned" && (await change(0,"plan",tomorrow,{operation})).version === 1, "Move-in plan did not replay the exact response.");
+  await checkResident("planned", tomorrow);
   await expectDatabaseError(() => change(0,"plan",today,{operation}),"IDEMPOTENCY_CONFLICT");
   await expectDatabaseError(() => change(0,"plan",today),"MOVE_IN_VERSION_CONFLICT");
   assert(await runClock() === "scheduled", "The scheduler released a planned tenancy before handover.");
   assert((await change(1,"plan",today)).version === 2, "The appointment could not be rescheduled.");
+  await checkResident("planned", today);
   assert((await change(2,"no_show",today)).state === "no_show", "The at-date no-show was not recorded.");
+  await checkResident("no_show", today);
   assert(await runClock() === "scheduled", "The scheduler released a no-show.");
   await expectDatabaseError(() => change(3,"handover",today,{ keys:2,condition:"Fixture condition #1" }),"MOVE_IN_INVALID_INPUT");
   assert((await change(3,"handover",today,{ keys:2,condition:"Fixture condition #1",keepDates:true })).state === "handed_over",
@@ -78,9 +103,11 @@ export async function validateTenancyMoveIn(db, { assert, expectDatabaseError, m
   const final = await status();
   assert(final.version === 4 && final.events.length === 4 && final.keysTransferred === 2 && final.conditionReference === "Fixture condition #1",
     "The move-in record lost confirmed evidence or appointment history.");
+  await checkResident("handed_over", null, today);
   await expectDatabaseError(() => change(4,"plan",today),"MOVE_IN_ACTION_UNAVAILABLE");
   await db.exec("reset role");
   const retained = (await db.query("select l.start_date::text as starts,l.end_date::text as ends,s.starts_on::text as first_due from public.leases l join public.charge_schedules s on s.tenancy_id=$2 where l.id=$1", [tenure.leaseId, tenure.tenancyId])).rows[0];
   assert(retained.starts === today && retained.ends === end && retained.first_due === today, "Move-in changed the signed term or previously confirmed rent dates.");
-  return { planHold:true, noShowHold:true, rescheduled:true, idempotent:true, scoped:true, exactCleanSource:true, keysAndCondition:true, preservedFinancialDates:true };
+  return { planHold:true, noShowHold:true, rescheduled:true, idempotent:true, scoped:true, exactCleanSource:true, keysAndCondition:true, preservedFinancialDates:true,
+    ...(assertResidentChecklist && { residentChecklist: true }) };
 }

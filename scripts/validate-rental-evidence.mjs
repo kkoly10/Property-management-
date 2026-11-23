@@ -19,7 +19,7 @@ export async function validateRentalEvidence(connection, options) {
   }
 }
 
-async function runEvidenceFixture(connection, { assert, expectDatabaseError, proveSelectedAgreement }) {
+async function runEvidenceFixture(connection, { assert, expectDatabaseError, proveSelectedAgreement, proveScanAdmission }) {
   const db = {
     exec: (sql) => connection.exec(sql),
     async query(sql, params) {
@@ -73,9 +73,17 @@ async function runEvidenceFixture(connection, { assert, expectDatabaseError, pro
     [applicant,email,outsider]);
   await db.query("update public.rental_listings set application_requirements=$2::jsonb where id=$1",
     [listing.id, JSON.stringify(requirements)]);
-  const submit = (requirementsVersion = version, emailAddress = email) => result(
-    "public.submit_rental_application_with_requirements($1,'Fixture','Applicant',$2,$3::date,'','',$4,'en-US',$5,$6)",
-    [listing.public_id,emailAddress,listing.move_in,sha(emailAddress),randomUUID(),requirementsVersion]);
+  const submit = (requirementsVersion = version, emailAddress = email, publicId = listing.public_id, documentIntake = true) => {
+    const command = documentIntake ? "submit_rental_application_with_document_intake" : "submit_rental_application_with_requirements";
+    return result(`public.${command}($1,'Fixture','Applicant',$2,$3::date,'','',$4,'en-US',$5,$6)`,
+      [publicId,emailAddress,listing.move_in,sha(emailAddress),randomUUID(),requirementsVersion]);
+  };
+  const intakeStatus = (unitId = listing.unit_id) =>
+    result("public.get_rental_application_intake_status($1,$2)",[listing.organization_id,unitId]);
+  await actor("authenticated",listing.reviewer);
+  assert(await intakeStatus() === "no_policy", "A listing with no approved policy did not report contact-only intake.");
+  await actor("authenticated",outsider);
+  await expectDatabaseError(intakeStatus,"ORGANIZATION_SCOPE_DENIED");
   await actor("service_role");
   await expectDatabaseError(() => submit(randomUUID()), "APPLICATION_REQUIREMENTS_CHANGED");
   await submit(version, "b4-evidence-policy-off@example.test");
@@ -89,9 +97,19 @@ async function runEvidenceFixture(connection, { assert, expectDatabaseError, pro
     values ($1,$2,$3,$4,'fixture-1',$5,array['identity','income_evidence','credit_evidence'],true,7,now(),'synthetic fixture',true)`,
     [policy,listing.organization_id,listing.property_id,listing.reviewer,notice]);
 
+  await actor("authenticated",listing.reviewer);
+  assert(await intakeStatus() === "policy_ready", "A compatible approved property policy did not report private upload eligibility.");
+  assert(await intakeStatus(randomUUID()) === null, "Intake status was exposed for another unit.");
   await actor("service_role");
   assert((await submit()).accepted, "Restricted listing did not use the existing submit path.");
+  const pausedEmail = "evidence-intake-paused@example.test";
+  assert((await submit(version,pausedEmail,listing.public_id,false)).accepted, "Pausing document intake blocked a contact-only application.");
   await db.exec("reset role");
+  const pausedCase = await one(`select s.requirements_version,e.application_id as packet
+    from public.rental_applications a join private.rental_application_requirement_snapshots s on s.application_id=a.id
+    left join private.rental_application_evidence_packets e on e.application_id=a.id where a.email=$1`,[pausedEmail]);
+  assert(pausedCase?.requirements_version === version && pausedCase.packet === null,
+    "The eligible policy captured a new packet while document intake was paused.");
   const application = await one(`select a.id,a.public_reference,j.payload->>'verificationToken' as verification,e.requirements
     from public.rental_applications a join private.rental_application_verifications v on v.application_id=a.id
     join private.notification_jobs j on j.id=v.notification_job_id
@@ -102,6 +120,12 @@ async function runEvidenceFixture(connection, { assert, expectDatabaseError, pro
   await actor("service_role");
   const verified = await result("public.verify_public_rental_application($1)",[application.verification]);
   const ref = application.public_reference;
+  const progress = (token = verified.accessToken, reference = ref) =>
+    result("public.get_rental_application_progress($1,$2)", [token, reference]);
+  assert((await progress()).status === "evidence_pending", "A verified draft was reported as ready to review.");
+  assert(await progress(verified.accessToken, "APP-000000000000") === null, "Progress crossed application references.");
+  await actor("anon");
+  await expectDatabaseError(progress,"permission denied");
   const openMine = () => result("public.get_my_rental_application_evidence($1)",[ref]);
   const bind = (token) => result("public.bind_rental_application_evidence($1,$2)",[ref,token]);
   const read = (fileId = file) => result("public.authorize_rental_evidence_file($1,null,null,null,$2)",[ref,fileId]);
@@ -129,6 +153,9 @@ async function runEvidenceFixture(connection, { assert, expectDatabaseError, pro
   const saved = await draft(bound.version);
   assert(saved.score === 712 && saved.scoreSource === "credit_bureau" && saved.scoreObservedOn === listing.score_observed_on && saved.consented === true,
     "The private consent and score provenance were not recorded.");
+  const scanAdmission = await proveScanAdmission?.(connection, {
+    applicantId: applicant, applicationId: application.id, organizationId: listing.organization_id, digest: fileSha,
+  });
   await expectDatabaseError(() => submitEvidence(saved.version),"EVIDENCE_REQUIREMENTS_INCOMPLETE");
   const grant = await result("public.start_rental_application_evidence_upload($1,$2,$3,'income_evidence','application/pdf',13,$4)",
     [ref,saved.version,file,fileSha]);
@@ -170,6 +197,8 @@ async function runEvidenceFixture(connection, { assert, expectDatabaseError, pro
   await expectDatabaseError(() => submitEvidence(saved.version,false),"EVIDENCE_REQUIREMENTS_ACKNOWLEDGMENT_REQUIRED");
   await expectDatabaseError(() => submitEvidence(saved.version,true,version),"EVIDENCE_REQUIREMENTS_ACKNOWLEDGMENT_REQUIRED");
   const submitted = await submitEvidence(saved.version);
+  await actor("service_role");
+  assert((await progress()).status === "submitted", "The renter did not see the application enter review.");
   await actor("authenticated",outsider);
   await expectDatabaseError(readReview,"ORGANIZATION_SCOPE_DENIED");
   await actor("authenticated",listing.reviewer);
@@ -182,6 +211,8 @@ async function runEvidenceFixture(connection, { assert, expectDatabaseError, pro
   assert((await review(submitted.version,"request_changes",["income_evidence"])).version === correction.version,"Review retry was not idempotent.");
   assert((await readReview()).status === "changes_requested","The reviewer could not see the correction status.");
   await expectDatabaseError(() => result("public.authorize_rental_evidence_file(null,$1,$2,$3,$4)",[...reviewArgs,file]),"EVIDENCE_UNAVAILABLE");
+  await actor("service_role");
+  assert((await progress()).status === "changes_requested", "The renter did not see the requested document changes.");
   await actor("authenticated",applicant);
   await expectDatabaseError(read,"EVIDENCE_UNAVAILABLE");
   await expectDatabaseError(() => submitEvidence(correction.version),"EVIDENCE_REQUIREMENTS_INCOMPLETE");
@@ -191,6 +222,8 @@ async function runEvidenceFixture(connection, { assert, expectDatabaseError, pro
   await expectDatabaseError(() => db.query("update public.rental_applications set status='lease_preparation',lease_prepared_at=now() where id=$1",[application.id]),"APPLICANT_EVIDENCE_REVIEW_REQUIRED");
   await actor("authenticated",listing.reviewer);
   assert((await review(resubmitted.version,"select",documentTypes)).status === "selected","Explicit review did not select the applicant.");
+  await actor("service_role");
+  assert((await progress()).status === "selected", "The renter was not told that the application was selected for lease preparation.");
   const signedAgreement = proveSelectedAgreement ? await proveSelectedAgreement(connection, {
     organizationId: listing.organization_id, propertyId: listing.property_id, unitId: listing.unit_id,
     applicationId: application.id, applicantId: applicant, reviewerId: listing.reviewer, email, reference: ref,
@@ -224,7 +257,83 @@ async function runEvidenceFixture(connection, { assert, expectDatabaseError, pro
     group by e.application_id`,[application.id]);
   assert(erased.all_purged && erased.self_reported_credit_score === null && erased.self_reported_score_source === null
     && erased.self_reported_score_observed_on === null && erased.status === "closed","Purge retained restricted derivatives.");
-  return { defaultOff: true, exactRequirements: true, exactAuth: true, restrictedStorage: true,
+
+  const closureVersion = randomUUID();
+  const nonCreditApplicant = randomUUID();
+  const nonCreditEmail = "evidence-noncredit-decline@example.test";
+  const ordinaryClosureEmail = "evidence-ordinary-close@example.test";
+  await actor("authenticated",listing.reviewer);
+  const decisionUnit = await result("public.create_unit($1,$2,null,'EVIDENCE-02','Application decision fixture',2,1,750,$3)",
+    [listing.organization_id, listing.property_id, `evidence-decision-${randomUUID()}`]);
+  await db.exec("reset role");
+  await db.query("insert into auth.users(id,email,email_confirmed_at) values ($1,$2,now())", [nonCreditApplicant, nonCreditEmail]);
+  const decisionListing = await one(`insert into public.rental_listings(organization_id,property_id,unit_id,title,rent_amount_minor,currency_code,
+    available_on,country_code,status,visibility,published_at,created_by,application_requirements)
+    values($1,$2,$3,'Application decision fixture',132500,'USD',$4::date,'US','published','unlisted',now(),$5,$6::jsonb) returning public_id`,
+  [listing.organization_id, listing.property_id, decisionUnit.unitId, listing.move_in, listing.reviewer, JSON.stringify({
+    requirementsVersion: closureVersion, criteriaText: "Provide proof of income", acceptedAlternatives: "Income letter",
+    requiredDocumentTypes: ["income_evidence"],
+  })]);
+  async function verifyClosureCase(address) {
+    await actor("service_role");
+    assert((await submit(closureVersion,address,decisionListing.public_id)).accepted, "Could not submit the synthetic closure case.");
+    await db.exec("reset role");
+    const entry = await one(`select a.id,a.public_reference,j.payload->>'verificationToken' as token
+      from public.rental_applications a
+      join private.rental_application_verifications v on v.application_id=a.id and v.organization_id=a.organization_id
+      join private.notification_jobs j on j.id=v.notification_job_id
+      where a.organization_id=$1 and a.email=$2`, [listing.organization_id, address]);
+    await actor("service_role");
+    const verifiedCase = await result("public.verify_public_rental_application($1)",[entry.token]);
+    assert(verifiedCase.applicationReference === entry.public_reference, "Closure case verification changed reference.");
+    return { id: entry.id, reference: entry.public_reference, access: verifiedCase.accessToken };
+  }
+  const declined = await verifyClosureCase(nonCreditEmail);
+  await actor("authenticated",nonCreditApplicant);
+  const terminalBound = await result("public.bind_rental_application_evidence($1,$2)",[declined.reference, declined.access]);
+  const terminalSaved = await result("public.save_rental_application_evidence_draft($1,$2,null,null,null,array['income_evidence'],'fixture-1',$3)",
+    [declined.reference, terminalBound.version, sha(notice)]);
+  const readyForDecision = await result("public.submit_rental_application_evidence($1,$2,false,$3)",
+    [declined.reference, terminalSaved.version, closureVersion]);
+  const reviewTermination = () => result("public.review_rental_application_evidence($1,$2,$3,$4,'decline','{}')",
+    [listing.organization_id, declined.id, decisionUnit.unitId, readyForDecision.version]);
+  await actor("authenticated",listing.reviewer);
+  const decision = await reviewTermination();
+  assert(decision.status === "declined" && decision.version === readyForDecision.version+1
+    && JSON.stringify(decision) === JSON.stringify(await reviewTermination()), "Non-credit decline did not produce an idempotent receipt.");
+  const record = await result("public.get_rental_application_evidence_review($1,$2,$3)", [listing.organization_id, declined.id, decisionUnit.unitId]);
+  assert(record.status === "declined" && !record.files, "The terminal review exposed evidence.");
+  const worklist = await result("public.get_rental_application_evidence_worklist($1,$2)",[listing.organization_id, decisionUnit.unitId]);
+  assert(worklist.some((entry) => entry.applicationId === declined.id && entry.status === "declined"), "The operator worklist lost the decision.");
+  await actor("service_role");
+  const terminal = await progress(declined.access, declined.reference);
+  assert(terminal.status === "declined" && Object.keys(terminal).sort().join(",") === "applicationReference,listingTitle,status",
+    "The decline receipt exposed contact or evidence data.");
+  assert(await result("public.get_public_rental_application_for_access($1)",[declined.access]) === null,
+    "A terminal receipt reopened the active application data.");
+  assert(await result("public.rental_evidence_available_for_access($1)",[declined.access]) === false,
+    "The decline left the private application open.");
+  await result("public.request_rental_application_recovery($1,$2,$3,null,$4)", [declined.reference, nonCreditEmail, sha(nonCreditEmail), randomUUID()]);
+  await db.exec("reset role");
+  const terminalEffects = await one(`select a.status,
+    (select count(*)::int from private.outbox_events o where o.aggregate_id=a.id and o.event_type='rental_application.closed') as close_events,
+    (select count(*)::int from private.notification_jobs n where n.organization_id=a.organization_id
+      and n.template_code='rental_application_closed' and n.recipient_address=a.email::text
+      and n.payload->>'applicationReference'=a.public_reference) as terminal_notices,
+    (select count(*)::int from private.rental_application_recovery_challenges r where r.application_id=a.id) as recovery_challenges
+    from public.rental_applications a where a.id=$1`, [declined.id]);
+  assert(terminalEffects.status === "closed" && terminalEffects.close_events === 1 && terminalEffects.terminal_notices === 1
+    && terminalEffects.recovery_challenges === 0, "Decline failed to close the canonical case or sent duplicate or recovery mail.");
+
+  const closed = await verifyClosureCase(ordinaryClosureEmail);
+  const baseProgress = await progress(closed.access, closed.reference);
+  await actor("authenticated",listing.reviewer);
+  await result("public.close_rental_application($1,$2,$3,$4)",[listing.organization_id, closed.id, baseProgress.version, randomUUID()]);
+  await actor("service_role");
+  assert((await progress(closed.access, closed.reference)).status === "closed", "The ordinary closed receipt was not distinguished from a decline.");
+
+  return { defaultOff: true, exactRequirements: true, exactAuth: true, restrictedStorage: true, scanAdmission,
     fencedScan: true, allRequiredDocumentTypes: true, replacementRequired: true, requirementsAcknowledged: true, scoreProvenance: true, manualVersionedReview: true,
-    creditDecisionGuard: true, terminalPurge: true, signedAgreement };
+    creditDecisionGuard: true, terminalPurge: true, signedAgreement, exactProgress: true, canonicalDecline: true,
+    scopedIntakeStatus: true, pausedIntakeNoPacket: true };
 }

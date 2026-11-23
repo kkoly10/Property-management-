@@ -7,6 +7,9 @@ import {
   NOTIFICATION_WORKER_CONCURRENCY,
   NOTIFICATION_WORKER_MAX_DURATION_SECONDS,
   NOTIFICATION_WORKER_OVERHEAD_SECONDS,
+  RENTAL_EVIDENCE_SCAN_BUDGET_MS,
+  RENTAL_EVIDENCE_SCAN_CONCURRENCY,
+  RENTAL_EVIDENCE_SCAN_RPC_TIMEOUT_MS,
   SCAN_RELAY_TIMEOUT_MS,
   SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS,
   SCAN_SANDBOX_CLEANUP_TIMEOUT_MS,
@@ -30,6 +33,17 @@ it("bounds scheduled mail even when every relay call times out", () => {
 });
 
 describe("the scan worker's execution budget", () => {
+  it("reserves time for claim, scan, cleanup, and settlement inside both evidence routes", () => {
+    const upload = readFileSync(resolve(__dirname, "../../app/api/v1/rental-applications/evidence/route.ts"), "utf8");
+    const cron = readFileSync(resolve(__dirname, "../../app/api/internal/cron/document-scans/route.ts"), "utf8");
+    for (const route of [upload, cron]) {
+      expect(Number(/export const maxDuration = (\d+)/.exec(route)?.[1]) * 1000)
+        .toBeGreaterThan(RENTAL_EVIDENCE_SCAN_BUDGET_MS);
+    }
+    expect(RENTAL_EVIDENCE_SCAN_BUDGET_MS).toBeGreaterThan(SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS
+      + SCAN_SANDBOX_CLEANUP_TIMEOUT_MS + 2 * RENTAL_EVIDENCE_SCAN_RPC_TIMEOUT_MS);
+    expect(RENTAL_EVIDENCE_SCAN_CONCURRENCY).toBe(3);
+  });
   it("caps sandbox creation and leaves time to settle a stalled attempt", () => {
     expect(SCAN_SANDBOX_WORKER_BATCH_SIZE).toBe(1);
     const maxAttemptMs = SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS + SCAN_SANDBOX_CLEANUP_TIMEOUT_MS;

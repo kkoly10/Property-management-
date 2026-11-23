@@ -4,6 +4,8 @@ import { z } from "zod";
 import { RentalListingForm } from "./listing-form";
 import { getRentalListingWorkspace } from "@/lib/data/rental-listings";
 import { hostConfig } from "@/lib/runtime/host";
+import { getRentalEvidenceIntakeStatus } from "@/lib/rental-evidence/http";
+import { PrivateDocumentIntake } from "@/components/rentals/private-document-intake";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +23,7 @@ export default async function RentalListingManagementPage({
     return <p role="alert">This listing workspace could not be loaded. Refresh to try again.</p>;
   }
   const preview = workspace.mode === "setup";
+  const intake = workspace.organizationId ? await getRentalEvidenceIntakeStatus(workspace.organizationId, unitId) : null;
   const shareOrigin = `https://${hostConfig().rentals}`;
   return (
     <div className="mx-auto max-w-5xl space-y-8">
@@ -37,6 +40,7 @@ export default async function RentalListingManagementPage({
           Publish a listing to share its link with renters. You can then choose to include it in Crecy search.
         </p>
       </header>
+      {intake ? <PrivateDocumentIntake status={intake} /> : null}
       <RentalListingForm
         key={workspace.listing?.id ?? "new-listing"}
         organizationId={workspace.organizationId ?? "00000000-0000-4000-8000-000000000001"}

@@ -187,6 +187,7 @@ export function RentalListingForm({
       setUncertain(null);
       setDirty(false);
       setMessage("Listing draft saved. It is not public until you publish it.");
+      router.refresh();
     } catch (caught) {
       const definite = caught instanceof RequestFailure && caught.status < 500;
       if (definite) {

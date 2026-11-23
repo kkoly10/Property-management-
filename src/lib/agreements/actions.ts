@@ -41,6 +41,10 @@ function agreementError(code: string | undefined): ActionState {
     case "AGREEMENT_SOURCE_UNAVAILABLE": return actionError("The agreement PDF is unavailable or changed. Check the exact version before continuing.");
     case "AGREEMENT_DISCLOSURE_CHANGED": return actionError("The electronic-signature disclosure changed. Reload and review it before signing.");
     case "AGREEMENT_NOT_OPEN": return actionError("The agreement has closed. Refresh to see its current status.");
+    case "AGREEMENT_INVITATION_NOT_OPEN": return actionError("The renter has signed or the invitation has expired. Refresh to see its current status.");
+    case "AGREEMENT_INVITATION_IN_FLIGHT": return actionError("Delivery is in progress. Wait for the email status to update before resending.");
+    case "AGREEMENT_INVITATION_RESEND_COOLDOWN": return actionError("Wait five minutes after the last invitation before sending another.");
+    case "AGREEMENT_INVITATION_RESEND_LIMIT": return actionError("The resend limit for this signing request has been reached.");
     case "AGREEMENT_LANDLORD_UNAVAILABLE": return actionError("The issuing landlord no longer has authority in this workspace.");
     case "AGREEMENT_ISSUE_FORBIDDEN": return actionError("Only an authorized workspace owner with a verified account can issue an agreement.");
     case "APPLICATION_SIGNING_SETUP_UNAVAILABLE":
@@ -140,6 +144,48 @@ export async function issueApplicationAgreementAction(_previous: ActionState, fo
     p_terms_confirmed: true,
   });
   return error ? agreementError(error.message) : finishIssue(data, request.agreementId, true);
+}
+
+const resendInvitationSchema = z.object({
+  agreementId: z.uuid(),
+  organizationId: z.uuid(),
+  operationId: z.uuid(),
+  confirmed: checkbox,
+});
+const resendInvitationReceiptSchema = z.object({
+  agreementId: z.uuid(),
+  notificationJobId: z.uuid(),
+  replayed: z.boolean(),
+});
+
+export async function resendAgreementInvitationAction(_previous: ActionState, form: FormData): Promise<ActionState> {
+  const input = resendInvitationSchema.safeParse({
+    agreementId: form.get("agreementId"),
+    organizationId: form.get("organizationId"),
+    operationId: form.get("operationId"),
+    confirmed: form.get("confirmed"),
+  });
+  if (!input.success) return actionError("Confirm you want to send a fresh invitation to the verified application email.");
+  const request = input.data;
+  const session = await getAgreementSession("operator");
+  if (session.mode !== "ready" || session.organizationId !== request.organizationId) {
+    return actionError("The active workspace changed. Reopen the agreement in the intended workspace.");
+  }
+  try {
+    const { data, error } = await session.supabase.rpc("resend_rental_agreement_invitation", {
+      p_organization_id: session.organizationId, p_agreement_id: request.agreementId, p_operation_id: request.operationId,
+    });
+    if (error) return agreementError(error.message);
+    const receipt = resendInvitationReceiptSchema.safeParse(data);
+    if (!receipt.success || receipt.data.agreementId !== request.agreementId) {
+      return actionError("The resend could not be confirmed. Retry without closing this page.");
+    }
+    if (!receipt.data.replayed) scheduleCriticalRentalMail("job", receipt.data.notificationJobId);
+    refreshAgreement(request.agreementId);
+    return { status: "success", message: "A fresh signing invitation was queued for the verified application email." };
+  } catch {
+    return actionError("The resend could not be confirmed. Retry without closing this page.");
+  }
 }
 
 const signSchema = signDocumentSchema.omit({ organizationId: true }).extend({

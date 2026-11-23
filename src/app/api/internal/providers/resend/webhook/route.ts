@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { senderFor } from "@/lib/notifications/sender";
 import { verifyStandardWebhook } from "@/lib/notifications/standard-webhooks";
 import { carriesCredentialInUrl } from "@/lib/runtime/worker-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -16,8 +17,13 @@ const eventTypeSchema = z.object({ type: z.string() });
 const trackedEventSchema = z.object({
   type: z.custom<keyof typeof statusByEvent>((value) => typeof value === "string" && Object.hasOwn(statusByEvent, value)),
   created_at: z.iso.datetime({ offset: true }),
-  data: z.object({ email_id: z.uuid() }),
+  data: z.object({ email_id: z.uuid(), from: z.string().min(3).max(512) }),
 });
+
+function mailbox(value: string): string | undefined {
+  const address = (value.match(/<([^<>]+)>\s*$/)?.[1] ?? value).trim().toLowerCase();
+  return z.email().safeParse(address).data;
+}
 
 function reply(body: { received: true } | { error: string }, status = 200) {
   return Response.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -87,6 +93,12 @@ export async function POST(request: Request) {
   if (!Object.hasOwn(statusByEvent, envelope.data.type)) return reply({ received: true });
   const event = trackedEventSchema.safeParse(body);
   if (!event.success) return reply({ error: "Invalid delivery event." }, 400);
+  const from = mailbox(event.data.data.from);
+  // The Resend account services multiple brands. Only Crecy's configured senders may be
+  // correlated, including callbacks that arrive before the worker records provider acceptance.
+  if (!from || !(["operator", "resident", "owner"] as const).some(
+    (audience) => mailbox(senderFor("resend_delivery_receipt", audience).from) === from,
+  )) return reply({ received: true });
 
   try {
     const { data, error } = await createAdminClient().rpc("record_resend_notification_event", {

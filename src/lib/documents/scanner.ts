@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { TransportFailure } from "@/lib/notifications/transport";
 import { classifyScannerStatus } from "./scanner-failure";
 import { SCAN_RELAY_TIMEOUT_MS, SCAN_SANDBOX_ATTEMPT_TIMEOUT_MS } from "@/lib/runtime/budget";
+import { pinnedVercelScannerSnapshot } from "./scanner-snapshot";
 import { scanInVercelSandbox, VERCEL_SCAN_PROVIDER_CODE } from "./scanner-vercel";
 
 /**
@@ -204,13 +205,12 @@ function vercelSandboxScanner(snapshotId: string): DocumentScanner {
   };
 }
 
-export function getDocumentScanner(): DocumentScanner | null {
+export function getDocumentScanner(snapshotId = pinnedVercelScannerSnapshot()): DocumentScanner | null {
   const relay = getDocumentScanRelayConfig();
   if (relay) return relayScanner(relay);
   const cloudmersive = getCloudmersiveScannerConfig();
   if (cloudmersive) return cloudmersiveScanner(cloudmersive);
-  const snapshotId = process.env.CRECY_VERCEL_SCAN_SNAPSHOT_ID?.trim() ?? "";
-  if (/^snap_[a-zA-Z0-9_-]{1,180}$/.test(snapshotId) && !snapshotId.includes("replace_")) {
+  if (snapshotId) {
     return vercelSandboxScanner(snapshotId);
   }
   return null;

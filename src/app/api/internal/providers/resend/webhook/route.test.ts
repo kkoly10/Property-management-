@@ -10,11 +10,11 @@ const secret = "whsec_" + secretBytes.toString("base64");
 const eventId = "msg_crecy_delivery-test";
 const emailId = "50000000-0000-4000-8000-000000000005";
 const occurredAt = "2026-11-23T05:50:00.125Z";
-const event = (type: string) => JSON.stringify({
+const event = (type: string, from = "Crecy <notifications@mail.crecyos.com>") => JSON.stringify({
   type, created_at: occurredAt,
   data: {
     email_id: emailId, message_id: "<different@example.test>",
-    to: ["synthetic@example.test"], from: "sender@example.test", subject: "Test receipt – UTF-8",
+    to: ["synthetic@example.test"], from, subject: "Test receipt – UTF-8",
     tags: { privacy_probe: "not-stored" },
   },
 }, null, 2);
@@ -34,6 +34,7 @@ function request(payload: string, options: { offset?: number; tampered?: boolean
 
 beforeEach(() => {
   vi.stubEnv("RESEND_WEBHOOK_SECRET", secret);
+  vi.stubEnv("CRECY_MAIL_FROM_OPERATOR", "Crecy <notifications@mail.crecyos.com>");
   rpc.mockReset().mockResolvedValue({ data: true, error: null });
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -65,6 +66,16 @@ it("ignores other signed webhook types without writing metadata", async () => {
   expect((await POST(request(event("email.opened")))).status).toBe(200);
   expect((await POST(request(JSON.stringify({ type: "email.received" })))).status).toBe(200);
   expect(rpc).not.toHaveBeenCalled();
+});
+
+it("filters the shared Resend account to Crecy's configured senders", async () => {
+  for (const from of ["notifications@mail.other-brand.example", "other@mail.crecyos.com", "Crecy <bad>"]) {
+    expect((await POST(request(event("email.delivered", from)))).status).toBe(200);
+  }
+  expect(rpc).not.toHaveBeenCalled();
+  vi.stubEnv("CRECY_MAIL_FROM_RESIDENT", "Crecy Living <leases@residents.example.com>");
+  expect((await POST(request(event("email.delivered", "LEASeS@residents.example.com")))).status).toBe(200);
+  expect(rpc).toHaveBeenCalledOnce();
 });
 
 it("rejects tampering, expired timestamps, future timestamps and URL credentials before ingest", async () => {

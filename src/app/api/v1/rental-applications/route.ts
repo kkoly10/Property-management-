@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { rentalApplicationRateLimit } from "@/lib/rental-application-rate-limit";
 import { scheduleCriticalRentalMail } from "@/lib/notifications/rental-fast-mail";
+import { rentalEvidenceIntakeEnabled } from "@/lib/rental-evidence/http";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { submitRentalApplicationSchema } from "@/lib/validation/rental-application";
 
@@ -32,8 +33,10 @@ export async function POST(request: Request) {
       p_locale: parsed.data.locale,
       p_idempotency_key: operationKey,
     };
+    const submitWithRequirements = rentalEvidenceIntakeEnabled()
+      ? "submit_rental_application_with_document_intake" : "submit_rental_application_with_requirements";
     const { error, data } = parsed.data.requirementsVersion
-      ? await admin.rpc("submit_rental_application_with_requirements", { ...args, p_requirements_version: parsed.data.requirementsVersion })
+      ? await admin.rpc(submitWithRequirements, { ...args, p_requirements_version: parsed.data.requirementsVersion })
       : await admin.rpc("submit_public_rental_application", args);
     // Do not turn an unexpected or incomplete RPC envelope into a false
     // acceptance receipt. The SQL returns { accepted: true } for both a new

@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { initialActionState, type ActionState } from "@/lib/actions/state";
-import { closeAgreementAction, issueAgreementAction, issueApplicationAgreementAction, signAgreementAction } from "@/lib/agreements/actions";
+import { closeAgreementAction, issueAgreementAction, issueApplicationAgreementAction, resendAgreementInvitationAction, signAgreementAction } from "@/lib/agreements/actions";
 import { fileAgreementAction } from "@/lib/agreements/filing-actions";
 import type { AgreementSummary, AgreementSurface, ApplicationSigningSetup, getAgreementIssueOptions } from "@/lib/data/rental-agreements";
 import type { EsignConsentSummary } from "@/lib/data/signatures";
@@ -16,6 +16,25 @@ import type { EsignConsentSummary } from "@/lib/data/signatures";
 function ActionMessage({ state }: { state: ActionState }) {
   if (!state.message) return null;
   return <p role={state.status === "error" ? "alert" : "status"} className={state.status === "error" ? "text-sm text-destructive" : "text-sm"}>{state.message}</p>;
+}
+
+export function AgreementInvitationResendForm({ agreementId, organizationId, operationId }: {
+  agreementId: string;
+  organizationId: string;
+  operationId: string;
+}) {
+  const [state, action, busy] = useActionState(resendAgreementInvitationAction, initialActionState);
+  return <form action={action} className="space-y-3 border-t pt-3">
+    <input type="hidden" name="agreementId" value={agreementId} />
+    <input type="hidden" name="organizationId" value={organizationId} />
+    <input type="hidden" name="operationId" value={operationId} />
+    <label className="flex items-start gap-2 text-sm">
+      <input type="checkbox" name="confirmed" className="mt-1 h-4 w-4 shrink-0 accent-primary" required />
+      <span>Send a fresh link to the verified application email. The previous invitation link will stop working.</span>
+    </label>
+    <Button type="submit" variant="outline" disabled={busy}>{busy ? "Queuing invitation…" : "Resend signing invitation"}</Button>
+    <ActionMessage state={state} />
+  </form>;
 }
 
 type IssueOptions = NonNullable<Awaited<ReturnType<typeof getAgreementIssueOptions>>>;

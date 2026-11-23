@@ -5,6 +5,7 @@ import { hasTemplate, renderNotification } from "@/lib/notifications/templates";
 import { secureLinkUrl } from "@/lib/notifications/secure-link";
 import { getDocumentScanner, type DocumentObjectSource } from "@/lib/documents/scanner";
 import { VERCEL_SCAN_PROVIDER_CODE } from "@/lib/documents/scanner-vercel";
+import { resolveVercelScannerSnapshot } from "@/lib/documents/scanner-snapshot";
 import { claimedNotificationJobSchema, type ClaimedNotificationJob } from "@/lib/validation/notification-worker";
 import { audienceForRelationshipType } from "@/lib/notifications/sender";
 import { claimedDocumentScanJobSchema } from "@/lib/validation/document-scan-worker";
@@ -230,7 +231,7 @@ export async function runDocumentScanDispatch(
   supabase: Client,
   input: { limit: number; workerRunId: string; stallMinutes: number },
 ): Promise<JobOutcome> {
-  const scanner = getDocumentScanner();
+  const scanner = getDocumentScanner(await resolveVercelScannerSnapshot(supabase, AbortSignal.timeout(4_000)));
   if (!scanner) {
     return {
       ok: false,

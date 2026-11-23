@@ -104,6 +104,7 @@ const invitationDeliverySchema = z.object({
   agreementId: z.uuid(),
   state: z.enum(["queued", "accepted", "delivered", "delayed", "failed"]).nullable(),
   reissue: z.object({ unitId: z.uuid(), applicationId: z.uuid() }).nullable(),
+  resendEligible: z.boolean().optional(),
 });
 
 export async function getAgreementInvitationDelivery(organizationId: string, agreementId: string) {

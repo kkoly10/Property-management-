@@ -56,3 +56,41 @@ test("the renter opens a private conversation explicitly and a different link cl
   await expect(page.getByText("Thank you for confirming.")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
 });
+
+test("a verified renter proposes new times without moving the confirmed tour, then cancels it", async ({ page }) => {
+  const reference = "TOUR-222222222222";
+  const start = "2026-12-10T20:00:00Z";
+  let tour = { version: 4, status: "confirmed", timeZone: "America/New_York", confirmedStartAt: start as string | null,
+    meetingLocation: "Meet by the side gate" as string | null, canManage: true, changePending: false, preferences: [] as string[] };
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.route("**/api/v1/rental-conversations**", async (route) => {
+    if (route.request().method() === "GET") {
+      return route.fulfill({ json: { reference, canReply: tour.status !== "cancelled", originalQuestion: null, messages: [], tour } });
+    }
+    const input = route.request().postDataJSON();
+    expect(input.reference).toBe(reference);
+    expect(input.version).toBe(tour.version);
+    if (input.action === "tour-reschedule") {
+      expect(input.preferences).toEqual(["2026-12-12T13:00"]);
+      tour = { ...tour, version: tour.version + 1, changePending: true, preferences: ["2026-12-12T18:00:00Z"] };
+    } else {
+      expect(input.action).toBe("tour-cancel");
+      tour = { ...tour, version: tour.version + 1, status: "cancelled", confirmedStartAt: null,
+        meetingLocation: null, canManage: false, changePending: false };
+    }
+    return route.fulfill({ json: { tour } });
+  });
+
+  await page.goto(`/inquiries/conversation?ref=${reference}`);
+  await expect(page.getByText("Meet by the side gate")).toBeVisible();
+  await page.getByRole("button", { name: "Propose new times" }).click();
+  await page.getByLabel("First choice").fill("2026-12-12T13:00");
+  await page.getByRole("button", { name: "Send times to landlord" }).click();
+  await expect(page.getByText(/current appointment stays confirmed/)).toBeVisible();
+  await expect(page.getByText("Meet by the side gate")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Cancel tour" }).click();
+  await expect(page.getByText("Your tour is canceled.")).toBeVisible();
+  await expect(page.getByText("Meet by the side gate")).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+});

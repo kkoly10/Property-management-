@@ -11,8 +11,12 @@ The invitation’s fragment carries a random credential. Opening the page does
 not consume it, create an account, or dispatch a second email. An explicit
 continue request can send a rate-limited sign-in email to the expected address.
 Crecy can create an unconfirmed authentication account for a first-time renter.
-The sign-in email returns to the exact agreement on Crecy Living and works in
-a different browser. An already verified, matching account can claim directly.
+The second email returns to the exact agreement on Crecy Living and works in
+a different browser. Its ten-minute credential is in the fragment and binds
+the Supabase single-use sign-in token to the current invitation and agreement.
+Opening the link displays a **Continue to agreement** button. Only selecting it
+redeems the sign-in token and claims the agreement. An already verified,
+matching account can claim directly.
 A different account cannot claim or discover the agreement. The resulting
 authority is the named agreement signer. Tenancy and workspace relationships
 have separate workflows.
@@ -22,6 +26,15 @@ party before the account is claimed. The existing explicit review,
 electronic-signature consent, and intent controls remain required. An identical
 signature retry returns the exact original signing receipt. The invitation
 worker tracks delivery independently of signature state.
+
+The issuing operator can explicitly resend an open invitation while the renter
+still needs to sign. The operator selects the existing agreement and confirms
+delivery to the unchanged, verified application email. An authorized MFA
+session is required. Each new request preserves the approved terms, PDF,
+existing signatures, and original deadline. The previous invitation and any
+unredeemed sign-in link it produced become invalid. The same submitted
+operation replays the original send receipt. New requests are at least five
+minutes apart, with up to three resends per agreement.
 
 An open or executed application-linked envelope freezes approved terms and
 its PDF. Void or expiration permits revision and a new signing request.

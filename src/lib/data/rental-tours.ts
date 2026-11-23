@@ -23,6 +23,7 @@ export type RentalTourItem = {
   confirmedPreferencePosition: number | null;
   confirmedStartAt: string | null;
   appointmentStarted: boolean;
+  renterChangePending: boolean;
   confirmedMeetingLocation: string | null;
   createdAt: string;
   version: number;
@@ -55,6 +56,7 @@ function previewItem(): RentalTourItem {
     confirmedPreferencePosition: null,
     confirmedStartAt: null,
     appointmentStarted: false,
+    renterChangePending: false,
     confirmedMeetingLocation: null,
     createdAt: "2026-10-07T11:55:00Z",
     version: 2,
@@ -99,7 +101,7 @@ export async function getRentalTourWorkspace(unitId: string): Promise<RentalTour
     const supabase = await createClient();
     const organizationId = rental.organization.organizationId;
     const toursResult = await supabase.from("rental_tour_requests")
-      .select("id,public_reference,listing_id,unit_id,first_name,last_name,email,property_time_zone,status,verified_at,confirmed_preference_position,confirmed_start_at,confirmed_meeting_location,cancelled_at,created_at,version")
+      .select("id,public_reference,listing_id,unit_id,first_name,last_name,email,property_time_zone,status,verified_at,confirmed_preference_position,confirmed_start_at,confirmed_meeting_location,renter_change_pending,cancelled_at,created_at,version")
       .eq("organization_id", organizationId)
       .eq("unit_id", unitId)
       .in("status", ["requested", "confirmed"])
@@ -155,6 +157,7 @@ export async function getRentalTourWorkspace(unitId: string): Promise<RentalTour
         confirmedPreferencePosition: row.confirmed_preference_position == null ? null : Number(row.confirmed_preference_position),
         confirmedStartAt: row.confirmed_start_at == null ? null : String(row.confirmed_start_at),
         appointmentStarted: row.confirmed_start_at != null && Date.parse(String(row.confirmed_start_at)) <= loadedAt,
+        renterChangePending: row.renter_change_pending === true,
         confirmedMeetingLocation: row.confirmed_meeting_location == null ? null : String(row.confirmed_meeting_location),
         createdAt: String(row.created_at),
         version: Number(row.version),

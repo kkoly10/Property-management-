@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 const migration = (name) => readFile(new URL(`../supabase/${name}`, import.meta.url), "utf8");
 
 export async function validateRuntimeReliability(db, {
-  assert, expectDatabaseError, organizationId, ownerUserId, documentId, platformAdmin, platformAgent,
+  assert, expectDatabaseError, organizationId, ownerUserId, documentId, platformAdmin, platformAgent, attemptMigrationApplied = false,
 }) {
   const service = () => db.exec("reset role; set role service_role");
   const authenticate = (id) => db.exec(`reset role; set role authenticated; set request.jwt.claim.sub='${id}'; set request.jwt.claim.aal='aal2'`);
@@ -17,7 +17,7 @@ export async function validateRuntimeReliability(db, {
   const sha = "3".repeat(64);
 
   await db.exec("reset role");
-  await db.exec(await migration("migrations/20261122144012_queue_attempt_and_runtime_health.sql"));
+  if (!attemptMigrationApplied) await db.exec(await migration("migrations/20261122144012_queue_attempt_and_runtime_health.sql"));
   await db.query(`insert into private.notification_jobs
     (id,organization_id,template_code,locale,channel,recipient_address,payload,idempotency_key,available_at)
     values ($1,$2,'staff_invitation','en-US','email','audit@example.invalid','{}',$3,'2024-01-01')`,

@@ -4,15 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { rentalApplicationProgressSchema, type RentalApplicationProgress } from "@/lib/validation/rental-application";
 import { ApplicationRecoveryForm } from "./recovery-form";
 
-type Status = {
-  applicationReference: string; firstName: string; lastName: string;
-  email: string; desiredMoveInOn: string; leaseTermText: string;
-  applicantNote: string; status: "submitted" | "lease_preparation";
-  listingTitle: string; rentAmountMinor: number; currencyCode: string;
-  listingAvailableOn: string; version: number;
-  evidenceAvailable?: boolean;
+const progressCopy = {
+  evidence_pending: ["Documents needed", "Complete and submit your documents before the landlord can review your application."],
+  submitted: ["Submitted for review", "The landlord can review your application. Wait for an update before making plans."],
+  changes_requested: ["Changes requested", "The landlord asked you to update your documents before review can continue."],
+  selected: ["Selected for lease preparation", "The landlord selected your application. Wait for further lease details."],
+  lease_preparation: ["Lease preparation", "The landlord is preparing lease details. Wait for a separate signing invitation."],
 };
 type State = "loading" | "ready" | "unavailable" | "error" | "withdrawn";
 class RequestFailure extends Error {
@@ -21,7 +21,7 @@ class RequestFailure extends Error {
 
 export function ApplicationStatus({ reference: validatedReference }: { reference: string }) {
   const [state, setState] = useState<State>("loading");
-  const [data, setData] = useState<Status | null>(null);
+  const [data, setData] = useState<RentalApplicationProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +37,11 @@ export function ApplicationStatus({ reference: validatedReference }: { reference
         if (canceled) return;
         if (response.status === 404) { setState("unavailable"); return; }
         if (!response.ok) { setState("error"); return; }
-        const result = await response.json() as Status;
+        const result = rentalApplicationProgressSchema.safeParse(await response.json());
         if (canceled) return;
-        if (result.applicationReference !== validatedReference) { setState("unavailable"); return; }
-        setData(result);
+        if (!result.success) { setState("error"); return; }
+        if (result.data.applicationReference !== validatedReference) { setState("unavailable"); return; }
+        setData(result.data);
         setState("ready");
       } catch {
         if (!canceled) setState("error");
@@ -51,13 +52,13 @@ export function ApplicationStatus({ reference: validatedReference }: { reference
   }, [validatedReference]);
 
   async function withdraw() {
-    if (busy || state !== "ready") return;
+    if (busy || state !== "ready" || !data || !("version" in data)) return;
     operationKey.current ??= crypto.randomUUID();
     setBusy(true);
     setError(null);
     try {
       const currentReference = reference.current;
-      if (!currentReference || !data) { setState("unavailable"); return; }
+      if (!currentReference) { setState("unavailable"); return; }
       const response = await fetch(`/api/v1/rental-applications/withdraw?ref=${encodeURIComponent(currentReference)}`, {
         method: "POST",
         headers: { "idempotency-key": operationKey.current },
@@ -115,6 +116,17 @@ export function ApplicationStatus({ reference: validatedReference }: { reference
     </Alert>
   );
   if (!data) return null;
+  if (!("version" in data)) return (
+    <Alert className="mt-8">
+      <AlertTitle>{data.status === "declined" ? "Application declined" : "Application closed"}</AlertTitle>
+      <AlertDescription>
+        <p>{data.listingTitle}</p>
+        <p>Keep reference <span className="font-mono">{data.applicationReference}</span> for your records.</p>
+      </AlertDescription>
+    </Alert>
+  );
+  const [stage, message] = progressCopy[data.status];
+  const needsDocuments = data.status === "evidence_pending" || data.status === "changes_requested";
   const rent = new Intl.NumberFormat("en-US", {
     style: "currency", currency: data.currencyCode,
   }).format(data.rentAmountMinor / 100);
@@ -123,11 +135,8 @@ export function ApplicationStatus({ reference: validatedReference }: { reference
       <div className="rounded-xl border bg-card p-6">
         <p className="font-mono text-xs text-muted-foreground">{data.applicationReference}</p>
         <h2 className="mt-2 text-xl font-semibold">{data.listingTitle}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {data.status === "lease_preparation"
-            ? "The landlord is preparing lease details. Nothing is final until the agreement is signed."
-            : "Submitted and visible to the landlord. This is not an approval or reservation."}
-        </p>
+        <p className="mt-2 text-sm font-semibold">{stage}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{message}</p>
         <dl className="mt-6 grid gap-4 text-sm sm:grid-cols-2">
           <div><dt className="text-muted-foreground">Applicant</dt>
             <dd className="mt-1 font-semibold">{data.firstName} {data.lastName}</dd></div>
@@ -150,7 +159,13 @@ export function ApplicationStatus({ reference: validatedReference }: { reference
       {uncertain ? <p className="text-sm text-muted-foreground">
         The response was interrupted. Retry this same withdrawal to confirm it.
       </p> : null}
-      {data.evidenceAvailable === true ? <Button asChild><Link href={`/applications/evidence?ref=${encodeURIComponent(data.applicationReference)}`}>Open private application documents</Link></Button> : null}
+      {data.evidenceAvailable ? (
+        <Button asChild><Link href={`/applications/evidence?ref=${encodeURIComponent(data.applicationReference)}`}>
+          {needsDocuments ? "Continue to private documents" : "View private application documents"}
+        </Link></Button>
+      ) : needsDocuments ? (
+        <p className="text-sm text-muted-foreground">Private document collection is paused. Contact the landlord for next steps.</p>
+      ) : null}
       <Button type="button" variant="outline" disabled={busy} onClick={withdraw}>
         {busy ? "Withdrawing…" : uncertain ? "Retry withdrawal" : "Withdraw my application"}
       </Button>

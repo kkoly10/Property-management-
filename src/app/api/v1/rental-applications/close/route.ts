@@ -31,6 +31,9 @@ export async function POST(request: Request) {
     if (error?.code === "42501") return reply({ error: "This application is outside your scope." }, 403);
     if (message.includes("APPLICATION_VERSION_CONFLICT")) return reply({ error: "Application changed. Reload and try again." }, 409);
     if (message.includes("APPLICATION_NOT_CLOSABLE")) return reply({ error: "This application can no longer be closed." }, 409);
+    if (message.includes("EVIDENCE_CREDIT_DECISION_REQUIRES_APPROVED_NOTICE_WORKFLOW")) {
+      return reply({ error: "A decision involving credit evidence requires your approved notice process." }, 409);
+    }
     if (message.includes("IDEMPOTENCY_CONFLICT")) return reply({ error: "This operation key has already been used." }, 409);
     if (error?.code === "P0002") return reply({ error: "Application not found." }, 404);
     return reply({ error: "Close result could not be confirmed. Retry the same operation." }, 502);

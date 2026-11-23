@@ -1,9 +1,30 @@
+import { after } from "next/server";
 import { applicationAccessToken } from "@/lib/rental-application-access";
 import { evidenceError, evidenceReply, readExactEvidence, rentalEvidenceEnabled } from "@/lib/rental-evidence/http";
+import { runRentalEvidenceScan } from "@/lib/rental-evidence/worker";
+import { RENTAL_EVIDENCE_SCAN_BUDGET_MS } from "@/lib/runtime/budget";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { applicantEvidenceCommandSchema, evidencePacketSchema, evidenceReferenceSchema, evidenceUploadGrantSchema,
   inspectEvidenceUploadSchema } from "@/lib/validation/rental-evidence";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
+function expediteEvidenceScan(fileId: string, deadline: number) {
+  try {
+    after(async () => {
+      try {
+        await runRentalEvidenceScan(createAdminClient(), { fileId, deadline });
+      } catch {
+        // The scheduled drain recovers any unclaimed or abandoned work.
+        console.warn("The expedited evidence scan deferred to the scheduled worker");
+      }
+    });
+  } catch {
+    // An unsupported callback leaves the durable scan claim available to the scheduled worker.
+  }
+}
 
 export async function GET(request: Request) {
   if (!rentalEvidenceEnabled()) return evidenceReply({ error: "Private evidence is unavailable." }, 404);
@@ -22,6 +43,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const scanDeadline = Date.now() + RENTAL_EVIDENCE_SCAN_BUDGET_MS;
   if (!rentalEvidenceEnabled()) return evidenceReply({ error: "Private evidence is unavailable." }, 404);
   if (request.headers.get("origin") !== new URL(request.url).origin) return evidenceReply({ error: "Private evidence is unavailable." }, 403);
   const parsed = applicantEvidenceCommandSchema.safeParse(await request.json().catch(() => null));
@@ -44,13 +66,20 @@ export async function POST(request: Request) {
       const inspected = await supabase.rpc("inspect_rental_application_evidence_upload", { ...scope, p_file_id: action.fileId });
       const target = inspectEvidenceUploadSchema.safeParse(inspected.data);
       if (inspected.error || !target.success || target.data.id !== action.fileId) return evidenceError(inspected.error);
-      if (target.data.status !== "awaiting_upload") return evidenceReply({ id: target.data.id, status: target.data.status });
-      const verified = await readExactEvidence(target.data);
+      if (target.data.status !== "awaiting_upload") {
+        if (target.data.status === "quarantined") expediteEvidenceScan(target.data.id, scanDeadline);
+        return evidenceReply({ id: target.data.id, status: target.data.status });
+      }
+      const signal = AbortSignal.timeout(8_000);
+      const verified = await readExactEvidence(target.data, signal);
+      if (signal.aborted) return evidenceReply({ error: "The upload check timed out. Try verifying the upload again." }, 503);
       if (!verified) return evidenceReply({ error: "The uploaded file could not be verified. Remove it and try another file." }, 422);
       const response = await createAdminClient().rpc("finish_rental_application_evidence_upload", {
         p_actor_id: auth.user.id, p_file_id: action.fileId, p_size_bytes: verified.bytes.length, p_sha256: verified.digest,
       });
-      return response.error || response.data?.id !== action.fileId ? evidenceError(response.error) : evidenceReply(response.data);
+      if (response.error || response.data?.id !== action.fileId) return evidenceError(response.error);
+      if (response.data.status === "quarantined") expediteEvidenceScan(action.fileId, scanDeadline);
+      return evidenceReply(response.data);
     }
     const response = await (async () => {
       switch (action.action) {

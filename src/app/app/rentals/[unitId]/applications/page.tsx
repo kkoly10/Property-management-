@@ -4,10 +4,26 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getRentalApplicationWorkspace } from "@/lib/data/rental-applications";
-import { rentalEvidenceWorklist } from "@/lib/rental-evidence/http";
+import { getRentalEvidenceIntakeStatus, rentalEvidenceEnabled, rentalEvidenceWorklist } from "@/lib/rental-evidence/http";
+import { PrivateDocumentIntake } from "@/components/rentals/private-document-intake";
 import { ApplicationActions } from "./application-actions";
 
 export const dynamic = "force-dynamic";
+const evidenceLabels = {
+  draft: "Waiting for applicant documents",
+  submitted: "Private review pending",
+  changes_requested: "Waiting for applicant changes",
+  selected: "Selected for lease preparation",
+  declined: "Declined",
+  closed: "Closed",
+};
+const applicationLabels = {
+  submitted: "Submitted for review",
+  lease_preparation: "Lease preparation",
+  withdrawn: "Withdrawn",
+  closed: "Closed",
+  converted: "Converted to signed tenancy",
+};
 
 export default async function RentalApplicationsPage({
   params,
@@ -20,7 +36,11 @@ export default async function RentalApplicationsPage({
   if (workspace.mode === "error") return (
     <p role="alert">Applications could not be loaded. Refresh to retry.</p>
   );
-  const evidence = await rentalEvidenceWorklist(workspace.organizationId, unitId);
+  const [evidence, intake] = await Promise.all([
+    rentalEvidenceWorklist(workspace.organizationId, unitId),
+    workspace.organizationId ? getRentalEvidenceIntakeStatus(workspace.organizationId, unitId) : null,
+  ]);
+  if (!evidence) return <p role="alert">Application progress could not be loaded. Refresh to retry.</p>;
   return (
     <main className="mx-auto max-w-5xl space-y-7">
       <Link href={`/app/rentals/${unitId}`} className="text-sm font-medium text-primary">
@@ -35,6 +55,7 @@ export default async function RentalApplicationsPage({
           You choose whether to prepare a lease.
         </p>
       </header>
+      {intake ? <PrivateDocumentIntake status={intake} /> : null}
       {workspace.mode === "setup" ? (
         <p className="rounded-lg border p-4 text-sm text-muted-foreground">
           Preview workspace. Connect an organization and publish a listing to receive verified applications.
@@ -51,13 +72,16 @@ export default async function RentalApplicationsPage({
         <div className="divide-y rounded-xl border bg-card">
           {workspace.items.map((item) => {
             const review = evidence.get(item.id);
+            const label = review?.status === "declined" || (review && item.status === "submitted")
+              ? evidenceLabels[review.status] : applicationLabels[item.status];
+            const readyForReview = item.status === "submitted" && (!review || review.status === "submitted");
             return (
             <article key={item.id} id={`application-${item.publicReference}`} className="grid scroll-mt-24 gap-4 p-5 target:bg-muted/45 md:grid-cols-[1fr_auto]">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="font-semibold">{item.firstName} {item.lastName}</h2>
-                  <Badge variant={item.status === "submitted" ? "success" : "neutral"}>
-                    {item.status.replaceAll("_", " ")}
+                  <Badge variant={readyForReview ? "success" : "neutral"}>
+                    {label}
                   </Badge>
                   <span className="font-mono text-xs text-muted-foreground">{item.publicReference}</span>
                 </div>
@@ -78,7 +102,7 @@ export default async function RentalApplicationsPage({
                 <Button asChild size="sm" variant="outline">
                   <a href={`mailto:${encodeURIComponent(item.email)}`}>Reply by email</a>
                 </Button>
-                {review?.reviewer && ["submitted", "changes_requested", "selected"].includes(review.status) ? (
+                {rentalEvidenceEnabled() && review?.reviewer && ["submitted", "changes_requested", "selected"].includes(review.status) ? (
                   <Button asChild size="sm" variant="outline"><Link href={`/app/rentals/${unitId}/applications/${item.id}/evidence`}>Review private documents</Link></Button>
                 ) : null}
                 {(item.status === "submitted" || item.status === "lease_preparation") && (!review || review.status === "selected") ? (
@@ -86,13 +110,6 @@ export default async function RentalApplicationsPage({
                     applicationId={item.id} initialVersion={item.version}
                     status={item.status} disabled={workspace.mode === "setup"}
                     unitId={unitId} />
-                ) : null}
-                {review && review.status !== "selected" ? <span className="text-xs text-muted-foreground">
-                  {review.status === "submitted" ? "Private review pending" : review.status === "changes_requested" ? "Waiting for applicant changes"
-                    : review.status === "declined" ? "Declined" : "Waiting for applicant documents"}
-                </span> : null}
-                {item.status === "converted" ? (
-                  <span className="text-xs text-muted-foreground">Converted to signed tenancy</span>
                 ) : null}
               </div>
             </article>

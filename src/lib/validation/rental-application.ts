@@ -37,3 +37,26 @@ export const closeRentalApplicationSchema = z.object({
 }).strict();
 
 export const prepareRentalApplicationLeaseSchema = closeRentalApplicationSchema;
+
+const rentalApplicationProgressReceipt = z.object({
+  applicationReference: z.string().regex(/^APP-[0-9A-F]{12}$/),
+  listingTitle: z.string(),
+});
+
+export const rentalApplicationProgressSchema = z.discriminatedUnion("status", [
+  rentalApplicationProgressReceipt.extend({
+    status: z.enum(["evidence_pending", "submitted", "changes_requested", "selected", "lease_preparation"]),
+    firstName: z.string(),
+    lastName: z.string(),
+    email: z.string(),
+    desiredMoveInOn: rentalApplicationDateSchema,
+    leaseTermText: z.string().nullable(),
+    applicantNote: z.string().nullable(),
+    rentAmountMinor: z.number().int().nonnegative(),
+    currencyCode: z.enum(["USD", "CAD", "MXN"]),
+    version: z.number().int().positive(),
+    evidenceAvailable: z.boolean(),
+  }),
+  rentalApplicationProgressReceipt.extend({ status: z.enum(["closed", "declined"]) }),
+]);
+export type RentalApplicationProgress = z.infer<typeof rentalApplicationProgressSchema>;
